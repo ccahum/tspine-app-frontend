@@ -1,7 +1,7 @@
 import { api } from '../lib/axios';
 
 export interface LoginRequest {
-  correo: string;
+  usuario: string;
   password: string;
 }
 
@@ -20,9 +20,34 @@ export interface LoginResponse {
   usuario: Usuario;
 }
 
+export interface LoginStepResponse {
+  estado: 'REQUIERE_CONFIGURAR_2FA' | 'REQUIERE_CODIGO';
+  pendingToken: string;
+}
+
+export interface TotpSetupResponse {
+  qrDataUrl: string;
+  secret: string;
+}
+
 export const authService = {
-  login: async (data: LoginRequest): Promise<LoginResponse> => {
-    const res = await api.post<LoginResponse>('/auth/login', data);
+  login: async (data: LoginRequest): Promise<LoginStepResponse> => {
+    const res = await api.post<LoginStepResponse>('/auth/login', data);
+    return res.data;
+  },
+
+  setupTotp: async (pendingToken: string): Promise<TotpSetupResponse> => {
+    const res = await api.post<TotpSetupResponse>('/auth/2fa/setup', { pendingToken });
+    return res.data;
+  },
+
+  confirmarSetupTotp: async (pendingToken: string, codigo: string): Promise<LoginResponse> => {
+    const res = await api.post<LoginResponse>('/auth/2fa/confirmar-setup', { pendingToken, codigo });
+    return res.data;
+  },
+
+  verificarCodigo: async (pendingToken: string, codigo: string): Promise<LoginResponse> => {
+    const res = await api.post<LoginResponse>('/auth/2fa/verificar', { pendingToken, codigo });
     return res.data;
   },
 

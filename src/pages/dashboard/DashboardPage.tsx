@@ -1,27 +1,26 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import {
-  Wrench, ShoppingCart, Package, Landmark,
-  TrendingUp, ClipboardList, UserCog, Truck,
-  Calendar, BarChart3,
+  Wrench, ShoppingCart, Archive, Landmark,
+  TrendingUp, ClipboardList, Users, Truck,
 } from 'lucide-react';
 import Layout from '../../components/layout/Layout';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
-import { programacionesService } from '../../services/programaciones.service';
+
+const ACCENT = '#4a7c59';
 
 const modules = [
-  { icon: Wrench, label: 'Módulo Operación', path: '/operacion', color: '#6b8c1f' },
-  { icon: ShoppingCart, label: 'Módulo Compras', path: '/compras', color: '#4a7c59' },
-  { icon: Package, label: 'Módulo Almacén', path: '/almacen', color: '#5c7a3e' },
-  { icon: Landmark, label: 'Módulo Tesorería', path: '/tesoreria', color: '#3d6b52' },
-  { icon: TrendingUp, label: 'Módulo Gestión Financiera', path: '/gestion-financiera', color: '#6b8c1f' },
-  { icon: ClipboardList, label: 'Módulo Catálogos', path: '/catalogos', color: '#4a7c59' },
-  { icon: UserCog, label: 'Módulo Administración', path: '/administracion', color: '#5c7a3e' },
-  { icon: Truck, label: 'Gestión Vehicular', path: '/vehicular', color: '#3d6b52' },
+  { icon: Wrench, label: 'Operación', description: 'Programaciones, remisiones y bitácora', path: '/operacion' },
+  { icon: ShoppingCart, label: 'Compras', description: 'Órdenes de compra y proveedores', path: '/compras' },
+  { icon: Archive, label: 'Almacén', description: 'Inventario, entradas y salidas', path: '/almacen' },
+  { icon: Landmark, label: 'Tesorería', description: 'Pagos, cobros y cuentas', path: '/tesoreria' },
+  { icon: TrendingUp, label: 'Gestión financiera', description: 'Reportes y análisis financiero', path: '/gestion-financiera' },
+  { icon: ClipboardList, label: 'Catálogos', description: 'Insumos, hospitales y médicos', path: '/catalogos' },
+  { icon: Users, label: 'Administración', description: 'Usuarios, roles y permisos', path: '/administracion' },
+  { icon: Truck, label: 'Gestión vehicular', description: 'Flotilla y logística', path: '/vehicular' },
 ];
 
-function ModuleCard({ icon: Icon, label, path, color }: typeof modules[0]) {
+function ModuleCard({ icon: Icon, label, description, path }: typeof modules[0]) {
   const navigate = useNavigate();
   const [hovered, setHovered] = useState(false);
 
@@ -32,81 +31,32 @@ function ModuleCard({ icon: Icon, label, path, color }: typeof modules[0]) {
       onMouseLeave={() => setHovered(false)}
       style={{
         ...styles.card,
-        boxShadow: hovered
-          ? `0 8px 24px rgba(107,140,31,0.2)`
-          : '0 2px 8px rgba(0,0,0,0.07)',
-        transform: hovered ? 'translateY(-3px)' : 'translateY(0)',
-        borderTop: `3px solid ${hovered ? color : 'transparent'}`,
+        borderColor: hovered ? ACCENT : '#eeeee6',
+        boxShadow: hovered ? '0 8px 20px rgba(0,0,0,0.08)' : '0 1px 3px rgba(0,0,0,0.04)',
+        transform: hovered ? 'translateY(-2px)' : 'translateY(0)',
       }}
     >
-      <div style={{ ...styles.iconWrap, backgroundColor: `${color}18` }}>
-        <Icon size={32} color={color} />
+      <div style={styles.iconWrap}>
+        <Icon size={20} color={ACCENT} />
       </div>
       <span style={styles.cardLabel}>{label}</span>
+      <span style={styles.cardDescription}>{description}</span>
     </div>
   );
 }
 
 export default function DashboardPage() {
-  const usuario = JSON.parse(localStorage.getItem('usuario') ?? '{}');
   const { isMobile } = useResponsiveStyles();
-
-  const { data: allProgramaciones } = useQuery({
-    queryKey: ['programaciones-dashboard'],
-    queryFn: () => programacionesService.findAll({ limit: 10000 }),
-  });
-
-  const stats = useMemo(() => {
-    if (!allProgramaciones?.data) return { thisYear: 0, thisMonth: 0 };
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth();
-
-    let thisYear = 0;
-    let thisMonth = 0;
-
-    allProgramaciones.data.forEach(prog => {
-      if (prog.fechaQx) {
-        const progDate = new Date(prog.fechaQx);
-        if (progDate.getFullYear() === currentYear) {
-          thisYear++;
-          if (progDate.getMonth() === currentMonth) {
-            thisMonth++;
-          }
-        }
-      }
-    });
-
-    return { thisYear, thisMonth };
-  }, [allProgramaciones]);
 
   return (
     <Layout>
       <div style={{ ...styles.container, paddingLeft: isMobile ? '1rem' : '2rem', paddingRight: isMobile ? '1rem' : '2rem' }}>
         <div style={styles.welcome}>
           <h2 style={styles.welcomeTitle}>Inicio</h2>
-          <p style={styles.welcomeSub}>Bienvenido, <strong>{usuario.nombreCompleto}</strong></p>
+          <p style={styles.welcomeSub}>Selecciona un módulo para continuar</p>
         </div>
 
-        <div style={{ ...styles.statsGrid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', marginBottom: '2rem' }}>
-          <div style={styles.statCard} onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 6px 16px rgba(107,140,31,0.15)'; }} onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,0.06)'; }}>
-            <div style={styles.statHeader}>
-              <Calendar size={20} color="#6b8c1f" />
-              <span style={styles.statLabel}>Programaciones del Año</span>
-            </div>
-            <div style={{ ...styles.statValue, color: '#6b8c1f' }}>{stats.thisYear}</div>
-          </div>
-
-          <div style={styles.statCard} onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 6px 16px rgba(107,140,31,0.15)'; }} onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,0.06)'; }}>
-            <div style={styles.statHeader}>
-              <BarChart3 size={20} color="#2563eb" />
-              <span style={styles.statLabel}>Programaciones del Mes</span>
-            </div>
-            <div style={{ ...styles.statValue, color: '#2563eb' }}>{stats.thisMonth}</div>
-          </div>
-        </div>
-
-        <div style={{ ...styles.grid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+        <div style={{ ...styles.grid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(240px, 1fr))' }}>
           {modules.map((mod) => (
             <ModuleCard key={mod.path} {...mod} />
           ))}
@@ -127,11 +77,11 @@ const styles: Record<string, React.CSSProperties> = {
   welcomeTitle: {
     fontSize: '1.5rem',
     fontWeight: 700,
-    color: '#333',
-    margin: '0 0 0.25rem',
+    color: '#16170f',
+    margin: '0 0 0.3rem',
   },
   welcomeSub: {
-    color: '#666',
+    color: '#6b7280',
     margin: 0,
     fontSize: '0.9rem',
   },
@@ -163,32 +113,40 @@ const styles: Record<string, React.CSSProperties> = {
   },
   grid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
     gap: '1.25rem',
   },
   card: {
     backgroundColor: '#fff',
-    borderRadius: '12px',
-    padding: '1.75rem 1.5rem',
+    border: '1px solid #eeeee6',
+    borderRadius: '16px',
+    padding: '1.5rem',
     cursor: 'pointer',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'flex-start',
-    gap: '1rem',
+    gap: '0.6rem',
     transition: 'all 0.2s ease',
-    borderTop: '3px solid transparent',
   },
   iconWrap: {
-    width: '56px',
-    height: '56px',
-    borderRadius: '12px',
+    width: '40px',
+    height: '40px',
+    borderRadius: '10px',
+    backgroundColor: '#e9f2d8',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: '0.3rem',
   },
   cardLabel: {
-    fontSize: '0.95rem',
-    fontWeight: 600,
-    color: '#333',
+    fontSize: '1rem',
+    fontWeight: 700,
+    color: '#16170f',
+  },
+  cardDescription: {
+    fontSize: '0.82rem',
+    fontWeight: 400,
+    color: '#6b7280',
+    marginTop: '-0.35rem',
   },
 };

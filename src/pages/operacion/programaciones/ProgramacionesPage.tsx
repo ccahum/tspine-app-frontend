@@ -1,16 +1,19 @@
-import { useState, useEffect, memo, useMemo } from 'react';
+import { useState, useEffect, useRef, memo, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { PieChart, Pie, Cell, Legend, Tooltip, ResponsiveContainer } from 'recharts';
-import { Search, Lock, AlertCircle, CheckCircle2, DollarSign, Plus, Check, X, Calendar, BarChart3, Activity, MapPin } from 'lucide-react';
+import { Search, Lock, AlertCircle, CircleX, DollarSign, Plus, X, Calendar, BarChart3, Activity, MapPin, CheckCircle, Circle, ArrowDown, ArrowUp, ArrowRight } from 'lucide-react';
 import Layout from '../../../components/layout/Layout';
+import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import DateRangeFilter from '../../../components/filters/DateRangeFilter';
 import StatusFilter from '../../../components/filters/StatusFilter';
 import ProgramacionesStats from './ProgramacionesStats';
+import SuccessToast from '../../../components/SuccessToast';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { programacionesService } from '../../../services/programaciones.service';
-import { sedesService, type Sede } from '../../../services/sedes.service';
-import type { ProgramacionQuery, ProgramacionItem, ProgramacionListResponse, FlagsUpdate } from '../../../services/programaciones.service';
+import type { ProgramacionQuery, ProgramacionItem, SedeOption, HospitalOption, MedicoOption } from '../../../services/programaciones.service';
+import { getTodayMexico, getNowMexicoTime } from '../../../lib/date.utils';
 
 type FlagKey = 'sinRemision' | 'consumoNoValidado' | 'sinComision' | 'cerrada';
 
@@ -33,10 +36,25 @@ const formatDate = (dateString: string | null): string => {
   }
 };
 
+const isFechaHoy = (fechaQx: string | null): boolean =>
+  !!fechaQx && fechaQx.split('T')[0] === getTodayMexico();
+
+// Los 4 indicadores se calculan automáticamente (¿tienen relaciones reales?) — son de solo lectura.
+// "cerrada" se cierra desde el botón "Cerrar Programación" en el detalle, que valida remisión y requisición.
 const FLAG_CONFIG: { key: FlagKey; icon: React.ReactNode; label: string; color: string }[] = [
   { key: 'sinRemision',       icon: <AlertCircle size={13} />,  label: 'Sin Remisión',  color: '#dc2626' },
-  { key: 'consumoNoValidado', icon: <CheckCircle2 size={13} />, label: 'Sin Validar Consumo', color: '#7c3aed' },
-  { key: 'sinComision',       icon: <DollarSign size={13} />,   label: 'Sin Comisión',  color: '#2563eb' },
+  { key: 'consumoNoValidado', icon: <CircleX size={13} />,      label: 'Sin Validar Consumo', color: '#7c3aed' },
+  {
+    key: 'sinComision',
+    icon: (
+      <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 13, height: 13 }}>
+        <DollarSign size={13} />
+        <span style={{ position: 'absolute', top: '50%', left: '50%', width: '17px', height: '1.6px', backgroundColor: 'currentColor', transform: 'translate(-50%, -50%) rotate(-45deg)', borderRadius: '1px' }} />
+      </span>
+    ),
+    label: 'Sin Comisión',
+    color: '#2563eb',
+  },
   { key: 'cerrada',           icon: <Lock size={13} />,         label: 'Cerrada',       color: '#6b7280' },
 ];
 
@@ -49,7 +67,7 @@ function StatusBadges({ item }: { item: ProgramacionItem }) {
   const active = FLAG_CONFIG.filter(f => item[f.key]);
   if (active.length === 0) return null;
   return (
-    <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', gap: '3px', flexWrap: 'nowrap' }}>
       {active.map(({ key, icon, color }) => (
         <span key={key} style={{ ...badgeDot, backgroundColor: `${color}18`, color }}>{icon}</span>
       ))}
@@ -57,27 +75,30 @@ function StatusBadges({ item }: { item: ProgramacionItem }) {
   );
 }
 
-const ProgramacionRow = memo(({ item, onContextMenu, navigate, getBorderColor, index }: { item: ProgramacionItem; onContextMenu: (e: React.MouseEvent, item: ProgramacionItem) => void; navigate: (path: string) => void; getBorderColor: (item: ProgramacionItem) => string; index: number }) => (
+const ProgramacionRow = memo(({ item, navigate, index }: { item: ProgramacionItem; navigate: (path: string) => void; index: number }) => {
+  const today = isFechaHoy(item.fechaQx);
+  const baseBg = today ? 'rgba(107, 140, 31, 0.14)' : '#fff';
+  return (
   <tr
     key={item.id}
-    style={styles.tr}
+    data-today-row={today ? 'true' : undefined}
+    style={{ ...styles.tr, backgroundColor: baseBg }}
     onClick={() => navigate(`/operacion/programaciones/${item.id}`)}
-    onContextMenu={e => onContextMenu(e, item)}
     onMouseEnter={e => {
-      e.currentTarget.style.backgroundColor = '#f3f4f6';
+      e.currentTarget.style.backgroundColor = today ? 'rgba(107, 140, 31, 0.26)' : '#f3f4f6';
       e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)';
     }}
     onMouseLeave={e => {
-      e.currentTarget.style.backgroundColor = '#fff';
+      e.currentTarget.style.backgroundColor = baseBg;
       e.currentTarget.style.boxShadow = 'none';
     }}
   >
     <td style={{ ...styles.td, textAlign: 'center', fontWeight: 600, color: '#999', width: '40px' }}>{index + 1}</td>
-    <td style={{ ...styles.td, borderLeft: `3px solid ${getBorderColor(item)}`, paddingLeft: '10px', width: '70px' }}>
+    <td style={{ ...styles.td, paddingLeft: '10px', width: '95px', whiteSpace: 'nowrap' as const }}>
       <StatusBadges item={item} />
     </td>
-    <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: '0.8rem', color: '#6b8c1f', fontWeight: 700 }}>
-      {item.idLegacy ?? item.id}
+    <td style={{ ...styles.td, color: '#6b8c1f', fontWeight: 700 }}>
+      {item.id}
     </td>
     <td style={styles.td}>{formatDate(item.fechaQx)}</td>
     <td style={styles.td}>{item.horaQx ?? '-'}</td>
@@ -92,58 +113,9 @@ const ProgramacionRow = memo(({ item, onContextMenu, navigate, getBorderColor, i
     <td style={{ ...styles.td, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#666', fontSize: '0.82rem' }}>
       {item.observaciones ?? '-'}
     </td>
-    <td style={{ ...styles.td, textAlign: 'right', fontWeight: 600, color: item.saldo ? '#333' : '#9ca3af' }}>
-      {item.saldo ? `$${item.saldo.toLocaleString('es-MX', { minimumFractionDigits: 2 })}` : '-'}
-    </td>
-    <td style={{ ...styles.td, minWidth: '100px' }}>
-      {item.avance !== null ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <div style={{ flex: 1, height: '5px', backgroundColor: '#e5e7eb', borderRadius: '3px' }}>
-            <div style={{ width: `${item.avance}%`, height: '100%', backgroundColor: '#6b8c1f', borderRadius: '3px' }} />
-          </div>
-          <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#555', flexShrink: 0 }}>{item.avance}%</span>
-        </div>
-      ) : <span style={{ color: '#9ca3af' }}>-</span>}
-    </td>
   </tr>
-));
-
-function ContextMenu({ x, y, item, onToggle, onClose }: {
-  x: number; y: number;
-  item: ProgramacionItem;
-  onToggle: (key: FlagKey, value: boolean) => void;
-  onClose: () => void;
-}) {
-  const menuW = 210;
-  const menuH = FLAG_CONFIG.length * 38 + 16;
-  const left = x + menuW > window.innerWidth  ? x - menuW : x;
-  const top  = y + menuH > window.innerHeight ? y - menuH : y;
-
-  return (
-    <div
-      style={{ position: 'fixed', top, left, zIndex: 9999, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '10px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', padding: '6px', minWidth: `${menuW}px` }}
-      onClick={e => e.stopPropagation()}
-    >
-      <p style={{ fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '4px 8px 6px' }}>
-        Marcar como
-      </p>
-      {FLAG_CONFIG.map(({ key, icon, label, color }) => {
-        const active = item[key];
-        return (
-          <button
-            key={key}
-            onClick={() => { onToggle(key, !active); onClose(); }}
-            style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '7px 10px', border: 'none', borderRadius: '7px', backgroundColor: active ? `${color}12` : 'transparent', cursor: 'pointer', fontSize: '0.83rem', fontWeight: active ? 600 : 400, color: active ? color : '#374151', textAlign: 'left' }}
-          >
-            <span style={{ color: active ? color : '#d1d5db', flexShrink: 0 }}>{icon}</span>
-            <span style={{ flex: 1 }}>{label}</span>
-            {active && <Check size={13} color={color} />}
-          </button>
-        );
-      })}
-    </div>
   );
-}
+});
 
 export default function ProgramacionesPage() {
   const navigate = useNavigate();
@@ -154,11 +126,24 @@ export default function ProgramacionesPage() {
   const [dateTo, setDateTo] = useState('');
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [page, setPage] = useState(1);
-  const [allData, setAllData] = useState<ProgramacionItem[]>([]);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; itemId: string } | null>(null);
+  const tableWrapRef = useRef<HTMLDivElement>(null);
+  useSmoothWheelScroll(tableWrapRef, [], 3);
+  const theadRef = useRef<HTMLTableSectionElement>(null);
   const [showNewModal, setShowNewModal] = useState(false);
-  const [formData, setFormData] = useState({ fechaQx: '', horaQx: '', sede: '', hospital: '', medico: '', consumo: '', observaciones: '' });
-  const [sedes, setSedes] = useState<Sede[]>([]);
+
+  useEffect(() => {
+    document.body.style.overflow = showNewModal ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [showNewModal]);
+
+  const [newForm, setNewForm] = useState({ fechaQx: '', horaQx: '', sedeId: '', hospitalId: '' });
+  const [newObservaciones, setNewObservaciones] = useState('');
+  const [newConsumo, setNewConsumo] = useState('');
+  const [newMedicos, setNewMedicos] = useState<MedicoOption[]>([]);
+  const [newMedicoSearch, setNewMedicoSearch] = useState('');
+  const [newHospitalSearch, setNewHospitalSearch] = useState('');
+  const [newProgramacionError, setNewProgramacionError] = useState<{ field: string; message: string } | null>(null);
+  const [showCreateSuccess, setShowCreateSuccess] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [selectedMonthForSedes, setSelectedMonthForSedes] = useState<number>(new Date().getMonth() + 1);
 
@@ -185,93 +170,62 @@ export default function ProgramacionesPage() {
     placeholderData: keepPreviousData,
   });
 
-  useEffect(() => {
-    const close = () => setContextMenu(null);
-    window.addEventListener('click', close);
-    window.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
-    return () => { window.removeEventListener('click', close); };
-  }, []);
+  const { data: sedeOptions = [] } = useQuery<SedeOption[]>({
+    queryKey: ['programaciones-sedes'],
+    queryFn: () => programacionesService.getSedes(),
+    enabled: showNewModal,
+  });
 
-  useEffect(() => {
-    const loadSedes = async () => {
-      const sedesList = await sedesService.getAll();
-      setSedes(sedesList);
-    };
-    loadSedes();
-  }, []);
+  const { data: hospitalOptions = [] } = useQuery<HospitalOption[]>({
+    queryKey: ['programaciones-hospitales'],
+    queryFn: () => programacionesService.getHospitales(),
+    enabled: showNewModal,
+  });
+
+  const { data: newMedicoResults = [] } = useQuery<MedicoOption[]>({
+    queryKey: ['programaciones-medicos', newMedicoSearch],
+    queryFn: () => programacionesService.searchMedicos(newMedicoSearch),
+    enabled: showNewModal && !!newMedicoSearch.trim(),
+  });
+
+  const autoResizeTextarea = (el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  };
+
+  const selectedNewHospital = hospitalOptions.find(h => h.id === newForm.hospitalId) ?? null;
+  const newHospitalResults = newHospitalSearch.trim()
+    ? hospitalOptions.filter(h => h.nombre.toLowerCase().includes(newHospitalSearch.trim().toLowerCase()))
+    : [];
+
+  // Al crear (no al editar) no se permite elegir fecha/hora ya pasada.
+  const todayMexico = getTodayMexico();
+  const isNewFechaToday = newForm.fechaQx === todayMexico;
+  const nowMexicoTime = getNowMexicoTime();
+  const minHour = isNewFechaToday ? Number(nowMexicoTime.split(':')[0]) : 0;
+  const selectedHour = newForm.horaQx.split(':')[0] ?? '';
+  const minMinute = isNewFechaToday && Number(selectedHour) === minHour ? Number(nowMexicoTime.split(':')[1]) : 0;
 
   // Resetear al cambiar filtros
   useEffect(() => {
     setPage(1);
-    setAllData([]);
   }, [search, dateFrom, dateTo, statusFilters]);
 
-  // Cargar nuevos datos cuando cambia page
+  const items = data?.data ?? [];
+
+  // Al cargar (o recargar por filtros) posiciona el scroll en las programaciones de hoy:
+  // arriba quedan las fechas futuras, abajo las pasadas. Solo aplica en la página 1.
   useEffect(() => {
-    if (data?.data) {
-      if (page === 1) {
-        setAllData(data.data);
-      } else {
-        setAllData(prev => {
-          const existingIds = new Set(prev.map(item => item.id));
-          const newItems = data.data.filter(item => !existingIds.has(item.id));
-          return [...prev, ...newItems];
-        });
-      }
-    }
-  }, [page, data]);
+    if (page !== 1 || items.length === 0) return;
+    const container = tableWrapRef.current;
+    if (!container) return;
+    const todayRow = container.querySelector<HTMLElement>('[data-today-row="true"]');
+    if (!todayRow) return;
+    const headerHeight = theadRef.current?.offsetHeight ?? 0;
+    container.scrollTop = todayRow.offsetTop - headerHeight;
+  }, [items, page]);
 
-
-  const flagMutation = useMutation({
-    mutationFn: ({ id, flags }: { id: string; flags: FlagsUpdate }) =>
-      programacionesService.updateFlags(id, flags),
-    onMutate: async ({ id, flags }) => {
-      await queryClient.cancelQueries({ queryKey: ['programaciones', query] });
-      const snapshot = queryClient.getQueryData<ProgramacionListResponse>(['programaciones', query]);
-      queryClient.setQueryData<ProgramacionListResponse>(['programaciones', query], (old) => {
-        if (!old) return old;
-        return { ...old, data: old.data.map(item => item.id === id ? { ...item, ...flags } : item) };
-      });
-      setAllData(prev => prev.map(item => item.id === id ? { ...item, ...flags } : item));
-      return { snapshot };
-    },
-    onSuccess: (updated) => {
-      queryClient.setQueryData<ProgramacionListResponse>(['programaciones', query], (old) => {
-        if (!old) return old;
-        return { ...old, data: old.data.map(item => item.id === updated.id ? updated : item) };
-      });
-      setAllData(prev => prev.map(item => item.id === updated.id ? updated : item));
-      queryClient.invalidateQueries({ queryKey: ['programaciones-stats'] });
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.snapshot) {
-        queryClient.setQueryData(['programaciones', query], context.snapshot);
-      }
-    },
-  });
-
-  const handleToggleFlag = (key: FlagKey, value: boolean) => {
-    if (!contextMenu) return;
-    flagMutation.mutate({ id: contextMenu.itemId, flags: { [key]: value } });
-  };
-
-  const handleRowContextMenu = (e: React.MouseEvent, item: ProgramacionItem) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setContextMenu({ x: e.clientX, y: e.clientY, itemId: item.id });
-  };
-
-  const contextMenuItem = contextMenu
-    ? allData.find(i => i.id === contextMenu.itemId) ?? null
-    : null;
-
-  const getBorderColor = (item: ProgramacionItem) => {
-    if (item.cerrada) return '#9ca3af';
-    if (item.sinRemision) return '#dc2626';
-    if (item.consumoNoValidado) return '#7c3aed';
-    if (item.sinComision) return '#2563eb';
-    return '#e5e7eb';
-  };
 
   const yearMonthStats = {
     thisYear: stats?.programacionesAño ?? 0,
@@ -310,7 +264,7 @@ export default function ProgramacionesPage() {
     const currentCount = currentYearData.count;
     const previousCount = previousYearData.count;
     const difference = currentCount - previousCount;
-    const percentChange = previousCount > 0 ? ((difference / previousCount) * 100).toFixed(1) : 0;
+    const percentChange = previousCount > 0 ? (difference / previousCount) * 100 : 0;
     const trend = difference > 0 ? 'subida' : difference < 0 ? 'bajada' : 'igual';
     const trendSymbol = difference > 0 ? '↑' : difference < 0 ? '↓' : '→';
 
@@ -358,43 +312,53 @@ export default function ProgramacionesPage() {
     };
   }, [sedeDistributionData?.data]);
 
-  const handleSaveNew = async () => {
-    try {
-      const payload = {
-        fechaQx: formData.fechaQx,
-        horaQx: formData.horaQx,
-        sede: formData.sede,
-        hospital: formData.hospital,
-        medicos: formData.medico ? [formData.medico] : [],
-        observaciones: formData.observaciones,
-        consumo: formData.consumo,
-      };
-      await programacionesService.create(payload);
-      setShowNewModal(false);
-      setFormData({ fechaQx: '', horaQx: '', sede: '', hospital: '', medico: '', consumo: '', observaciones: '' });
+  const createMutation = useMutation({
+    mutationFn: () => programacionesService.create({
+      fechaQx: newForm.fechaQx,
+      horaQx: newForm.horaQx,
+      sedeId: newForm.sedeId,
+      hospitalId: newForm.hospitalId,
+      observaciones: newObservaciones,
+      consumo: newConsumo,
+      medicoIds: newMedicos.map(m => m.id),
+    }),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['programaciones'] });
-    } catch (err) {
-      console.error('Error al crear programación:', err);
-    }
+      queryClient.invalidateQueries({ queryKey: ['programaciones-stats'] });
+      setShowNewModal(false);
+      setShowCreateSuccess(true);
+    },
+  });
+
+  const openNewModal = () => {
+    setNewForm({ fechaQx: '', horaQx: '', sedeId: '', hospitalId: '' });
+    setNewObservaciones('');
+    setNewConsumo('');
+    setNewMedicos([]);
+    setNewMedicoSearch('');
+    setNewHospitalSearch('');
+    setNewProgramacionError(null);
+    setShowNewModal(true);
+  };
+
+  const handleGuardarNew = () => {
+    if (!newForm.fechaQx) { setNewProgramacionError({ field: 'fechaQx', message: 'Selecciona la fecha.' }); return; }
+    if (!newForm.horaQx || newForm.horaQx.split(':').some(p => !p)) { setNewProgramacionError({ field: 'horaQx', message: 'Selecciona la hora.' }); return; }
+    if (!newForm.sedeId) { setNewProgramacionError({ field: 'sedeId', message: 'Selecciona la sede.' }); return; }
+    if (!newForm.hospitalId) { setNewProgramacionError({ field: 'hospitalId', message: 'Selecciona el hospital.' }); return; }
+    if (newMedicos.length === 0) { setNewProgramacionError({ field: 'medicos', message: 'Agrega al menos un médico.' }); return; }
+    if (!newConsumo.trim()) { setNewProgramacionError({ field: 'consumo', message: 'Ingresa el consumo.' }); return; }
+    setNewProgramacionError(null);
+    createMutation.mutate();
   };
 
   return (
     <Layout>
-      {contextMenu && contextMenuItem && (
-        <ContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          item={contextMenuItem}
-          onToggle={handleToggleFlag}
-          onClose={() => setContextMenu(null)}
-        />
-      )}
-
       {showNewModal && (
-        <div style={styles.modalOverlay} onClick={() => setShowNewModal(false)}>
-          <div style={styles.modalContent} onClick={e => e.stopPropagation()}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowNewModal(false)}>
+          <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.modalHeader}>
-              <h2 style={styles.modalTitle}>NUEVA PROGRAMACIÓN</h2>
+              <h2 style={styles.modalTitle}>Nueva Programación</h2>
               <button style={styles.closeBtn} onClick={() => setShowNewModal(false)}>
                 <X size={20} />
               </button>
@@ -402,79 +366,184 @@ export default function ProgramacionesPage() {
 
             <div style={styles.modalBody}>
               <div style={styles.formGroup}>
-                <label style={styles.label}>FECHA QX *</label>
+                <label style={styles.label}>Fecha QX *</label>
                 <input
                   type="date"
-                  style={styles.input}
-                  value={formData.fechaQx}
-                  onChange={(e) => setFormData({ ...formData, fechaQx: e.target.value })}
-                  placeholder="dd/mm/aaaa"
+                  min={todayMexico}
+                  style={{ ...styles.input, ...(newProgramacionError?.field === 'fechaQx' ? styles.inputError : {}) }}
+                  value={newForm.fechaQx}
+                  onChange={e => {
+                    const fechaQx = e.target.value;
+                    const esHoy = fechaQx === todayMexico;
+                    const [h, m] = newForm.horaQx.split(':');
+                    const horaInvalida = esHoy && h && (Number(h) < Number(nowMexicoTime.split(':')[0])
+                      || (Number(h) === Number(nowMexicoTime.split(':')[0]) && m && Number(m) < Number(nowMexicoTime.split(':')[1])));
+                    setNewForm({ ...newForm, fechaQx, horaQx: horaInvalida ? '' : newForm.horaQx });
+                    setNewProgramacionError(null);
+                  }}
                 />
+                {newProgramacionError?.field === 'fechaQx' && <span style={styles.errorText}>{newProgramacionError.message}</span>}
               </div>
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>HORA QX * (formato 24h)</label>
-                <input
-                  type="text"
-                  style={styles.input}
-                  value={formData.horaQx}
-                  onChange={(e) => setFormData({ ...formData, horaQx: e.target.value })}
-                  placeholder="HH:mm"
-                  maxLength={5}
-                />
+                <label style={styles.label}>Hora QX *</label>
+                <div style={styles.horaGrid}>
+                  <select
+                    style={{ ...styles.input, ...(newProgramacionError?.field === 'horaQx' ? styles.inputError : {}) }}
+                    value={newForm.horaQx.split(':')[0] ?? ''}
+                    onChange={e => {
+                      const minuto = newForm.horaQx.split(':')[1] ?? '00';
+                      setNewForm({ ...newForm, horaQx: `${e.target.value}:${minuto}` });
+                      setNewProgramacionError(null);
+                    }}
+                  >
+                    <option value="">HH</option>
+                    {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).filter(h => Number(h) >= minHour).map(h => (
+                      <option key={h} value={h}>{h}</option>
+                    ))}
+                  </select>
+                  <select
+                    style={{ ...styles.input, ...(newProgramacionError?.field === 'horaQx' ? styles.inputError : {}) }}
+                    value={newForm.horaQx.split(':')[1] ?? ''}
+                    onChange={e => {
+                      const hora = newForm.horaQx.split(':')[0] ?? '00';
+                      setNewForm({ ...newForm, horaQx: `${hora}:${e.target.value}` });
+                      setNewProgramacionError(null);
+                    }}
+                  >
+                    <option value="">MM</option>
+                    {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).filter(m => Number(m) >= minMinute).map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+                {newProgramacionError?.field === 'horaQx' && <span style={styles.errorText}>{newProgramacionError.message}</span>}
               </div>
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>SEDE *</label>
-                <select
-                  style={styles.input}
-                  value={formData.sede}
-                  onChange={(e) => setFormData({ ...formData, sede: e.target.value })}
-                >
-                  <option value="">Seleccionar sede</option>
-                  {sedes.map(s => (
-                    <option key={s.id} value={s.nombre}>{s.nombre}</option>
+                <label style={styles.label}>Sede *</label>
+                <div style={styles.sedeGrid}>
+                  {sedeOptions.map(s => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      style={{ ...styles.sedeBtn, ...(newForm.sedeId === s.id ? styles.sedeBtnActive : {}), ...(newProgramacionError?.field === 'sedeId' ? styles.inputError : {}) }}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={e => { setNewForm({ ...newForm, sedeId: s.id }); setNewProgramacionError(null); e.currentTarget.blur(); }}
+                    >
+                      {newForm.sedeId === s.id ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
+                      {s.nombre}
+                    </button>
                   ))}
-                </select>
+                </div>
+                {newProgramacionError?.field === 'sedeId' && <span style={styles.errorText}>{newProgramacionError.message}</span>}
               </div>
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>HOSPITAL *</label>
-                <input
-                  type="text"
-                  style={styles.input}
-                  value={formData.hospital}
-                  onChange={(e) => setFormData({ ...formData, hospital: e.target.value })}
-                  placeholder="Buscar"
-                />
+                <label style={styles.label}>Hospital *</label>
+                {selectedNewHospital && (
+                  <div style={styles.medicoTagsWrap}>
+                    <span style={styles.medicoTag}>
+                      {selectedNewHospital.nombre}
+                      <X size={12} style={{ cursor: 'pointer' }} onClick={() => setNewForm({ ...newForm, hospitalId: '' })} />
+                    </span>
+                  </div>
+                )}
+                {!selectedNewHospital && (
+                  <div style={{ position: 'relative' as const }}>
+                    <input
+                      style={{ ...styles.input, ...(newProgramacionError?.field === 'hospitalId' ? styles.inputError : {}) }}
+                      placeholder="Buscar hospital..."
+                      value={newHospitalSearch}
+                      onChange={e => { setNewHospitalSearch(e.target.value); setNewProgramacionError(null); }}
+                    />
+                    {newHospitalSearch.trim() && (
+                      <div style={styles.medicoDropdown}>
+                        {newHospitalResults.length === 0 ? (
+                          <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
+                        ) : (
+                          newHospitalResults.map(h => (
+                            <div
+                              key={h.id}
+                              style={styles.medicoDropdownItem}
+                              onClick={() => { setNewForm({ ...newForm, hospitalId: h.id }); setNewHospitalSearch(''); setNewProgramacionError(null); }}
+                            >
+                              <Plus size={14} /> {h.nombre}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {newProgramacionError?.field === 'hospitalId' && <span style={styles.errorText}>{newProgramacionError.message}</span>}
+              </div>
+
+              {selectedNewHospital?.ciudadCat?.nombre && (
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Ciudad QX</label>
+                  <span style={styles.ciudadPill}>{selectedNewHospital.ciudadCat.nombre}</span>
+                </div>
+              )}
+
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Médico *</label>
+                {newMedicos.length > 0 && (
+                  <div style={styles.medicoTagsWrap}>
+                    {newMedicos.map(m => (
+                      <span key={m.id} style={styles.medicoTag}>
+                        {m.nombreCompleto}
+                        <X size={12} style={{ cursor: 'pointer' }} onClick={() => setNewMedicos(newMedicos.filter(x => x.id !== m.id))} />
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div style={{ position: 'relative' as const }}>
+                  <input
+                    style={{ ...styles.input, ...(newProgramacionError?.field === 'medicos' ? styles.inputError : {}) }}
+                    placeholder="Buscar médico..."
+                    value={newMedicoSearch}
+                    onChange={e => { setNewMedicoSearch(e.target.value); setNewProgramacionError(null); }}
+                  />
+                  {newMedicoSearch.trim() && (
+                    <div style={styles.medicoDropdown}>
+                      {newMedicoResults.filter(m => !newMedicos.some(x => x.id === m.id)).length === 0 ? (
+                        <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
+                      ) : (
+                        newMedicoResults.filter(m => !newMedicos.some(x => x.id === m.id)).map(m => (
+                          <div
+                            key={m.id}
+                            style={styles.medicoDropdownItem}
+                            onClick={() => { setNewMedicos([...newMedicos, m]); setNewMedicoSearch(''); }}
+                          >
+                            <Plus size={14} /> {m.nombreCompleto}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+                {newProgramacionError?.field === 'medicos' && <span style={styles.errorText}>{newProgramacionError.message}</span>}
               </div>
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>MÉDICO *</label>
-                <input
-                  type="text"
-                  style={styles.input}
-                  value={formData.medico}
-                  onChange={(e) => setFormData({ ...formData, medico: e.target.value })}
-                  placeholder="Agregar médico"
-                />
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>CONSUMO *</label>
+                <label style={styles.label}>Consumo *</label>
                 <textarea
-                  style={{ ...styles.input, minHeight: '100px', resize: 'vertical' }}
-                  value={formData.consumo}
-                  onChange={(e) => setFormData({ ...formData, consumo: e.target.value })}
+                  ref={autoResizeTextarea}
+                  style={{ ...styles.input, minHeight: '44px', resize: 'none' as const, overflow: 'hidden' as const, ...(newProgramacionError?.field === 'consumo' ? styles.inputError : {}) }}
+                  value={newConsumo}
+                  onChange={e => { setNewConsumo(e.target.value); setNewProgramacionError(null); autoResizeTextarea(e.target); }}
                 />
+                {newProgramacionError?.field === 'consumo' && <span style={styles.errorText}>{newProgramacionError.message}</span>}
               </div>
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>OBSERVACIONES</label>
+                <label style={styles.label}>Observaciones</label>
                 <textarea
-                  style={{ ...styles.input, minHeight: '80px', resize: 'vertical' }}
-                  value={formData.observaciones}
-                  onChange={(e) => setFormData({ ...formData, observaciones: e.target.value })}
+                  ref={autoResizeTextarea}
+                  style={{ ...styles.input, minHeight: '44px', resize: 'none' as const, overflow: 'hidden' as const }}
+                  value={newObservaciones}
+                  onChange={e => { setNewObservaciones(e.target.value); autoResizeTextarea(e.target); }}
                   placeholder="Observaciones adicionales"
                 />
               </div>
@@ -484,14 +553,25 @@ export default function ProgramacionesPage() {
               <button style={styles.cancelBtn} onClick={() => setShowNewModal(false)}>
                 Cancelar
               </button>
-              <button style={styles.saveBtn} onClick={handleSaveNew}>
-                Guardar
+              <button style={styles.saveBtn} onClick={handleGuardarNew} disabled={createMutation.isPending}>
+                {createMutation.isPending ? 'Guardando...' : 'Guardar'}
               </button>
             </div>
           </div>
         </div>
       )}
+      <SuccessToast show={showCreateSuccess} message="Programación creada" onClose={() => setShowCreateSuccess(false)} />
       <div style={{ ...styles.pageWrapper, padding: isMobile ? '0 0.75rem' : '0 1rem' }}>
+      <button
+        type="button"
+        onClick={() => navigate('/operacion')}
+        style={styles.backLink}
+        onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
+        onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}
+      >
+        <MaterialIcon name="arrow_back" size={16} />
+        Volver
+      </button>
       {/* <div style={styles.breadcrumb}>
         <span style={styles.link} onClick={() => navigate('/dashboard')}>Inicio</span>
         <span style={styles.sep}> › </span>
@@ -501,45 +581,69 @@ export default function ProgramacionesPage() {
       </div> */}
 
       <div style={{ ...styles.yearMonthGrid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', marginBottom: '1.5rem' }}>
-        <div style={{ ...styles.yearMonthCard, borderTop: '3px solid #6b8c1f' }} onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 6px 16px rgba(107,140,31,0.15)'; }} onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,0.06)'; }}>
-          <div style={styles.yearMonthHeader}>
-            <Calendar size={18} color="#6b8c1f" />
-            <div style={styles.yearMonthLabelCol}>
-              <span style={styles.comparisonTitle}>Programaciones del Año</span>
+        <div
+          style={styles.yearMonthCard}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = '#6b8c1f'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(0,0,0,0.08)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = '#eeeee6'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)'; e.currentTarget.style.transform = 'translateY(0)'; }}
+        >
+          <div style={styles.yearMonthRow}>
+            <div style={{ ...styles.yearMonthIconWrap, backgroundColor: '#6b8c1f1a' }}>
+              <Calendar size={26} color="#6b8c1f" />
+            </div>
+            <div style={styles.yearMonthTextCol}>
+              <span style={styles.yearMonthLabel}>Programaciones del Año</span>
+              <div style={styles.yearMonthValue}>{yearMonthStats.thisYear}</div>
               <span style={styles.yearMonthSubLabel}>{new Date().getFullYear()}</span>
             </div>
           </div>
-          <div style={styles.yearMonthValue}>{yearMonthStats.thisYear}</div>
         </div>
 
-        <div style={{ ...styles.yearMonthCard, borderTop: '3px solid #6b8c1f' }} onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 6px 16px rgba(107,140,31,0.15)'; }} onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,0.06)'; }}>
-          <div style={styles.yearMonthHeader}>
-            <BarChart3 size={18} color="#6b8c1f" />
-            <div style={styles.yearMonthLabelCol}>
-              <span style={styles.comparisonTitle}>Programaciones del Mes</span>
+        <div
+          style={styles.yearMonthCard}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = '#6b8c1f'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(0,0,0,0.08)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = '#eeeee6'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)'; e.currentTarget.style.transform = 'translateY(0)'; }}
+        >
+          <div style={styles.yearMonthRow}>
+            <div style={{ ...styles.yearMonthIconWrap, backgroundColor: '#6b8c1f1a' }}>
+              <BarChart3 size={26} color="#6b8c1f" />
+            </div>
+            <div style={styles.yearMonthTextCol}>
+              <span style={styles.yearMonthLabel}>Programaciones del Mes</span>
+              <div style={styles.yearMonthValue}>{yearMonthStats.thisMonth}</div>
               <span style={styles.yearMonthSubLabel}>{new Date().toLocaleString('es-MX', { month: 'long', year: 'numeric' })}</span>
             </div>
           </div>
-          <div style={styles.yearMonthValue}>{yearMonthStats.thisMonth}</div>
         </div>
 
-        <div style={{ ...styles.yearMonthCard, borderTop: '3px solid #6b8c1f' }} onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 6px 16px rgba(107,140,31,0.15)'; }} onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,0.06)'; }}>
-          <div style={styles.yearMonthHeader}>
-            <Activity size={18} color="#6b8c1f" />
-            <div style={styles.yearMonthLabelCol}>
-              <span style={styles.comparisonTitle}>Total Programaciones</span>
+        <div
+          style={styles.yearMonthCard}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = '#6b8c1f'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(0,0,0,0.08)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = '#eeeee6'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)'; e.currentTarget.style.transform = 'translateY(0)'; }}
+        >
+          <div style={styles.yearMonthRow}>
+            <div style={{ ...styles.yearMonthIconWrap, backgroundColor: '#6b8c1f1a' }}>
+              <Activity size={26} color="#6b8c1f" />
+            </div>
+            <div style={styles.yearMonthTextCol}>
+              <span style={styles.yearMonthLabel}>Total Programaciones</span>
+              <div style={styles.yearMonthValue}>{stats?.total || 0}</div>
               <span style={styles.yearMonthSubLabel}>Todos los registros</span>
             </div>
           </div>
-          <div style={styles.yearMonthValue}>{stats?.total || 0}</div>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: '0.75rem', marginBottom: '1.5rem' }}>
-        <div style={{ ...styles.comparisonCard, borderTop: '3px solid #6b8c1f' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+        <div
+          style={styles.comparisonCard}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = '#6b8c1f'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(0,0,0,0.08)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = '#eeeee6'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)'; e.currentTarget.style.transform = 'translateY(0)'; }}
+        >
           <div style={styles.comparisonHeader}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
-              <Calendar size={18} color="#6b8c1f" style={{ marginTop: '0.2rem', flexShrink: 0 }} />
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem' }}>
+              <div style={{ ...styles.panelIconWrap, backgroundColor: '#6b8c1f1a' }}>
+                <Calendar size={16} color="#6b8c1f" />
+              </div>
               <div>
                 <h3 style={styles.comparisonTitle}>Comparativa de Meses</h3>
                 <p style={styles.comparisonSubtitle}>Programaciones de {['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][selectedMonth - 1]} por año</p>
@@ -556,36 +660,51 @@ export default function ProgramacionesPage() {
             </select>
           </div>
           <div style={styles.comparisonGrid}>
-            {monthComparison.map(item => (
-              <div key={item.year} style={styles.comparisonItem}>
-                <div style={styles.comparisonYear}>{item.year}</div>
-                <div style={styles.comparisonCount}>{item.count}</div>
-                <div style={styles.comparisonLabel}>programaciones</div>
-              </div>
-            ))}
+            {monthComparison.map(item => {
+              const isCurrentYear = item.year === currentYear;
+              return (
+                <div
+                  key={item.year}
+                  style={{
+                    ...styles.comparisonItem,
+                    ...(isCurrentYear ? { backgroundColor: '#6b8c1f0d', border: '1px solid #6b8c1f33' } : {}),
+                  }}
+                >
+                  <div style={styles.comparisonYear}>{item.year}</div>
+                  <div style={{ ...styles.comparisonCount, color: isCurrentYear ? '#6b8c1f' : '#1a1a1a' }}>{item.count}</div>
+                  <div style={styles.comparisonLabel}>programaciones</div>
+                </div>
+              );
+            })}
           </div>
 
           {comparisonAnalysis && (
-            <div style={{ marginTop: '1rem', padding: '0.75rem', backgroundColor: '#f9fafb', borderRadius: '8px', fontSize: '0.8rem', color: '#555', lineHeight: '1.5' }}>
-              <p style={{ margin: 0 }}>
-                <span style={{ fontWeight: 600, color: comparisonAnalysis.trend === 'subida' ? '#6b8c1f' : '#dc2626' }}>
-                  {comparisonAnalysis.trendSymbol} {comparisonAnalysis.difference} programaciones {comparisonAnalysis.trend}
-                </span>{' '}
-                con respecto al año anterior, lo que representa un{' '}
-                <span style={{ fontWeight: 600, color: comparisonAnalysis.trend === 'subida' ? '#6b8c1f' : '#dc2626' }}>
-                  {comparisonAnalysis.percentChange}% de {comparisonAnalysis.trend}
-                </span>
-                .
-              </p>
+            <div
+              style={{
+                marginTop: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', width: '100%', boxSizing: 'border-box',
+                padding: '0.6rem 0.9rem', borderRadius: '10px',
+                backgroundColor: comparisonAnalysis.trend === 'subida' ? '#6b8c1f14' : comparisonAnalysis.trend === 'bajada' ? '#dc262614' : '#6b728014',
+                color: comparisonAnalysis.trend === 'subida' ? '#6b8c1f' : comparisonAnalysis.trend === 'bajada' ? '#dc2626' : '#6b7280',
+                fontSize: '0.8rem', fontWeight: 600,
+              }}
+            >
+              {comparisonAnalysis.trend === 'subida' ? <ArrowUp size={14} /> : comparisonAnalysis.trend === 'bajada' ? <ArrowDown size={14} /> : <ArrowRight size={14} />}
+              {comparisonAnalysis.difference} programaciones {comparisonAnalysis.trend} con respecto al año anterior, lo que representa un {comparisonAnalysis.percentChange.toFixed(1)}% de {comparisonAnalysis.trend}.
             </div>
           )}
         </div>
 
-        <div style={{ ...styles.comparisonCard, borderTop: '3px solid #6b8c1f', display: 'flex', flexDirection: 'column' }}>
+        <div
+          style={{ ...styles.comparisonCard, display: 'flex', flexDirection: 'column' }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = '#6b8c1f'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(0,0,0,0.08)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = '#eeeee6'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)'; e.currentTarget.style.transform = 'translateY(0)'; }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <MapPin size={16} color="#6b8c1f" />
-              <h3 style={{ fontSize: '0.875rem', fontWeight: 700, color: '#333', margin: 0 }}>Distribución por Sede {currentYear}</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+              <div style={{ ...styles.panelIconWrap, backgroundColor: '#6b8c1f1a' }}>
+                <MapPin size={16} color="#6b8c1f" />
+              </div>
+              <h3 style={styles.comparisonTitle}>Distribución por Sede {currentYear}</h3>
             </div>
             <select
               value={selectedMonthForSedes}
@@ -608,15 +727,17 @@ export default function ProgramacionesPage() {
                     cy="50%"
                     innerRadius={45}
                     outerRadius={70}
-                    paddingAngle={2}
+                    cornerRadius={6}
+                    paddingAngle={3}
                     dataKey="value"
+                    stroke="none"
                   >
                     {sedeDistributionData.data.map((_, index) => (
                       <Cell key={`cell-${index}`} fill={chartColors[index % chartColors.length]} />
                     ))}
                   </Pie>
                   <Tooltip formatter={(value) => `${value} programaciones`} />
-                  <Legend verticalAlign="bottom" height={32} />
+                  <Legend verticalAlign="bottom" height={32} iconType="circle" iconSize={9} wrapperStyle={{ fontSize: '0.8rem', fontWeight: 600 }} />
                 </PieChart>
               </ResponsiveContainer>
 
@@ -649,11 +770,20 @@ export default function ProgramacionesPage() {
         </div>
       </div>
 
-      <ProgramacionesStats stats={stats} isLoading={statsLoading} />
+      <ProgramacionesStats
+        stats={stats}
+        isLoading={statsLoading}
+        activeFilters={statusFilters}
+        onToggleFilter={key => {
+          setStatusFilters(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+          setPage(1);
+        }}
+      />
 
+      <div style={styles.contentCard}>
       <div style={{ ...styles.toolbar, flexWrap: 'wrap' }}>
         <div style={{ ...styles.searchWrap, minWidth: isMobile ? '100%' : '250px', marginBottom: isMobile ? '0.5rem' : 0 }}>
-          <Search size={15} color="#999" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+          <Search size={15} color="#9ca3af" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
           <input
             style={styles.searchInput}
             placeholder="Buscar por N° program, médico, hospital..."
@@ -673,61 +803,54 @@ export default function ProgramacionesPage() {
           onChange={(s) => { setStatusFilters(s); setPage(1); }}
         />
 
-        <span style={styles.totalLabel}>
-          {isLoading ? '...' : `${data?.total ?? 0} registros`}
-        </span>
-
         <button
+          className="btn-press header-btn-primary"
           style={{ ...styles.newBtn, width: isMobile ? '100%' : 'auto', marginLeft: isMobile ? 0 : 'auto' }}
-          onClick={() => setShowNewModal(true)}
-          onMouseEnter={e => {
-            e.currentTarget.style.backgroundColor = '#1a1a1a';
-            e.currentTarget.style.boxShadow = '0 6px 16px rgba(0,0,0,0.15)';
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.backgroundColor = '#333';
-            e.currentTarget.style.boxShadow = 'none';
-          }}
+          onClick={openNewModal}
         >
           <Plus size={16} />
           Nueva
         </button>
+
+        <span style={styles.totalLabel}>
+          {isLoading ? '...' : `${data?.total ?? 0} registros`}
+        </span>
       </div>
 
-      <div style={{ ...styles.tableWrap, maxHeight: isMobile ? 'calc(100vh - 500px)' : 'calc(100vh - 340px)' }}>
-        {isLoading && allData.length === 0 ? (
+      <div ref={tableWrapRef} style={{ ...styles.tableWrap, maxHeight: isMobile ? 'calc(100vh - 460px)' : 'calc(100vh - 260px)' }}>
+        {isLoading && items.length === 0 ? (
           <div style={styles.empty}>Cargando...</div>
-        ) : allData.length === 0 ? (
+        ) : items.length === 0 ? (
           <div style={styles.empty}>Sin registros</div>
         ) : (
           <table style={styles.table}>
-            <thead>
+            <thead ref={theadRef}>
               <tr style={styles.thead}>
-                {['#', '', 'N° Program', 'Fecha QX', 'Hora QX', 'Sede', 'Ciudad QX', 'Médico', 'Hospital', 'Observaciones', 'Saldo', '% Avance'].map((h, i) => (
+                {['#', 'Estado', 'N° Program', 'Fecha QX', 'Hora QX', 'Sede', 'Ciudad QX', 'Médico', 'Hospital', 'Observaciones'].map((h, i) => (
                   <th key={i} style={styles.th}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {allData.map((item, index) => (
+              {items.map((item, index) => (
                 <ProgramacionRow
                   key={item.id}
                   item={item}
-                  index={index}
-                  onContextMenu={handleRowContextMenu}
+                  index={(page - 1) * 300 + index}
                   navigate={navigate}
-                  getBorderColor={getBorderColor}
                 />
               ))}
             </tbody>
           </table>
         )}
       </div>
+      </div>
 
       {/* Pagination controls */}
       {data && data.totalPages > 1 && (
         <div style={styles.pagination}>
           <button
+            className="btn-press"
             onClick={() => setPage(p => Math.max(1, p - 1))}
             disabled={page === 1}
             style={{
@@ -760,6 +883,7 @@ export default function ProgramacionesPage() {
           </span>
 
           <button
+            className="btn-press"
             onClick={() => setPage(p => Math.min(data.totalPages, p + 1))}
             disabled={page === data.totalPages}
             style={{
@@ -797,34 +921,46 @@ const chartColors = ['#6b8c1f', '#2563eb', '#7c3aed', '#dc2626', '#f59e0b', '#10
 
 const styles: Record<string, React.CSSProperties> = {
   pageWrapper: { padding: '0 1rem' },
+  backLink: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem', padding: '0.25rem 0.1rem', border: 'none', background: 'transparent', color: '#6b7280', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, transition: 'color 0.15s ease' },
   breadcrumb: { display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '1rem', fontSize: '0.875rem' },
   link: { color: '#6b8c1f', cursor: 'pointer', fontWeight: 500 },
   sep: { color: '#999', margin: '0' },
   current: { color: '#333', fontWeight: 700 },
-  yearMonthGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem', marginBottom: '0.75rem' },
-  yearMonthCard: { backgroundColor: '#fff', borderRadius: '10px', padding: '1rem 1.25rem', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', transition: 'all 0.2s ease', cursor: 'default', backfaceVisibility: 'hidden', WebkitFontSmoothing: 'antialiased' },
-  yearMonthHeader: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' },
-  yearMonthLabelCol: { display: 'flex', flexDirection: 'column', gap: '0.1rem', flex: 1 },
-  yearMonthLabel: { fontSize: '0.75rem', fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' },
-  yearMonthSubLabel: { fontSize: '0.7rem', fontWeight: 500, color: '#999', textTransform: 'capitalize' },
-  yearMonthValue: { fontSize: '1.6rem', fontWeight: 800, color: '#1a1a1a', lineHeight: 1 },
-  comparisonCard: { backgroundColor: '#fff', borderRadius: '10px', padding: '0.75rem 1rem', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', transition: 'all 0.2s ease', cursor: 'default', backfaceVisibility: 'hidden', WebkitFontSmoothing: 'antialiased' },
+  yearMonthGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem', marginBottom: '0.75rem' },
+  yearMonthCard: {
+    backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '16px', padding: '1.25rem',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.04)', transform: 'translateY(0)',
+    transition: 'all 0.2s ease', cursor: 'default', backfaceVisibility: 'hidden', WebkitFontSmoothing: 'antialiased',
+  },
+  yearMonthRow: { display: 'flex', alignItems: 'center', gap: '1rem' },
+  yearMonthTextCol: { display: 'flex', flexDirection: 'column', gap: '0.2rem' },
+  yearMonthIconWrap: { width: '64px', height: '64px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  yearMonthLabel: { fontSize: '0.85rem', fontWeight: 700, color: '#16170f' },
+  yearMonthSubLabel: { fontSize: '0.72rem', fontWeight: 500, color: '#9ca3af', textTransform: 'capitalize' },
+  yearMonthValue: { fontSize: '1.9rem', fontWeight: 800, color: '#16170f', lineHeight: 1 },
+  comparisonCard: {
+    backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '16px', padding: '1.25rem',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.04)', transform: 'translateY(0)',
+    transition: 'all 0.2s ease', cursor: 'default', backfaceVisibility: 'hidden', WebkitFontSmoothing: 'antialiased',
+  },
+  panelIconWrap: { width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   comparisonHeader: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '0.75rem', gap: '0.75rem', flexWrap: 'wrap' },
   comparisonTitle: { fontSize: '0.875rem', fontWeight: 700, color: '#333', margin: '0 0 0.15rem 0' },
   comparisonSubtitle: { fontSize: '0.7rem', color: '#999', margin: 0, fontWeight: 500 },
   monthSelect: { padding: '0.35rem 0.5rem', border: '1px solid #e5e7eb', borderRadius: '6px', fontSize: '0.75rem', outline: 'none', fontFamily: 'inherit', cursor: 'pointer' },
   comparisonGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '0.5rem' },
-  comparisonItem: { backgroundColor: '#f9fafb', borderRadius: '10px', padding: '1rem 1.25rem', textAlign: 'center', border: '1px solid #e5e7eb' },
+  comparisonItem: { backgroundColor: '#f9fafb', borderRadius: '10px', padding: '1rem 1.25rem', textAlign: 'center', border: '1px solid #e5e7eb', transition: 'all 0.2s ease' },
   comparisonYear: { fontSize: '0.875rem', fontWeight: 600, color: '#666', marginBottom: '0.5rem' },
   comparisonCount: { fontSize: '1.8rem', fontWeight: 800, lineHeight: 1 },
   comparisonLabel: { fontSize: '0.7rem', color: '#999', marginTop: '0.5rem', fontWeight: 500 },
   chartCard: { backgroundColor: '#fff', borderRadius: '10px', padding: '1.5rem', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', transition: 'all 0.2s ease', cursor: 'default', backfaceVisibility: 'hidden', WebkitFontSmoothing: 'antialiased' },
+  contentCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '16px', padding: '1.25rem', marginBottom: '1rem' },
   toolbar: { display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap', justifyContent: 'flex-start' },
   searchWrap: { position: 'relative', flex: 1, minWidth: '250px' },
-  searchInput: { width: '100%', padding: '0.5rem 0.75rem 0.5rem 2rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', fontSize: '0.875rem', outline: 'none', boxSizing: 'border-box' },
+  searchInput: { width: '100%', padding: '0.6rem 0.75rem 0.6rem 2.25rem', border: 'none', backgroundColor: '#f5f5f0', borderRadius: '10px', fontSize: '0.875rem', outline: 'none', boxSizing: 'border-box', color: '#374151' },
   totalLabel: { fontSize: '0.8rem', color: '#999', whiteSpace: 'nowrap' },
-  newBtn: { display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.45rem 1rem', backgroundColor: '#333', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.875rem', marginLeft: 'auto', whiteSpace: 'nowrap', transition: 'all 0.2s ease', backfaceVisibility: 'hidden', WebkitFontSmoothing: 'antialiased' },
-  tableWrap: { backgroundColor: '#fff', borderRadius: '12px', overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 340px)', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
+  newBtn: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.1rem', border: '1px solid #dbe8c2', borderRadius: '12px', color: '#3f6510', fontWeight: 600, fontSize: '0.84375rem', cursor: 'pointer', whiteSpace: 'nowrap' as const, marginLeft: 'auto', flexShrink: 0 },
+  tableWrap: { borderRadius: '10px', overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 260px)', border: '1px solid #f0f0eb' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' },
   thead: { backgroundColor: '#f9fafb' },
   th: { padding: '0.65rem 0.875rem', textAlign: 'left', fontWeight: 700, color: '#555', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: '2px solid #e5e7eb', whiteSpace: 'nowrap', position: 'sticky', top: 0, backgroundColor: '#f9fafb', zIndex: 1 },
@@ -835,13 +971,24 @@ const styles: Record<string, React.CSSProperties> = {
   loader: { padding: '2rem', textAlign: 'center' as const },
   modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 },
   modalContent: { backgroundColor: '#fff', borderRadius: '12px', width: '90%', maxWidth: '600px', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
-  modalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.5rem', borderBottom: '1px solid #e5e7eb' },
+  modalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.5rem', backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb', borderTopLeftRadius: '12px', borderTopRightRadius: '12px' },
   modalTitle: { fontSize: '1.25rem', fontWeight: 700, color: '#333', margin: 0 },
   closeBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '36px', height: '36px', border: 'none', backgroundColor: '#f3f4f6', borderRadius: '8px', cursor: 'pointer', color: '#666' },
   modalBody: { padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' },
   formGroup: { display: 'flex', flexDirection: 'column', gap: '0.5rem' },
   label: { fontSize: '0.75rem', fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: '0.05em' },
   input: { padding: '0.75rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', fontSize: '0.875rem', outline: 'none', fontFamily: 'inherit' },
+  inputError: { borderColor: '#dc2626' },
+  errorText: { fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 },
+  horaGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' },
+  sedeGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' },
+  sedeBtn: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 0.75rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', color: '#374151', fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const },
+  sedeBtnActive: { backgroundColor: '#6b8c1f', border: '1px solid #6b8c1f', color: '#fff' },
+  ciudadPill: { display: 'inline-flex', alignSelf: 'flex-start' as const, padding: '0.4rem 0.85rem', borderRadius: '999px', border: '1px solid #e5e7eb', backgroundColor: '#f9fafb', fontSize: '0.85rem', fontWeight: 600, color: '#374151' },
+  medicoTagsWrap: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.5rem' },
+  medicoTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#f3f4f6', color: '#333', fontSize: '0.8rem', fontWeight: 600 },
+  medicoDropdown: { position: 'absolute' as const, top: 'calc(100% + 0.35rem)', left: 0, right: 0, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', maxHeight: '220px', overflowY: 'auto' as const, zIndex: 20 },
+  medicoDropdownItem: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#333', cursor: 'pointer' },
   modalFooter: { display: 'flex', gap: '1rem', padding: '1.5rem', borderTop: '1px solid #e5e7eb', justifyContent: 'flex-end' },
   cancelBtn: { padding: '0.5rem 1.5rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: '0.875rem', color: '#333' },
   saveBtn: { padding: '0.5rem 1.5rem', backgroundColor: '#6b8c1f', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.875rem' },

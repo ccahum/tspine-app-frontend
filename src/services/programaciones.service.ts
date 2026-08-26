@@ -2,7 +2,7 @@ import { api } from '../lib/axios';
 
 export interface ProgramacionItem {
   id: string;
-  idLegacy: string | null;
+  numProgram: string | null;
   fechaQx: string | null;
   horaQx: string | null;
   sede: string | null;
@@ -38,6 +38,7 @@ export interface ProgramacionQuery {
   sinRemision?: boolean;
   sinComision?: boolean;
   consumoNoValidado?: boolean;
+  conRequisicion?: boolean;
 }
 
 export interface ProgramacionStats {
@@ -48,18 +49,19 @@ export interface ProgramacionStats {
   cerradas: number;
   saldoPendiente: number;
   porSede: { sede: string; total: number }[];
+  programacionesAño?: number;
+  programacionesMes?: number;
 }
 
-export type FlagsUpdate = Partial<Pick<ProgramacionItem, 'sinRemision' | 'consumoNoValidado' | 'sinComision' | 'cerrada' | 'alertaConsumos'>>;
+export type FlagsUpdate = Partial<Pick<ProgramacionItem, 'cerrada' | 'alertaConsumos'>>;
 
 export interface ProgramacionDetail {
   id: string;
-  idLegacy: string | null;
   fechaQx: string | null;
   horaQx: string | null;
   sede: { id: string; nombre: string } | null;
   ciudad: string | null;
-  hospital: { id: string; nombre: string } | null;
+  hospital: { id: string; nombre: string; ciudadCat: { nombre: string } | null; tercero: { id: string; nombreCompleto: string } | null } | null;
   medicos: Array<{ medico: { id: string; nombreCompleto: string } }>;
   tecnicos: Array<{ tecnico: { id: string; nombreCompleto: string } }>;
   observaciones: string | null;
@@ -82,6 +84,32 @@ export interface ProgramacionDetail {
   alertaConsumos: boolean;
   avance: number | null;
   estadoRequisicion: string | null;
+}
+
+export interface SedeOption {
+  id: string;
+  nombre: string;
+}
+
+export interface HospitalOption {
+  id: string;
+  nombre: string;
+  ciudadCat: { nombre: string } | null;
+}
+
+export interface MedicoOption {
+  id: string;
+  nombreCompleto: string;
+}
+
+export interface UpdateProgramacionPayload {
+  fechaQx?: string;
+  horaQx?: string;
+  sedeId?: string;
+  hospitalId?: string;
+  observaciones?: string;
+  consumo?: string;
+  medicoIds?: string[];
 }
 
 export interface MonthComparison {
@@ -120,8 +148,32 @@ export const programacionesService = {
     return res.data;
   },
 
-  create: async (data: any): Promise<ProgramacionItem> => {
+  create: async (data: UpdateProgramacionPayload): Promise<ProgramacionItem> => {
     const res = await api.post<ProgramacionItem>('/operacion/programaciones', data);
+    return res.data;
+  },
+
+  update: async (id: string, data: UpdateProgramacionPayload): Promise<ProgramacionItem> => {
+    const res = await api.patch<ProgramacionItem>(`/operacion/programaciones/${id}`, data);
+    return res.data;
+  },
+
+  delete: async (id: string): Promise<void> => {
+    await api.delete(`/operacion/programaciones/${id}`);
+  },
+
+  getSedes: async (): Promise<SedeOption[]> => {
+    const res = await api.get<SedeOption[]>('/operacion/programaciones/sedes');
+    return res.data;
+  },
+
+  getHospitales: async (): Promise<HospitalOption[]> => {
+    const res = await api.get<HospitalOption[]>('/operacion/programaciones/hospitales');
+    return res.data;
+  },
+
+  searchMedicos: async (search?: string): Promise<MedicoOption[]> => {
+    const res = await api.get<MedicoOption[]>('/operacion/programaciones/medicos', { params: { search } });
     return res.data;
   },
 

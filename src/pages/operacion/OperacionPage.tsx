@@ -1,23 +1,27 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  FileText, Calendar, ClipboardCheck, ShieldCheck,
-  CalendarDays, Tag, DollarSign,
+  Wrench, FileText, Calendar, ClipboardCheck, ShieldCheck,
+  CalendarDays, Tag, Tags, CalendarPlus,
 } from 'lucide-react';
 import Layout from '../../components/layout/Layout';
+import { MaterialIcon } from '../../components/icons/MaterialIcon';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 
+const ACCENT = '#4a7c59';
+
 const submodules = [
-  { icon: FileText, label: 'Cotizaciones', path: '/operacion/cotizaciones', color: '#6b8c1f' },
-  { icon: Calendar, label: 'Programación', path: '/operacion/programaciones', color: '#4a7c59' },
-  { icon: ClipboardCheck, label: 'Remisión', path: '/operacion/remision', color: '#5c7a3e' },
-  { icon: ShieldCheck, label: 'Autorización de Consumos', path: '/operacion/autorizacion-consumos', color: '#3d6b52' },
-  { icon: CalendarDays, label: 'Calendario Programación', path: '/operacion/calendario', color: '#6b8c1f' },
-  { icon: Tag, label: 'Listas de Precio', path: '/operacion/listas-precio', color: '#4a7c59' },
-  { icon: DollarSign, label: 'Precios Especiales', path: '/operacion/precios-especiales', color: '#5c7a3e' },
+  { icon: FileText, label: 'Cotizaciones', description: 'Genera y da seguimiento a cotizaciones', path: '/operacion/cotizaciones' },
+  { icon: Calendar, label: 'Programación', description: 'Registro y control de cirugías', path: '/operacion/programaciones' },
+  { icon: ClipboardCheck, label: 'Remisión', description: 'Remisiones asociadas a programaciones', path: '/operacion/remision' },
+  { icon: ShieldCheck, label: 'Autorización de consumos', description: 'Valida el material consumido', path: '/operacion/autorizacion-consumos' },
+  { icon: CalendarDays, label: 'Calendario de programación', description: 'Vista mensual por sede', path: '/operacion/calendario' },
+  { icon: Tag, label: 'Listas de precio', description: 'Precios vigentes por producto', path: '/operacion/listas-precio' },
+  { icon: Tags, label: 'Precios especiales', description: 'Acuerdos y descuentos por cliente', path: '/operacion/precios-especiales' },
+  { icon: CalendarPlus, label: 'Solicitud de programación', description: 'Solicitudes pendientes de agendar', path: '/operacion/solicitud-programacion' },
 ];
 
-function SubmoduleCard({ icon: Icon, label, path, color }: typeof submodules[0]) {
+function SubmoduleCard({ icon: Icon, label, description, path }: typeof submodules[0]) {
   const navigate = useNavigate();
   const [hovered, setHovered] = useState(false);
 
@@ -28,15 +32,14 @@ function SubmoduleCard({ icon: Icon, label, path, color }: typeof submodules[0])
       onMouseLeave={() => setHovered(false)}
       style={{
         ...styles.card,
-        boxShadow: hovered ? '0 8px 24px rgba(107,140,31,0.2)' : '0 2px 8px rgba(0,0,0,0.07)',
-        transform: hovered ? 'translateY(-3px)' : 'translateY(0)',
-        borderTop: `3px solid ${hovered ? color : 'transparent'}`,
+        borderColor: hovered ? ACCENT : '#eeeee6',
+        boxShadow: hovered ? '0 8px 20px rgba(0,0,0,0.08)' : '0 1px 3px rgba(0,0,0,0.04)',
+        transform: hovered ? 'translateY(-2px)' : 'translateY(0)',
       }}
     >
-      <div style={{ ...styles.iconWrap, backgroundColor: `${color}18` }}>
-        <Icon size={32} color={color} />
-      </div>
+      <Icon size={20} color={ACCENT} style={{ marginBottom: '0.5rem' }} />
       <span style={styles.cardLabel}>{label}</span>
+      <span style={styles.cardDescription}>{description}</span>
     </div>
   );
 }
@@ -48,7 +51,28 @@ export default function OperacionPage() {
   return (
     <Layout>
       <div style={{ ...styles.container, paddingLeft: isMobile ? '1rem' : '2rem', paddingRight: isMobile ? '1rem' : '2rem' }}>
-        <div style={{ ...styles.grid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+        <button
+          type="button"
+          onClick={() => navigate('/dashboard')}
+          style={styles.backLink}
+          onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
+          onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}
+        >
+          <MaterialIcon name="arrow_back" size={16} />
+          Volver
+        </button>
+
+        <div style={styles.header}>
+          <div style={styles.headerIconWrap}>
+            <Wrench size={30} color={ACCENT} />
+          </div>
+          <div>
+            <h1 style={styles.headerTitle}>Operación</h1>
+            <p style={styles.headerSub}>{submodules.length} submódulos disponibles</p>
+          </div>
+        </div>
+
+        <div style={{ ...styles.grid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(240px, 1fr))' }}>
           {submodules.map((mod) => (
             <SubmoduleCard key={mod.path} {...mod} />
           ))}
@@ -63,45 +87,59 @@ const styles: Record<string, React.CSSProperties> = {
     paddingLeft: '2rem',
     paddingRight: '2rem',
   },
-  breadcrumb: {
-    marginBottom: '1.5rem',
-    fontSize: '0.9rem',
+  backLink: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem', padding: '0.25rem 0.1rem', border: 'none', background: 'transparent', color: '#6b7280', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, transition: 'color 0.15s ease' },
+  header: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '1.1rem',
+    marginBottom: '1.75rem',
   },
-  breadcrumbLink: {
-    color: '#6b8c1f',
-    cursor: 'pointer',
-    fontWeight: 500,
+  headerIconWrap: {
+    width: '64px',
+    height: '64px',
+    borderRadius: '16px',
+    backgroundColor: '#e9f2d8',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
   },
-  separator: { color: '#999', margin: '0 0.25rem' },
-  breadcrumbCurrent: { color: '#333', fontWeight: 600 },
+  headerTitle: {
+    fontSize: '1.8rem',
+    fontWeight: 700,
+    color: '#16170f',
+    margin: 0,
+  },
+  headerSub: {
+    fontSize: '0.95rem',
+    color: '#6b7280',
+    margin: '0.3rem 0 0',
+  },
   grid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
     gap: '1.25rem',
   },
   card: {
     backgroundColor: '#fff',
-    borderRadius: '12px',
-    padding: '1.75rem 1.5rem',
+    border: '1px solid #eeeee6',
+    borderRadius: '16px',
+    padding: '1.5rem',
     cursor: 'pointer',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'flex-start',
-    gap: '1rem',
     transition: 'all 0.2s ease',
-    borderTop: '3px solid transparent',
-  },
-  iconWrap: {
-    width: '56px',
-    height: '56px',
-    borderRadius: '12px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   cardLabel: {
-    fontSize: '0.95rem',
-    fontWeight: 600,
-    color: '#333',
+    fontSize: '1rem',
+    fontWeight: 700,
+    color: '#16170f',
+  },
+  cardDescription: {
+    fontSize: '0.82rem',
+    fontWeight: 400,
+    color: '#6b7280',
+    marginTop: '0.3rem',
   },
 };

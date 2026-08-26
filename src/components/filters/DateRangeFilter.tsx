@@ -1,5 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { CalendarDays, X, ChevronDown } from 'lucide-react';
+import { toLocalDateString } from '../../lib/date.utils';
 
 interface Props {
   dateFrom: string;
@@ -11,15 +13,38 @@ export default function DateRangeFilter({ dateFrom, dateTo, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const [tempFrom, setTempFrom] = useState(dateFrom);
   const [tempTo, setTempTo] = useState(dateTo);
-  const ref = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (triggerRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const reposition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const menuWidth = 340;
+      const left = Math.min(rect.left, window.innerWidth - menuWidth - 12);
+      setMenuPos({ top: rect.bottom + 6, left: Math.max(12, left) });
+    };
+    reposition();
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [open]);
 
   useEffect(() => {
     setTempFrom(dateFrom);
@@ -56,7 +81,7 @@ export default function DateRangeFilter({ dateFrom, dateTo, onChange }: Props) {
   };
 
   const today = new Date();
-  const fmt = (d: Date) => d.toISOString().split('T')[0];
+  const fmt = (d: Date) => toLocalDateString(d);
 
   const presets = [
     {
@@ -86,8 +111,9 @@ export default function DateRangeFilter({ dateFrom, dateTo, onChange }: Props) {
   ];
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div style={{ position: 'relative' as const }}>
       <button
+        ref={triggerRef}
         onClick={() => setOpen(o => !o)}
         onMouseEnter={e => {
           e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)';
@@ -117,8 +143,8 @@ export default function DateRangeFilter({ dateFrom, dateTo, onChange }: Props) {
           : <ChevronDown size={13} style={{ flexShrink: 0 }} />}
       </button>
 
-      {open && (
-        <div style={menu}>
+      {open && createPortal(
+        <div ref={menuRef} style={{ ...menu, top: menuPos.top, left: menuPos.left }}>
           {/* Presets */}
           <div style={presetsRow}>
             {presets.map(p => (
@@ -174,17 +200,18 @@ export default function DateRangeFilter({ dateFrom, dateTo, onChange }: Props) {
               Aplicar
             </button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
 }
 
 const menu: React.CSSProperties = {
-  position: 'absolute', top: '110%', left: 0, zIndex: 300,
+  position: 'fixed', zIndex: 10050,
   backgroundColor: '#fff', borderRadius: '12px', padding: '0.875rem',
   boxShadow: '0 8px 32px rgba(0,0,0,0.14)', border: '1px solid #e5e7eb',
-  minWidth: '300px',
+  width: '340px', boxSizing: 'border-box',
 };
 const presetsRow: React.CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginBottom: '0.5rem' };
 const presetBtn: React.CSSProperties = {
@@ -192,7 +219,7 @@ const presetBtn: React.CSSProperties = {
   cursor: 'pointer', backgroundColor: '#f9fafb', fontSize: '0.78rem', color: '#555',
 };
 const inputsRow: React.CSSProperties = { display: 'flex', gap: '0.5rem', alignItems: 'flex-start', marginBottom: '0.75rem' };
-const inputGroup: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: 1 };
+const inputGroup: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: 1, minWidth: 0 };
 const inputLabel: React.CSSProperties = { fontSize: '0.75rem', fontWeight: 600, color: '#666' };
 const dateInput: React.CSSProperties = {
   padding: '0.4rem 0.5rem', border: '1.5px solid #e5e7eb', borderRadius: '8px',

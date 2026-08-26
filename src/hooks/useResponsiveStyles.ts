@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from 'react';
 export function useResponsiveStyles() {
   const [isMobile, setIsMobile] = useState(false);
   const [isTablet, setIsTablet] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout>();
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     const handleResize = () => {
