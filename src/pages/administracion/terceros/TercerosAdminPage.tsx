@@ -16,12 +16,12 @@ import {
   type ClasificacionTercero,
   type TercerosCatalogos,
   type TipoContacto,
-  type TipoDeCuenta,
   type TipoCuenta,
   type CreateTerceroContactoPayload,
   type CreateTerceroCuentaPayload,
   type TerceroContactoItem,
   type TerceroCuentaItem,
+  type TerceroDetail,
 } from '../../../services/tercerosAdmin.service';
 
 const formatDateTime = (dateString: string | null): string => {

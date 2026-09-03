@@ -185,7 +185,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
     const timer = setTimeout(() => {
       busquedaGlobalService.buscar(term)
         .then(res => { setResults(res); setSearchOpen(true); })
-        .catch(() => setResults({ programaciones: [], remisiones: [], tecnicos: [] }))
+        .catch(() => setResults({ programaciones: [], remisiones: [], cotizaciones: [] }))
         .finally(() => setSearching(false));
     }, 300);
     return () => clearTimeout(timer);
