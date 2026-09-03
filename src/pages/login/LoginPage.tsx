@@ -532,7 +532,10 @@ const styles: Record<string, React.CSSProperties> = {
     position: 'relative' as const,
     backgroundImage: `linear-gradient(180deg, rgba(10,20,15,0.22) 0%, rgba(10,20,15,0.3) 45%, rgba(6,14,10,0.88) 100%), url(${portada})`,
     backgroundSize: 'cover',
-    backgroundPosition: 'center',
+    // La foto es más ancha que el panel (2:1) — "center" recortaba justo las pantallas del
+    // lado derecho, que es lo más relevante de la imagen. Se corre el foco hacia la derecha
+    // para que se alcancen a ver.
+    backgroundPosition: '70% center',
     display: 'flex',
     flexDirection: 'column' as const,
     justifyContent: 'space-between',
