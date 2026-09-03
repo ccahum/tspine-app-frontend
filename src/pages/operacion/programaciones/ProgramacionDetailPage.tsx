@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Loader, FileText, CheckCircle, Circle, X, Plus, Lock, AlertCircle, CircleX, DollarSign, Trash2 } from 'lucide-react';
+import { SiGmail } from 'react-icons/si';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import Layout from '../../../components/layout/Layout';
 import SignaturePad from '../../../components/SignaturePad';
@@ -88,6 +89,18 @@ const formatDateTime = (dateString: string | null): string => {
   } catch {
     return dateString;
   }
+};
+
+// Para un Date real del navegador (ej. "ahora" al abrir un formulario) — a diferencia de
+// formatDateTime, que lee componentes UTC porque las fechas que vienen del backend son
+// timestamps "naive" guardados como si fueran UTC. Aquí sí queremos la hora local real.
+const formatDateTimeLocal = (date: Date): string => {
+  const year  = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day   = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const mins  = String(date.getMinutes()).padStart(2, '0');
+  return `${day}/${month}/${year} ${hours}:${mins}`;
 };
 
 // Mismos íconos/colores que la lista de Programaciones (ProgramacionesPage.tsx)
@@ -191,44 +204,106 @@ export default function ProgramacionDetailPage() {
   const agregarMenuRef = useRef<HTMLDivElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const whatsappFileInputRef = useRef<HTMLInputElement>(null);
-  const [showWhatsappFallback, setShowWhatsappFallback] = useState(false);
+  const [showWhatsappConfirm, setShowWhatsappConfirm] = useState(false);
+  const [whatsappLink, setWhatsappLink] = useState<string | null>(null);
   const gmailFileInputRef = useRef<HTMLInputElement>(null);
+  const [showGmailConfirm, setShowGmailConfirm] = useState(false);
   const [gmailSending, setGmailSending] = useState(false);
+  const [gmailProgress, setGmailProgress] = useState(0);
   const [showGmailSuccess, setShowGmailSuccess] = useState(false);
   const [gmailError, setGmailError] = useState<string | null>(null);
 
-  const handleGmailFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file || !id) return;
+  const enviarAGmail = async (file?: File) => {
+    if (!id) return;
 
     setGmailSending(true);
+    setGmailProgress(0);
     setGmailError(null);
     try {
       const formData = new FormData();
       formData.append('programacionId', id);
-      formData.append('file', file);
+      if (file) formData.append('file', file);
       await api.post('/integraciones/google-chat/send-programacion', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: (evt) => {
+          if (!evt.total) return;
+          setGmailProgress(Math.round((evt.loaded / evt.total) * 100));
+        },
       });
       setShowGmailSuccess(true);
     } catch (err: any) {
-      setGmailError(err?.response?.data?.message ?? 'No se pudo enviar el PDF al chat');
+      setGmailError(err?.response?.data?.message ?? 'No se pudo enviar la información al chat');
       setTimeout(() => setGmailError(null), 4000);
     } finally {
       setGmailSending(false);
+      setGmailProgress(0);
     }
+  };
+
+  const handleGmailSinArchivo = () => {
+    setShowGmailConfirm(false);
+    enviarAGmail();
+  };
+
+  const handleGmailConArchivo = () => {
+    setShowGmailConfirm(false);
+    gmailFileInputRef.current?.click();
+  };
+
+  const handleGmailFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    await enviarAGmail(file);
+  };
+
+  // Mismos datos que se usan para la card de Google Chat, en texto plano con el formato ligero
+  // que WhatsApp sí soporta (*negrita*, saltos de línea) — no hay cards ni botones ahí.
+  const buildWhatsappMessage = (prog: NonNullable<typeof programacion>, incluyePdf: boolean): string => {
+    const medicos = prog.medicos.map(m => m.medico.nombreCompleto).join(', ') || '-';
+    const tecnicos = prog.tecnicos.map(t => t.tecnico.nombreCompleto).join(', ') || '-';
+    const lines = [
+      '*NUEVA PROGRAMACIÓN QUIRÚRGICA*',
+      '',
+      `*N° Programa:* ${prog.id}`,
+      `*Hospital:* ${prog.hospital?.nombre ?? '-'}`,
+      `*Fecha y hora Qx:* ${formatDate(prog.fechaQx)} · ${prog.horaQx ?? '-'}`,
+      `*Ciudad Qx:* ${prog.hospital?.ciudadCat?.nombre ?? prog.ciudad ?? '-'}`,
+      `*Médico:* ${medicos}`,
+      `*Técnicos:* ${tecnicos}`,
+      '',
+      '*Consumo:*',
+      prog.consumo || '-',
+      '',
+      '*Observaciones:*',
+      prog.observaciones || '-',
+    ];
+    if (incluyePdf) lines.push('', '*Se adjunta la cotización en PDF.*');
+    return lines.join('\n');
+  };
+
+  const handleWhatsappSinPdf = () => {
+    setShowWhatsappConfirm(false);
+    if (!programacion) return;
+    window.open(`https://wa.me/?text=${encodeURIComponent(buildWhatsappMessage(programacion, false))}`, '_blank');
+  };
+
+  const handleWhatsappConPdf = () => {
+    setShowWhatsappConfirm(false);
+    whatsappFileInputRef.current?.click();
   };
 
   const handleWhatsappFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // permite volver a elegir el mismo archivo y que onChange dispare de nuevo
-    if (!file) return;
+    if (!file || !programacion) return;
+
+    const mensaje = buildWhatsappMessage(programacion, true);
 
     const nav = navigator as Navigator & { canShare?: (data?: ShareData) => boolean; share?: (data: ShareData) => Promise<void> };
     if (nav.canShare && nav.share && nav.canShare({ files: [file] })) {
       try {
-        await nav.share({ files: [file], title: file.name });
+        await nav.share({ files: [file], text: mensaje, title: file.name });
         return;
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') return;
@@ -236,10 +311,11 @@ export default function ProgramacionDetailPage() {
       }
     }
 
-    // Respaldo: el navegador no soporta compartir archivos directamente (común en escritorio) —
-    // se abre WhatsApp Web para que el usuario adjunte el PDF manualmente en el chat.
-    window.open('https://web.whatsapp.com/', '_blank');
-    setShowWhatsappFallback(true);
+    // Respaldo: el navegador no soporta compartir archivos directamente (común en escritorio, y
+    // el bloqueador de pop-ups de Chrome es demasiado inconsistente para abrir la pestaña por
+    // código de forma confiable después del diálogo de archivo) — se muestra un link real para
+    // que el usuario le dé clic; un clic genuino en un <a> nunca lo bloquea el navegador.
+    setWhatsappLink(`https://wa.me/?text=${encodeURIComponent(mensaje)}`);
   };
 
   useEffect(() => {
@@ -1066,7 +1142,7 @@ export default function ProgramacionDetailPage() {
             <button
               className="btn-press header-btn-secondary"
               style={styles.btnPill}
-              onClick={() => whatsappFileInputRef.current?.click()}
+              onClick={() => setShowWhatsappConfirm(true)}
             >
               <i className="fa-brands fa-whatsapp" style={{ fontSize: 16, color: '#4d7a13' }} />
               Enviar por WhatsApp
@@ -1080,12 +1156,31 @@ export default function ProgramacionDetailPage() {
             />
             <button
               className="btn-press header-btn-secondary"
-              style={{ ...styles.btnPill, ...(gmailSending ? { opacity: 0.6, pointerEvents: 'none' as const } : {}) }}
-              onClick={() => gmailFileInputRef.current?.click()}
+              style={{
+                ...styles.btnPill,
+                position: 'relative' as const,
+                overflow: 'hidden' as const,
+                ...(gmailSending ? { pointerEvents: 'none' as const } : {}),
+              }}
+              onClick={() => setShowGmailConfirm(true)}
               disabled={gmailSending}
             >
-              <i className="fa-solid fa-envelope" style={{ fontSize: 15, color: '#8a8a80' }} />
-              {gmailSending ? 'Enviando...' : 'Enviar por Gmail'}
+              {gmailSending && (
+                <span
+                  style={{
+                    position: 'absolute' as const,
+                    inset: 0,
+                    width: `${gmailProgress}%`,
+                    backgroundColor: '#e9f2d8',
+                    transition: 'width 0.15s ease',
+                    zIndex: 0,
+                  }}
+                />
+              )}
+              <span style={{ position: 'relative' as const, zIndex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <SiGmail size={14} color="#8a8a80" />
+                {gmailSending ? 'Enviando...' : 'Enviar por Gmail'}
+              </span>
             </button>
 
             <span style={styles.headerDivider} />
@@ -1200,7 +1295,7 @@ export default function ProgramacionDetailPage() {
           </div>
         )}
 
-        <div style={styles.infoBar}>
+        <div style={{ ...styles.infoBar, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr) 1.7fr' }}>
           <div style={styles.infoBarItem}>
             <span style={styles.infoBarLabel}>Fecha y Hora QX</span>
             <span style={styles.infoBarValueMono}>{formatDate(programacion.fechaQx)} · {programacion.horaQx || '-'}</span>
@@ -2658,7 +2753,7 @@ export default function ProgramacionDetailPage() {
 
               <div style={styles.formGroup}>
                 <label style={styles.label}>Cargado el *</label>
-                <span style={styles.readOnlyField}>{formatDateTime(documentoCargadoEl.toISOString())}</span>
+                <span style={styles.readOnlyField}>{formatDateTimeLocal(documentoCargadoEl)}</span>
               </div>
 
               <div style={styles.formGroup}>
@@ -3254,6 +3349,48 @@ export default function ProgramacionDetailPage() {
         </div>
       )}
 
+      {showWhatsappConfirm && (
+        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowWhatsappConfirm(false)}>
+          <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
+            <div style={styles.editModalHeader}>
+              <h2 style={styles.modalTitle}>Enviar por WhatsApp</h2>
+            </div>
+            <div style={styles.confirmBody}>
+              <p style={styles.confirmIntro}>¿Quieres adjuntar una cotización en PDF, o solo enviar la información general de la programación?</p>
+            </div>
+            <div style={styles.editModalFooter}>
+              <button className="btn-press" style={styles.cancelBtn} onClick={handleWhatsappSinPdf}>
+                Solo información
+              </button>
+              <button className="btn-press" style={styles.saveBtn} onClick={handleWhatsappConPdf}>
+                Adjuntar cotización
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showGmailConfirm && (
+        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowGmailConfirm(false)}>
+          <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
+            <div style={styles.editModalHeader}>
+              <h2 style={styles.modalTitle}>Enviar por Gmail</h2>
+            </div>
+            <div style={styles.confirmBody}>
+              <p style={styles.confirmIntro}>¿Quieres adjuntar una cotización en PDF, o solo enviar la información general de la programación?</p>
+            </div>
+            <div style={styles.editModalFooter}>
+              <button className="btn-press" style={styles.cancelBtn} onClick={handleGmailSinArchivo}>
+                Solo información
+              </button>
+              <button className="btn-press" style={styles.saveBtn} onClick={handleGmailConArchivo}>
+                Adjuntar cotización
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showDeleteConfirm && (
         <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => { if (!deleteProgramacionMutation.isPending) setShowDeleteConfirm(false); }}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
@@ -3290,7 +3427,34 @@ export default function ProgramacionDetailPage() {
       <SuccessToast show={showEditSuccess} message="Programación editada" onClose={() => setShowEditSuccess(false)} />
       <SuccessToast show={showRemisionSuccess} message={`Remisión ${remisionCreatedId ?? ''} creada`} onClose={() => setShowRemisionSuccess(false)} />
       <SuccessToast show={showRequisicionSuccess} message={`Requisición ${requisicionCreatedId ?? ''} creada`} onClose={() => setShowRequisicionSuccess(false)} />
-      <SuccessToast show={showWhatsappFallback} message="Se abrió WhatsApp Web — adjunta el PDF manualmente en el chat" onClose={() => setShowWhatsappFallback(false)} duration={4000} />
+      {whatsappLink && (
+        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setWhatsappLink(null)}>
+          <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
+            <div style={styles.editModalHeader}>
+              <h2 style={styles.modalTitle}>Listo para enviar</h2>
+            </div>
+            <div style={styles.confirmBody}>
+              <p style={styles.confirmIntro}>
+                El mensaje ya está armado. Al abrir WhatsApp, adjunta el PDF manualmente en el chat.
+              </p>
+            </div>
+            <div style={styles.editModalFooter}>
+              <button style={styles.cancelBtn} onClick={() => setWhatsappLink(null)}>
+                Cancelar
+              </button>
+              <a
+                href={whatsappLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ ...styles.saveBtn, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+                onClick={() => setWhatsappLink(null)}
+              >
+                Abrir WhatsApp
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
       <SuccessToast show={showDocumentoSuccess} message="Documento agregado" onClose={() => setShowDocumentoSuccess(false)} />
       <SuccessToast show={showGmailSuccess} message="PDF enviado al chat de Google" onClose={() => setShowGmailSuccess(false)} />
       {gmailError && (
@@ -3477,12 +3641,12 @@ const styles: Record<string, React.CSSProperties> = {
   sectionTitle: { fontSize: '1.1rem', fontWeight: 700, color: '#333', margin: 0 },
   badge: { backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '0.75rem', fontWeight: 700, minWidth: '1.5rem', height: '1.5rem', padding: '0 0.4rem', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
   remisionesGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1rem' },
-  remList: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', overflow: 'hidden' },
+  remList: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', overflowX: 'auto' as const, overflowY: 'hidden' as const },
   emptyState: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', padding: '2rem', textAlign: 'center' as const, color: '#9ca3af', fontSize: '0.875rem' },
   scrollBody: { height: '135px', overflowY: 'auto' as const, backgroundColor: '#f9fafb' },
   tecnicoScrollBody: { height: '135px', overflowY: 'auto' as const, backgroundColor: '#f9fafb' },
   remRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem 1.25rem', backgroundColor: '#fff' },
-  remGridRow: { display: 'grid', gridTemplateColumns: '1fr 110px 130px', alignItems: 'center', padding: '0.75rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff' },
+  remGridRow: { display: 'grid', gridTemplateColumns: '1fr 110px 130px', alignItems: 'center', padding: '0.75rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff', minWidth: '420px' },
   remRowBorder: { borderTop: '1px solid #f3f4f6' },
   remRowLeft: { display: 'flex', alignItems: 'center', gap: '0.5rem' },
   remRowCode: { fontSize: '0.875rem', fontWeight: 700, color: '#374151' },
@@ -3499,8 +3663,8 @@ const styles: Record<string, React.CSSProperties> = {
   tecnicoAvatar: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '30px', height: '30px', borderRadius: '50%', backgroundColor: '#e9f2d8', color: '#4d7a13', fontSize: '0.65rem', fontWeight: 700, flexShrink: 0 },
   colHeader: { backgroundColor: '#f9fafb', borderBottom: '2px solid #e5e7eb' },
   colHeaderText: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
-  consumoRow: { display: 'grid', gridTemplateColumns: '120px 55px 110px 1fr 130px 110px', alignItems: 'center', padding: '0.6rem 1.25rem', backgroundColor: '#fff' },
-  consumoGrid: { display: 'grid', gridTemplateColumns: '120px 55px 110px 1fr 130px 110px', padding: '0 1.25rem', backgroundColor: '#fff' },
+  consumoRow: { display: 'grid', gridTemplateColumns: '120px 55px 110px 1fr 130px 110px', alignItems: 'center', padding: '0.6rem 1.25rem', backgroundColor: '#fff', minWidth: '700px' },
+  consumoGrid: { display: 'grid', gridTemplateColumns: '120px 55px 110px 1fr 130px 110px', padding: '0 1.25rem', backgroundColor: '#fff', minWidth: '700px' },
   consumoGrupoDivider: { borderBottom: '2px solid #e5e7eb' },
   validacionGrupoDivider: { borderTop: '2px solid #e5e7eb' },
   consumoRemisionCell: { position: 'sticky' as const, top: 0, zIndex: 1, alignSelf: 'start', display: 'flex', alignItems: 'center', padding: '0.6rem 0', backgroundColor: '#fff', boxShadow: '0 1px 0 #f3f4f6', fontSize: '0.8rem', fontWeight: 700, color: '#374151', fontFamily: 'monospace' },
@@ -3509,21 +3673,21 @@ const styles: Record<string, React.CSSProperties> = {
   consumoSubtotalValue: { fontSize: '0.85rem', fontWeight: 700, color: '#6b8c1f' },
   consumoCellCant: { display: 'flex', alignItems: 'center', padding: '0.6rem 0 0.6rem 0.75rem', color: '#666', fontSize: '0.85rem' },
   consumoCellReferencia: { display: 'flex', alignItems: 'center', minWidth: 0, padding: '0.6rem 0 0.6rem 0.75rem', overflow: 'hidden', textOverflow: 'ellipsis' as const, whiteSpace: 'nowrap' as const, fontSize: '0.78rem', fontWeight: 700, color: '#6b8c1f', fontFamily: 'monospace' },
-  validacionRow: { display: 'grid', gridTemplateColumns: '120px 70px 100px 100px 100px 1fr 1fr', alignItems: 'center', padding: '0.6rem 1.25rem', backgroundColor: '#fff' },
-  validacionGrid: { display: 'grid', gridTemplateColumns: '120px 70px 100px 100px 100px 1fr 1fr', padding: '0 1.25rem', backgroundColor: '#fff' },
+  validacionRow: { display: 'grid', gridTemplateColumns: '120px 70px 100px 100px 100px 1fr 1fr', alignItems: 'center', padding: '0.6rem 1.25rem', backgroundColor: '#fff', minWidth: '850px' },
+  validacionGrid: { display: 'grid', gridTemplateColumns: '120px 70px 100px 100px 100px 1fr 1fr', padding: '0 1.25rem', backgroundColor: '#fff', minWidth: '850px' },
   consumoNombreCell: { display: 'flex', alignItems: 'center', minWidth: 0, padding: '0.6rem 0 0.6rem 0.75rem', overflow: 'hidden', textOverflow: 'ellipsis' as const, whiteSpace: 'nowrap' as const, fontSize: '0.85rem', color: '#374151' },
   consumoNombreCellUltima: { display: 'flex', alignItems: 'center', minWidth: 0, padding: '0.6rem 1.25rem 0.6rem 0.75rem', margin: '0 -1.25rem 0 0', overflow: 'hidden', textOverflow: 'ellipsis' as const, whiteSpace: 'nowrap' as const, fontSize: '0.85rem', color: '#374151' },
-  comisionRow: { display: 'grid', gridTemplateColumns: '140px 1fr 130px', alignItems: 'center', padding: '0.6rem 1.25rem', backgroundColor: '#fff' },
-  comisionGrid: { display: 'grid', gridTemplateColumns: '140px 1fr 130px', padding: '0 1.25rem', backgroundColor: '#fff' },
+  comisionRow: { display: 'grid', gridTemplateColumns: '140px 1fr 130px', alignItems: 'center', padding: '0.6rem 1.25rem', backgroundColor: '#fff', minWidth: '480px' },
+  comisionGrid: { display: 'grid', gridTemplateColumns: '140px 1fr 130px', padding: '0 1.25rem', backgroundColor: '#fff', minWidth: '480px' },
   comisionCategoriaCell: { position: 'sticky' as const, top: 0, zIndex: 1, alignSelf: 'start', display: 'flex', alignItems: 'center', padding: '0.6rem 0', backgroundColor: '#fff', boxShadow: '0 1px 0 #f3f4f6', fontSize: '0.85rem', fontWeight: 700, color: '#374151' },
   comisionTecnicoCell: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 0 0.6rem 0.75rem', overflow: 'hidden', fontSize: '0.85rem', color: '#374151' },
   comisionMontoCell: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0.6rem 1.25rem 0.6rem 0', margin: '0 -1.25rem 0 0', fontSize: '0.85rem', fontWeight: 600, color: '#333' },
   comisionScrollBody: { minHeight: '110px', maxHeight: '220px', overflowY: 'auto' as const, backgroundColor: '#f9fafb' },
-  requisicionRow: { display: 'grid', gridTemplateColumns: '110px 145px 1fr 90px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff' },
-  notaCreditoRow: { display: 'grid', gridTemplateColumns: '140px 130px 1fr 130px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff' },
-  gastoRow: { display: 'grid', gridTemplateColumns: '110px 100px 1fr 180px 110px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff' },
-  fuenteRow: { display: 'grid', gridTemplateColumns: '140px 120px 1fr 150px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff' },
-  documentoRow: { display: 'grid', gridTemplateColumns: '100px 1fr 1fr 150px 180px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff' },
+  requisicionRow: { display: 'grid', gridTemplateColumns: '110px 145px 1fr 90px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '620px' },
+  notaCreditoRow: { display: 'grid', gridTemplateColumns: '140px 130px 1fr 130px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '680px' },
+  gastoRow: { display: 'grid', gridTemplateColumns: '110px 100px 1fr 180px 110px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '780px' },
+  fuenteRow: { display: 'grid', gridTemplateColumns: '140px 120px 1fr 150px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '680px' },
+  documentoRow: { display: 'grid', gridTemplateColumns: '100px 1fr 1fr 150px 180px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '900px' },
   tabScrollBody: { maxHeight: '320px', overflowY: 'auto' as const },
   requisicionCodigo: { fontSize: '0.78rem', fontWeight: 700, color: '#6b8c1f', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   requisicionCellText: { fontSize: '0.85rem', color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },

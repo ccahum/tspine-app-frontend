@@ -9,6 +9,7 @@ import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { viajeVehiculoService, type ViajeVehiculoItem } from '../../../services/viajeVehiculo.service';
 import { vehiculoCatalogoService, type VehiculoCatalogoItem } from '../../../services/vehiculoCatalogo.service';
 import { programacionesService, type SedeOption } from '../../../services/programaciones.service';
+import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 
 const formatDateTime = (dateString: string | null): string => {
   if (!dateString) return '-';
@@ -74,7 +75,14 @@ function ViajeFoto({ id, size }: { id: string; size?: number }) {
 
   if (error) return size ? <div style={{ ...styles.fotoThumb, ...styles.fotoThumbEmpty, width: size, height: size }} /> : <div style={styles.fotoEmpty}>No disponible</div>;
   if (!src) return size ? <div style={{ ...styles.fotoThumb, ...styles.fotoThumbEmpty, width: size, height: size }} /> : <div style={styles.fotoEmpty}>Cargando...</div>;
-  return <img src={src} alt="Foto del tablero" style={thumbStyle} />;
+  return (
+    <img
+      src={src}
+      alt="Foto del tablero"
+      style={{ ...thumbStyle, cursor: 'pointer' }}
+      onClick={e => { e.stopPropagation(); window.open(src, '_blank'); }}
+    />
+  );
 }
 
 function DetalleRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -466,7 +474,41 @@ const ViajeRow = memo(({ item, rowNumber, onSelect }: { item: ViajeVehiculoItem;
   </tr>
 ));
 
+const ViajeCard = memo(({ item, onSelect }: { item: ViajeVehiculoItem; onSelect: (item: ViajeVehiculoItem) => void }) => (
+  <div style={styles.mobileCard} onClick={() => onSelect(item)}>
+    <div style={styles.mobileCardTopRow}>
+      <span style={styles.mobileCardId}>{item.id}</span>
+      <span style={styles.mobileCardDate}>{formatDateTime(item.marcaTiempo)}</span>
+    </div>
+    <div style={styles.mobileCardMainRow}>
+      {item.fotoDisponible ? (
+        <ViajeFoto id={item.id} size={44} />
+      ) : (
+        <div style={{ ...styles.mobileCardPhotoEmpty }} />
+      )}
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={styles.mobileCardConductor}>{item.conductor ?? 'Sin conductor'}</div>
+        <div style={styles.mobileCardSubtext}>
+          <span style={styles.placasCode}>{item.vehiculo ?? '-'}</span>
+          {item.sede && <> · {item.sede}</>}
+        </div>
+      </div>
+    </div>
+    <div style={styles.mobileCardFieldsRow}>
+      <div style={styles.mobileCardField}>
+        <span style={styles.mobileCardFieldLabel}>Km actual</span>
+        <span style={styles.mobileCardFieldValue}>{formatKm(item.kilometrajeActual)}</span>
+      </div>
+      <div style={{ ...styles.mobileCardField, flex: 1, minWidth: 0 }}>
+        <span style={styles.mobileCardFieldLabel}>Destino</span>
+        <span style={{ ...styles.mobileCardFieldValue, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.sitioDestino ?? '-'}</span>
+      </div>
+    </div>
+  </div>
+));
+
 export default function ControlViajesPage() {
+  const { isMobile } = useResponsiveStyles();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -555,6 +597,12 @@ export default function ControlViajesPage() {
             <div style={styles.empty}>Cargando...</div>
           ) : items.length === 0 ? (
             <div style={styles.empty}>Sin registros</div>
+          ) : isMobile ? (
+            <div style={styles.mobileCardList}>
+              {items.map(item => (
+                <ViajeCard key={item.id} item={item} onSelect={setSelected} />
+              ))}
+            </div>
           ) : (
             <table style={styles.table}>
               <thead>
@@ -626,6 +674,19 @@ const styles: Record<string, React.CSSProperties> = {
   td: { padding: '0.65rem 0.875rem', borderBottom: '1px solid #f3f4f0', verticalAlign: 'middle' as const, color: '#33342a', whiteSpace: 'nowrap' as const },
   tr: { backgroundColor: '#fff', transition: 'background-color 0.15s ease' },
   placasCode: { fontSize: '0.84375rem', fontWeight: 700, color: '#4d7a13' },
+  mobileCardList: { display: 'flex', flexDirection: 'column' as const, gap: '0.75rem', padding: '0.75rem' },
+  mobileCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '12px', padding: '0.85rem', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' },
+  mobileCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' },
+  mobileCardId: { fontSize: '0.8rem', fontWeight: 700, color: '#4d7a13' },
+  mobileCardDate: { fontSize: '0.75rem', color: '#9ca3af' },
+  mobileCardMainRow: { display: 'flex', alignItems: 'center', gap: '0.7rem', marginBottom: '0.7rem' },
+  mobileCardPhotoEmpty: { width: '44px', height: '44px', borderRadius: '8px', backgroundColor: '#f4f4ee', flexShrink: 0 },
+  mobileCardConductor: { fontSize: '0.9rem', fontWeight: 700, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  mobileCardSubtext: { fontSize: '0.78rem', color: '#6b7280', marginTop: '0.15rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  mobileCardFieldsRow: { display: 'flex', gap: '1.25rem', paddingTop: '0.6rem', borderTop: '1px solid #f3f4f0' },
+  mobileCardField: { display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', minWidth: 0 },
+  mobileCardFieldLabel: { fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
+  mobileCardFieldValue: { fontSize: '0.82rem', fontWeight: 600, color: '#374151' },
   mapLink: { display: 'inline-flex', alignItems: 'center', gap: '0.3rem', color: '#2563eb', fontWeight: 600, textDecoration: 'none', fontSize: '0.8rem' },
   estadoBadge: { display: 'inline-block', padding: '0.2rem 0.6rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 600 },
   estadoActivo: { backgroundColor: '#e9f2d8', color: '#3f6510' },

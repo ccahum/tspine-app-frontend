@@ -5,6 +5,7 @@ import { ArrowLeft, Loader, X } from 'lucide-react';
 import Layout from '../../../components/layout/Layout';
 import { remisionesService, type ConsumoDetalle, type ConsumoValidacionLote, type ConsumoProductoValidadoItem } from '../../../services/remisiones.service';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
+import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 
 const formatMoney = (value: any): string => {
   if (value === null || value === undefined) return '-';
@@ -45,6 +46,7 @@ const formatDateTime = (dateString: string | null): string => {
 };
 
 export default function ConsumoDetailPage() {
+  const { isMobile } = useResponsiveStyles();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [selectedLote, setSelectedLote] = useState<ConsumoValidacionLote | null>(null);
@@ -87,7 +89,7 @@ export default function ConsumoDetailPage() {
           <div style={styles.sectionTitleRow}>
             <h2 style={styles.sectionTitle}>Información General</h2>
           </div>
-          <div style={styles.infoCardGrid}>
+          <div style={{ ...styles.infoCardGrid, gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr' }}>
             <div style={styles.gridField}>
               <span style={styles.label}>N° Remisión</span>
               <span
@@ -277,11 +279,11 @@ const styles: Record<string, React.CSSProperties> = {
   label: { fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em', flexShrink: 0 },
   value: { fontSize: '0.875rem', fontWeight: 600, color: '#333', textAlign: 'right' as const },
   emptyState: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', padding: '2rem', textAlign: 'center' as const, color: '#9ca3af', fontSize: '0.875rem' },
-  remList: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', overflow: 'hidden' },
+  remList: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', overflowX: 'auto' as const, overflowY: 'hidden' as const },
   colHeader: { backgroundColor: '#f9fafb', borderBottom: '2px solid #e5e7eb' },
   colHeaderText: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
-  pvRow: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1.5fr', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', cursor: 'pointer' },
-  loteRow: { display: 'grid', gridTemplateColumns: '100px 90px 120px 120px 1fr 130px 1fr', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', cursor: 'pointer' },
+  pvRow: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1.5fr', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', cursor: 'pointer', minWidth: '650px' },
+  loteRow: { display: 'grid', gridTemplateColumns: '100px 90px 120px 120px 1fr 130px 1fr', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', cursor: 'pointer', minWidth: '950px' },
   scrollBody: { maxHeight: '320px', overflowY: 'auto' as const },
   rowBorder: { borderTop: '1px solid #f3f4f6' },
   rowHover: { backgroundColor: '#f3f4f6' },

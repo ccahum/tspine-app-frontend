@@ -6,6 +6,7 @@ import Layout from '../../../components/layout/Layout';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import SuccessToast from '../../../components/SuccessToast';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
+import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import {
   preciosEspecialesService,
   type PrecioEspecialItem,
@@ -54,6 +55,30 @@ const PrecioEspecialRow = memo(({ item, rowNumber, onSelect }: { item: PrecioEsp
       {item.buscable}
     </td>
   </tr>
+));
+
+const PrecioEspecialCard = memo(({ item, onSelect }: { item: PrecioEspecialItem; onSelect: (item: PrecioEspecialItem) => void }) => (
+  <div style={styles.mobileCard} onClick={() => onSelect(item)}>
+    <div style={styles.mobileCardTopRow}>
+      <span style={styles.mobileCardId}>{item.productoReferencia ?? '-'}</span>
+      {item.productoNombre && <span style={styles.mobileCardDate}>{item.productoNombre}</span>}
+    </div>
+    <div style={styles.mobileCardMainRow}>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={styles.mobileCardConductor}>{item.contacto ?? 'Sin contacto'}</div>
+      </div>
+    </div>
+    <div style={styles.mobileCardFieldsRow}>
+      <div style={styles.mobileCardField}>
+        <span style={styles.mobileCardFieldLabel}>Precio</span>
+        <span style={styles.mobileCardFieldValue}>{formatMoney(item.precio)}</span>
+      </div>
+      <div style={{ ...styles.mobileCardField, flex: 1, minWidth: 0 }}>
+        <span style={styles.mobileCardFieldLabel}>Notas</span>
+        <span style={{ ...styles.mobileCardFieldValue, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.notas || '-'}</span>
+      </div>
+    </div>
+  </div>
 ));
 
 function DetalleRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -492,6 +517,7 @@ function NuevoPrecioEspecialModal({ onClose, onCreated }: {
 }
 
 export default function PreciosEspecialesPage() {
+  const { isMobile } = useResponsiveStyles();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -570,6 +596,12 @@ export default function PreciosEspecialesPage() {
             <div style={styles.empty}>Cargando...</div>
           ) : items.length === 0 ? (
             <div style={styles.empty}>Sin registros</div>
+          ) : isMobile ? (
+            <div style={styles.mobileCardList}>
+              {items.map(item => (
+                <PrecioEspecialCard key={item.id} item={item} onSelect={setSelected} />
+              ))}
+            </div>
           ) : (
             <table style={styles.table}>
               <thead>
@@ -647,6 +679,17 @@ const styles: Record<string, React.CSSProperties> = {
   tr: { backgroundColor: '#fff', cursor: 'pointer', transition: 'background-color 0.15s ease' },
   productoCode: { fontSize: '0.84375rem', fontWeight: 700, color: '#4d7a13' },
   productoNombre: { color: '#6b6b60' },
+  mobileCardList: { display: 'flex', flexDirection: 'column' as const, gap: '0.75rem', padding: '0.75rem' },
+  mobileCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '12px', padding: '0.85rem', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' },
+  mobileCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' },
+  mobileCardId: { fontSize: '0.8rem', fontWeight: 700, color: '#4d7a13' },
+  mobileCardDate: { fontSize: '0.75rem', color: '#9ca3af' },
+  mobileCardMainRow: { display: 'flex', alignItems: 'center', gap: '0.7rem', marginBottom: '0.7rem' },
+  mobileCardConductor: { fontSize: '0.9rem', fontWeight: 700, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  mobileCardFieldsRow: { display: 'flex', gap: '1.25rem', paddingTop: '0.6rem', borderTop: '1px solid #f3f4f0' },
+  mobileCardField: { display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', minWidth: 0 },
+  mobileCardFieldLabel: { fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
+  mobileCardFieldValue: { fontSize: '0.82rem', fontWeight: 600, color: '#374151' },
   empty: { textAlign: 'center' as const, padding: '3rem', color: '#9ca3af' },
   pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem', marginTop: '1.5rem' },
   pageLabel: { fontSize: '0.875rem', fontWeight: 600, color: '#33342a' },

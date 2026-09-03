@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Search, Plus, X } from 'lucide-react';
@@ -9,8 +9,11 @@ import {
   usuariosAdminService,
   type UsuarioAdminItem,
   type PerfilOption,
+  type TerceroDisponible,
 } from '../../../services/usuariosAdmin.service';
 import { programacionesService, type SedeOption } from '../../../services/programaciones.service';
+import { validarPasswordMinima, PASSWORD_MINIMA_HINT } from '../../../lib/password.utils';
+import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 
 const EMAIL_DOMAIN = 'tecnologiaspine.com';
 
@@ -67,17 +70,35 @@ function NuevoUsuarioModal({
   onCreated: (mensaje: string) => void;
 }) {
   const queryClient = useQueryClient();
-  const [nombreCompleto, setNombreCompleto] = useState('');
+  const [terceroQuery, setTerceroQuery] = useState('');
+  const [terceroOpciones, setTerceroOpciones] = useState<TerceroDisponible[]>([]);
+  const [terceroSeleccionado, setTerceroSeleccionado] = useState<TerceroDisponible | null>(null);
+  const [buscandoTerceros, setBuscandoTerceros] = useState(false);
   const [usuario, setUsuario] = useState('');
   const [password, setPassword] = useState('');
   const [perfilId, setPerfilId] = useState('');
   const [sedeId, setSedeId] = useState('');
   const [error, setError] = useState<{ field: string; message: string } | null>(null);
 
+  // Busca con debounce mientras el admin escribe, solo si todavía no ha seleccionado un tercero.
+  useEffect(() => {
+    if (terceroSeleccionado) { setTerceroOpciones([]); return; }
+    const term = terceroQuery.trim();
+    if (term.length < 2) { setTerceroOpciones([]); return; }
+    setBuscandoTerceros(true);
+    const timer = setTimeout(() => {
+      usuariosAdminService.findTercerosDisponibles(term)
+        .then(setTerceroOpciones)
+        .catch(() => setTerceroOpciones([]))
+        .finally(() => setBuscandoTerceros(false));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [terceroQuery, terceroSeleccionado]);
+
   const createMutation = useMutation({
     mutationFn: () =>
-      usuariosAdminService.create({
-        nombreCompleto: nombreCompleto.trim(),
+      usuariosAdminService.createFromTercero({
+        terceroId: terceroSeleccionado!.id,
         usuario: usuario.trim(),
         password,
         perfilId,
@@ -93,9 +114,10 @@ function NuevoUsuarioModal({
   });
 
   const handleGuardar = () => {
-    if (!nombreCompleto.trim()) { setError({ field: 'nombreCompleto', message: 'Ingresa el nombre completo.' }); return; }
+    if (!terceroSeleccionado) { setError({ field: 'tercero', message: 'Busca y selecciona un empleado.' }); return; }
     if (!usuario.trim()) { setError({ field: 'usuario', message: 'Ingresa el nombre de usuario.' }); return; }
-    if (!password || password.length < 8) { setError({ field: 'password', message: 'La contraseña debe tener al menos 8 caracteres.' }); return; }
+    const errorPassword = validarPasswordMinima(password);
+    if (errorPassword) { setError({ field: 'password', message: errorPassword }); return; }
     if (!perfilId) { setError({ field: 'perfilId', message: 'Selecciona un perfil.' }); return; }
     setError(null);
     createMutation.mutate();
@@ -112,14 +134,61 @@ function NuevoUsuarioModal({
         </div>
         <div style={styles.modalBody}>
           <div style={styles.formGroup}>
-            <label style={styles.formLabel}>Nombre completo *</label>
-            <input
-              style={{ ...styles.formInput, ...(error?.field === 'nombreCompleto' ? styles.inputError : {}) }}
-              value={nombreCompleto}
-              onChange={e => { setNombreCompleto(e.target.value); setError(null); }}
-              placeholder="Juan Pérez"
-            />
-            {error?.field === 'nombreCompleto' && <span style={styles.errorText}>{error.message}</span>}
+            <label style={styles.formLabel}>Buscar empleado *</label>
+            {terceroSeleccionado ? (
+              <div style={styles.terceroSeleccionadoBox}>
+                <span>{terceroSeleccionado.nombreCompleto}</span>
+                <button
+                  type="button"
+                  style={styles.terceroQuitarBtn}
+                  onClick={() => { setTerceroSeleccionado(null); setTerceroQuery(''); setError(null); }}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ) : (
+              <>
+                <input
+                  style={{ ...styles.formInput, ...(error?.field === 'tercero' ? styles.inputError : {}) }}
+                  value={terceroQuery}
+                  onChange={e => { setTerceroQuery(e.target.value); setError(null); }}
+                  placeholder="Escribe el nombre..."
+                  autoFocus
+                />
+                {terceroQuery.trim().length >= 2 && (
+                  <div style={styles.terceroDropdown}>
+                    {buscandoTerceros ? (
+                      <div style={styles.terceroDropdownEmpty}>Buscando...</div>
+                    ) : terceroOpciones.length === 0 ? (
+                      <div style={styles.terceroDropdownEmpty}>
+                        Sin coincidencias — solo aparecen empleados que aún no tienen cuenta.
+                      </div>
+                    ) : (
+                      terceroOpciones.map(t => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          style={styles.terceroDropdownItem}
+                          onClick={() => {
+                            setTerceroSeleccionado(t);
+                            setTerceroOpciones([]);
+                            setError(null);
+                            // Si ya tenía correo del sistema viejo, se sugiere como usuario —
+                            // sigue siendo editable, el admin puede reemplazarlo si quiere.
+                            if (t.correo) setUsuario(t.correo.split('@')[0]);
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f5f5f0'; }}
+                          onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                        >
+                          {t.nombreCompleto}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+            {error?.field === 'tercero' && <span style={styles.errorText}>{error.message}</span>}
           </div>
 
           <div style={styles.formGroup}>
@@ -140,12 +209,17 @@ function NuevoUsuarioModal({
             <label style={styles.formLabel}>Contraseña inicial *</label>
             <input
               type="text"
+              autoComplete="new-password"
               style={{ ...styles.formInput, ...(error?.field === 'password' ? styles.inputError : {}) }}
               value={password}
               onChange={e => { setPassword(e.target.value); setError(null); }}
               placeholder="Mínimo 8 caracteres"
             />
-            {error?.field === 'password' && <span style={styles.errorText}>{error.message}</span>}
+            {error?.field === 'password' ? (
+              <span style={styles.errorText}>{error.message}</span>
+            ) : (
+              <p style={styles.hintText}>{PASSWORD_MINIMA_HINT}</p>
+            )}
           </div>
 
           <div style={styles.formGroup}>
@@ -226,7 +300,10 @@ function EditarUsuarioModal({
 
   const handleGuardar = () => {
     if (!nombreCompleto.trim()) { setError({ field: 'nombreCompleto', message: 'Ingresa el nombre completo.' }); return; }
-    if (nuevaPassword && nuevaPassword.length < 8) { setError({ field: 'password', message: 'La contraseña debe tener al menos 8 caracteres.' }); return; }
+    if (nuevaPassword) {
+      const errorPassword = validarPasswordMinima(nuevaPassword);
+      if (errorPassword) { setError({ field: 'password', message: errorPassword }); return; }
+    }
     setError(null);
     updateMutation.mutate();
   };
@@ -275,12 +352,17 @@ function EditarUsuarioModal({
             <label style={styles.formLabel}>Restablecer contraseña</label>
             <input
               type="text"
+              autoComplete="new-password"
               style={{ ...styles.formInput, ...(error?.field === 'password' ? styles.inputError : {}) }}
               value={nuevaPassword}
               onChange={e => { setNuevaPassword(e.target.value); setError(null); }}
               placeholder="Dejar en blanco para no cambiarla"
             />
-            {error?.field === 'password' && <span style={styles.errorText}>{error.message}</span>}
+            {error?.field === 'password' ? (
+              <span style={styles.errorText}>{error.message}</span>
+            ) : (
+              <p style={styles.hintText}>{PASSWORD_MINIMA_HINT}</p>
+            )}
           </div>
 
           <label style={styles.checkboxRow}>
@@ -306,7 +388,32 @@ function EditarUsuarioModal({
   );
 }
 
+const UsuarioCard = memo(({ item, onSelect }: { item: UsuarioAdminItem; onSelect: (item: UsuarioAdminItem) => void }) => (
+  <div style={styles.mobileCard} onClick={() => onSelect(item)}>
+    <div style={styles.mobileCardTopRow}>
+      <span style={styles.mobileCardNombre}>{item.nombreCompleto}</span>
+      <EstadoBadge activo={item.activo} />
+    </div>
+    <div style={styles.mobileCardCorreo}>{item.correo ?? '-'}</div>
+    <div style={styles.mobileCardFieldsRow}>
+      <div style={{ ...styles.mobileCardField, flex: 1, minWidth: 0 }}>
+        <span style={styles.mobileCardFieldLabel}>Perfil</span>
+        <span style={{ ...styles.mobileCardFieldValue, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.perfilNombre ?? '-'}</span>
+      </div>
+      <div style={{ ...styles.mobileCardField, flex: 1, minWidth: 0 }}>
+        <span style={styles.mobileCardFieldLabel}>Sede</span>
+        <span style={{ ...styles.mobileCardFieldValue, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.sedeNombre ?? '-'}</span>
+      </div>
+      <div style={styles.mobileCardField}>
+        <span style={styles.mobileCardFieldLabel}>2FA</span>
+        <TotpBadge activado={item.totpActivado} />
+      </div>
+    </div>
+  </div>
+));
+
 export default function UsuariosAdminPage() {
+  const { isMobile } = useResponsiveStyles();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -383,6 +490,12 @@ export default function UsuariosAdminPage() {
             <div style={styles.empty}>Cargando...</div>
           ) : filtrados.length === 0 ? (
             <div style={styles.empty}>Sin registros</div>
+          ) : isMobile ? (
+            <div style={styles.mobileCardList}>
+              {filtrados.map(item => (
+                <UsuarioCard key={item.id} item={item} onSelect={setSelected} />
+              ))}
+            </div>
           ) : (
             <table style={styles.table}>
               <thead>
@@ -455,6 +568,15 @@ const styles: Record<string, React.CSSProperties> = {
   td: { padding: '0.65rem 0.875rem', borderBottom: '1px solid #f3f4f6', verticalAlign: 'middle' as const, color: '#333' },
   tr: { backgroundColor: '#fff', cursor: 'pointer', transition: 'background-color 0.15s ease' },
   empty: { textAlign: 'center' as const, padding: '3rem', color: '#999' },
+  mobileCardList: { display: 'flex', flexDirection: 'column' as const, gap: '0.75rem', padding: '0.75rem' },
+  mobileCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '12px', padding: '0.85rem', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' },
+  mobileCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', marginBottom: '0.3rem' },
+  mobileCardNombre: { fontSize: '0.9rem', fontWeight: 700, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  mobileCardCorreo: { fontSize: '0.78rem', color: '#6b7280', marginBottom: '0.7rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  mobileCardFieldsRow: { display: 'flex', gap: '1.25rem', paddingTop: '0.6rem', borderTop: '1px solid #f3f4f6' },
+  mobileCardField: { display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', minWidth: 0 },
+  mobileCardFieldLabel: { fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
+  mobileCardFieldValue: { fontSize: '0.82rem', fontWeight: 600, color: '#374151' },
   modalOverlay: { position: 'fixed' as const, top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: '2rem' },
   modalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '90%', maxWidth: '480px', maxHeight: '90vh', overflow: 'auto' as const, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
   modalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.25rem 1.5rem', backgroundColor: '#f9fafb', borderBottom: '1px solid #eeeee6', borderTopLeftRadius: '16px', borderTopRightRadius: '16px', position: 'sticky' as const, top: 0, zIndex: 1 },
@@ -462,10 +584,16 @@ const styles: Record<string, React.CSSProperties> = {
   closeBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '34px', height: '34px', border: 'none', backgroundColor: '#f4f4ee', borderRadius: '8px', cursor: 'pointer', color: '#6b6b60' },
   modalBody: { padding: '1.5rem', display: 'flex', flexDirection: 'column' as const, gap: '1.1rem' },
   formGroup: { display: 'flex', flexDirection: 'column' as const, gap: '0.4rem' },
+  terceroSeleccionadoBox: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.55rem 0.7rem', border: '1px solid #dbe8c2', backgroundColor: '#f3f8ea', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 600, color: '#3f6510' },
+  terceroQuitarBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'transparent', color: '#6b8c1f', cursor: 'pointer', padding: '0.15rem' },
+  terceroDropdown: { position: 'relative' as const, marginTop: '0.3rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', boxShadow: '0 8px 20px rgba(0,0,0,0.1)', maxHeight: '200px', overflowY: 'auto' as const, zIndex: 10 },
+  terceroDropdownItem: { display: 'block', width: '100%', textAlign: 'left' as const, padding: '0.55rem 0.7rem', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '0.85rem', color: '#333' },
+  terceroDropdownEmpty: { padding: '0.65rem 0.7rem', fontSize: '0.78rem', color: '#9ca3af' },
   formLabel: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
   formInput: { padding: '0.55rem 0.7rem', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '0.85rem', outline: 'none', fontFamily: 'inherit', backgroundColor: '#fff', width: '100%', boxSizing: 'border-box' as const },
   inputError: { borderColor: '#dc2626' },
   errorText: { fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 },
+  hintText: { fontSize: '0.75rem', color: '#6b7280', margin: 0 },
   readOnlyField: { fontSize: '0.85rem', color: '#6b7280' },
   usuarioInputWrap: { display: 'flex', alignItems: 'center', gap: '0.5rem' },
   usuarioDomain: { fontSize: '0.8rem', color: '#9ca3af', whiteSpace: 'nowrap' as const },

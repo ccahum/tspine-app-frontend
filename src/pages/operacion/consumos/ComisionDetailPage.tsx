@@ -5,6 +5,7 @@ import { ArrowLeft, Loader, X } from 'lucide-react';
 import Layout from '../../../components/layout/Layout';
 import { remisionesService, type DetTecnicoDetalle, type ProgramacionRealizadaItem, type EjecucionPagoItem } from '../../../services/remisiones.service';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
+import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 
 const formatMoney = (value: any): string => {
   if (value === null || value === undefined) return '-';
@@ -43,6 +44,7 @@ const formatDate = (dateString: string | null): string => {
 };
 
 export default function ComisionDetailPage() {
+  const { isMobile } = useResponsiveStyles();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [selectedPago, setSelectedPago] = useState<ProgramacionRealizadaItem | null>(null);
@@ -86,7 +88,7 @@ export default function ComisionDetailPage() {
           <div style={styles.sectionTitleRow}>
             <h2 style={styles.sectionTitle}>Información General</h2>
           </div>
-          <div style={styles.infoCardGrid}>
+          <div style={{ ...styles.infoCardGrid, gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr' }}>
             <div style={styles.gridField}><span style={styles.label}>Nombre Contacto</span><span style={{ ...styles.value, textAlign: 'left' as const }}>{dt.nombreContacto || '-'}</span></div>
             <div style={styles.gridField}><span style={styles.label}>ID_Técnicos</span><span style={{ ...styles.value, textAlign: 'left' as const }}>{dt.id}</span></div>
             <div style={styles.gridField}>
@@ -299,11 +301,11 @@ const styles: Record<string, React.CSSProperties> = {
   label: { fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em', flexShrink: 0 },
   value: { fontSize: '0.875rem', fontWeight: 600, color: '#333', textAlign: 'right' as const },
   emptyState: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', padding: '2rem', textAlign: 'center' as const, color: '#9ca3af', fontSize: '0.875rem' },
-  remList: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', overflow: 'hidden' },
+  remList: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', overflowX: 'auto' as const, overflowY: 'hidden' as const },
   colHeader: { backgroundColor: '#f9fafb', borderBottom: '2px solid #e5e7eb' },
   colHeaderText: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
-  pagoRow: { display: 'grid', gridTemplateColumns: '130px 110px 110px 1fr 1fr 110px 100px 150px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff' },
-  ejecucionRow: { display: 'grid', gridTemplateColumns: '1fr 1fr 160px 220px 120px 130px 130px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff' },
+  pagoRow: { display: 'grid', gridTemplateColumns: '130px 110px 110px 1fr 1fr 110px 100px 150px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '1150px' },
+  ejecucionRow: { display: 'grid', gridTemplateColumns: '1fr 1fr 160px 220px 120px 130px 130px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '1180px' },
   statusEjecutado: { fontSize: '0.7rem', fontWeight: 700, color: '#15803d', backgroundColor: '#dcfce7', padding: '0.3rem 0.6rem', borderRadius: '6px', textTransform: 'uppercase' as const, letterSpacing: '0.03em', width: 'fit-content' },
   statusPendiente: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', backgroundColor: '#f3f4f6', padding: '0.3rem 0.6rem', borderRadius: '6px', textTransform: 'uppercase' as const, letterSpacing: '0.03em', width: 'fit-content' },
   scrollBody: { maxHeight: '320px', overflowY: 'auto' as const },

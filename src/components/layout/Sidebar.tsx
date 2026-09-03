@@ -23,8 +23,10 @@ import {
   Car,
   Route,
   Contact,
+  X,
 } from 'lucide-react';
 import { esSuperAdmin } from '../../lib/auth.utils';
+import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 
 const operacionSubmodules = [
   { icon: Calendar, label: 'Programación', path: '/operacion/programaciones' },
@@ -59,7 +61,14 @@ const navItems = [
   { icon: Truck, label: 'Gestión Vehicular', path: '/vehicular', submodules: vehicularSubmodules },
 ];
 
-export default function Sidebar() {
+interface SidebarProps {
+  /** Solo aplica en mobile: controla si el drawer está abierto. Se ignora en desktop. */
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
+}
+
+export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarProps) {
+  const { isMobile } = useResponsiveStyles();
   const [expanded, setExpanded] = useState(false);
   const [openModule, setOpenModule] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -82,12 +91,25 @@ export default function Sidebar() {
     setOpenModule(deriveOpenModule(location.pathname));
   }, [location.pathname]);
 
-  return (
-    <aside
-      style={{ ...styles.sidebar, width: expanded ? '220px' : '60px' }}
-      onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => { setExpanded(false); setOpenModule(deriveOpenModule(location.pathname)); }}
-    >
+  // En el drawer de mobile no hay hover, así que siempre se ve "expandido" (con etiquetas).
+  const showLabels = isMobile ? true : expanded;
+
+  const handleItemClick = (path: string, hasSubmodules: boolean) => {
+    if (hasSubmodules && showLabels) {
+      setOpenModule(prev => (prev === path ? null : path));
+    } else {
+      navigate(path);
+      if (isMobile) onCloseMobile?.();
+    }
+  };
+
+  const handleSubItemClick = (subPath: string) => {
+    navigate(subPath);
+    if (isMobile) onCloseMobile?.();
+  };
+
+  const navList = (
+    <>
       {visibleNavItems.map(({ icon: Icon, label, path, submodules }) => {
         const active = location.pathname === path || location.pathname.startsWith(`${path}/`);
         const hasSubmodules = !!submodules?.length;
@@ -95,25 +117,19 @@ export default function Sidebar() {
         return (
           <div key={path}>
             <button
-              onClick={() => {
-                if (hasSubmodules && expanded) {
-                  setOpenModule(isOpen ? null : path);
-                } else {
-                  navigate(path);
-                }
-              }}
+              onClick={() => handleItemClick(path, hasSubmodules)}
               style={{
                 ...styles.item,
                 backgroundColor: active ? '#6b8c1f' : (isOpen ? 'rgba(255,255,255,0.08)' : 'transparent'),
                 color: active ? '#fff' : '#ccc',
               }}
-              title={!expanded ? label : ''}
+              title={!showLabels ? label : ''}
               onMouseEnter={e => { if (!active && !isOpen) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)'; }}
               onMouseLeave={e => { if (!active && !isOpen) e.currentTarget.style.backgroundColor = 'transparent'; }}
             >
               <Icon size={20} style={{ flexShrink: 0 }} />
-              {expanded && <span style={styles.label}>{label}</span>}
-              {expanded && hasSubmodules && (
+              {showLabels && <span style={styles.label}>{label}</span>}
+              {showLabels && hasSubmodules && (
                 <ChevronDown
                   size={14}
                   style={{ marginLeft: 'auto', transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.15s ease', flexShrink: 0 }}
@@ -121,14 +137,14 @@ export default function Sidebar() {
               )}
             </button>
 
-            {expanded && hasSubmodules && isOpen && (
+            {showLabels && hasSubmodules && isOpen && (
               <div className="sidebar-submenu-anim" style={styles.submoduleList}>
                 {submodules.map(({ label: subLabel, path: subPath }) => {
                   const subActive = location.pathname === subPath || location.pathname.startsWith(`${subPath}/`);
                   return (
                     <button
                       key={subPath}
-                      onClick={() => navigate(subPath)}
+                      onClick={() => handleSubItemClick(subPath)}
                       style={{
                         ...styles.subItem,
                         backgroundColor: subActive ? '#6b8c1f' : 'transparent',
@@ -146,6 +162,34 @@ export default function Sidebar() {
           </div>
         );
       })}
+    </>
+  );
+
+  if (isMobile) {
+    if (!mobileOpen) return null;
+    return (
+      <>
+        <div className="modal-overlay-anim" style={styles.backdrop} onClick={onCloseMobile} />
+        <aside className="mobile-drawer-anim" style={styles.drawer}>
+          <div style={styles.drawerHeader}>
+            <span style={styles.drawerTitle}>Menú</span>
+            <button style={styles.drawerCloseBtn} onClick={onCloseMobile}>
+              <X size={20} />
+            </button>
+          </div>
+          <div style={styles.drawerBody}>{navList}</div>
+        </aside>
+      </>
+    );
+  }
+
+  return (
+    <aside
+      style={{ ...styles.sidebar, width: expanded ? '220px' : '60px' }}
+      onMouseEnter={() => setExpanded(true)}
+      onMouseLeave={() => { setExpanded(false); setOpenModule(deriveOpenModule(location.pathname)); }}
+    >
+      {navList}
     </aside>
   );
 }
@@ -165,6 +209,59 @@ const styles: Record<string, React.CSSProperties> = {
     overflowY: 'auto',
     zIndex: 99,
     boxShadow: '2px 0 8px rgba(0,0,0,0.15)',
+  },
+  backdrop: {
+    position: 'fixed',
+    top: '60px',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    zIndex: 98,
+  },
+  drawer: {
+    position: 'fixed',
+    top: '60px',
+    left: 0,
+    bottom: 0,
+    width: 'min(280px, 82vw)',
+    backgroundColor: '#333333',
+    display: 'flex',
+    flexDirection: 'column',
+    overflowY: 'auto',
+    zIndex: 99,
+    boxShadow: '2px 0 12px rgba(0,0,0,0.25)',
+  },
+  drawerHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '0.75rem 1rem',
+    borderBottom: '1px solid rgba(255,255,255,0.1)',
+    flexShrink: 0,
+  },
+  drawerTitle: {
+    fontSize: '0.8rem',
+    fontWeight: 700,
+    color: '#fff',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.05em',
+  },
+  drawerCloseBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '32px',
+    height: '32px',
+    border: 'none',
+    borderRadius: '8px',
+    backgroundColor: 'transparent',
+    color: '#ccc',
+    cursor: 'pointer',
+  },
+  drawerBody: {
+    paddingTop: '0.5rem',
+    paddingBottom: '1rem',
   },
   item: {
     display: 'flex',

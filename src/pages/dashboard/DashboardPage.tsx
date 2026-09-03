@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import Layout from '../../components/layout/Layout';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
+import { esSuperAdmin } from '../../lib/auth.utils';
 
 const ACCENT = '#4a7c59';
 
@@ -47,6 +48,8 @@ function ModuleCard({ icon: Icon, label, description, path }: typeof modules[0])
 
 export default function DashboardPage() {
   const { isMobile } = useResponsiveStyles();
+  // Administración solo se ofrece a superadmins — mismo criterio que Sidebar.tsx.
+  const modulosVisibles = modules.filter(mod => mod.path !== '/administracion' || esSuperAdmin());
 
   return (
     <Layout>
@@ -57,7 +60,7 @@ export default function DashboardPage() {
         </div>
 
         <div style={{ ...styles.grid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(240px, 1fr))' }}>
-          {modules.map((mod) => (
+          {modulosVisibles.map((mod) => (
             <ModuleCard key={mod.path} {...mod} />
           ))}
         </div>

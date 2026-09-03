@@ -19,6 +19,9 @@ export const notificacionesService = {
   noLeidasCount: (): Promise<{ count: number }> =>
     api.get('/notificaciones/no-leidas-count').then(r => r.data),
 
+  marcarVistas: (): Promise<void> =>
+    api.patch('/notificaciones/marcar-vistas').then(() => undefined),
+
   marcarLeida: (id: string): Promise<void> =>
     api.patch(`/notificaciones/${id}/leer`).then(() => undefined),
 

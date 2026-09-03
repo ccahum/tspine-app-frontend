@@ -548,6 +548,7 @@ export interface RemisionDetail {
   tieneCotizacion: boolean;
   cotizacion: string | null;
   firma: string | null;
+  firmaDisponible: boolean;
   status: boolean;
   usuario: { id: string; nombreCompleto: string } | null;
   tarifa: { id: string; nombre: string } | null;
@@ -717,6 +718,9 @@ export const remisionesService = {
 
   getById: (id: string): Promise<RemisionDetail | null> =>
     api.get(`/operacion/remisiones/${id}`).then(r => r.data),
+
+  fetchFirmaBlob: (id: string): Promise<Blob> =>
+    api.get(`/operacion/remisiones/${id}/firma`, { responseType: 'blob' }).then(r => r.data),
 
   updateEstado: (id: string, estado: string): Promise<{ id: string; estado: string | null }> =>
     api.patch(`/operacion/remisiones/${id}/estado`, { estado }).then(r => r.data),

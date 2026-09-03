@@ -13,6 +13,7 @@ import SuccessToast from '../../../components/SuccessToast';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import { toLocalDateString } from '../../../lib/date.utils';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
+import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import {
   cotizacionesService,
   type CotizacionListItem,
@@ -374,6 +375,35 @@ const CotizacionRow = memo(({ item, index, onSelect }: { item: CotizacionListIte
     <td style={{ ...styles.td, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, color: '#6b6b60' }}>{item.cirugia ?? '-'}</td>
     <td style={styles.td}>{item.sede ?? '-'}</td>
   </tr>
+));
+
+const CotizacionCard = memo(({ item, onSelect }: { item: CotizacionListItem; onSelect: (id: string) => void }) => (
+  <div style={styles.mobileCard} onClick={() => onSelect(item.id)}>
+    <div style={styles.mobileCardTopRow}>
+      <span style={styles.mobileCardId}>{item.numCotizacion || item.id}</span>
+      <span style={styles.mobileCardDate}>{formatDate(item.fecha)}</span>
+    </div>
+    <div style={styles.mobileCardMainRow}>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={styles.mobileCardTitle}>{item.hospital ?? 'Sin hospital'}</div>
+        <div style={styles.mobileCardSubtext}>{item.medico ?? '-'}</div>
+      </div>
+    </div>
+    <div style={styles.mobileCardFieldsRow}>
+      <div style={styles.mobileCardField}>
+        <span style={styles.mobileCardFieldLabel}>Sede</span>
+        <span style={styles.mobileCardFieldValue}>{item.sede ?? '-'}</span>
+      </div>
+      <div style={styles.mobileCardField}>
+        <span style={styles.mobileCardFieldLabel}>Usuario</span>
+        <span style={styles.mobileCardFieldValue}>{item.usuario ?? '-'}</span>
+      </div>
+      <div style={{ ...styles.mobileCardField, flex: 1, minWidth: 0 }}>
+        <span style={styles.mobileCardFieldLabel}>Cirugía</span>
+        <span style={{ ...styles.mobileCardFieldValue, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.cirugia ?? '-'}</span>
+      </div>
+    </div>
+  </div>
 ));
 
 function DetalleItem({ label, children }: { label: string; children: React.ReactNode }) {
@@ -1778,6 +1808,7 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
 }
 
 export default function CotizacionesPage() {
+  const { isMobile } = useResponsiveStyles();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
@@ -1877,6 +1908,12 @@ export default function CotizacionesPage() {
             <div style={styles.empty}>Cargando...</div>
           ) : items.length === 0 ? (
             <div style={styles.empty}>Sin registros</div>
+          ) : isMobile ? (
+            <div style={styles.mobileCardList}>
+              {items.map(item => (
+                <CotizacionCard key={item.id} item={item} onSelect={setSelectedId} />
+              ))}
+            </div>
           ) : (
             <table style={styles.table}>
               <thead>
@@ -1953,6 +1990,18 @@ const styles: Record<string, React.CSSProperties> = {
   td: { padding: '0.65rem 0.875rem', borderBottom: '1px solid #f3f4f0', verticalAlign: 'middle' as const, color: '#33342a' },
   tr: { backgroundColor: '#fff', cursor: 'pointer', transition: 'background-color 0.15s ease' },
   idCode: { fontSize: '0.84375rem', fontWeight: 600, color: '#4d7a13' },
+  mobileCardList: { display: 'flex', flexDirection: 'column' as const, gap: '0.75rem', padding: '0.75rem' },
+  mobileCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '12px', padding: '0.85rem', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' },
+  mobileCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' },
+  mobileCardId: { fontSize: '0.8rem', fontWeight: 700, color: '#4d7a13' },
+  mobileCardDate: { fontSize: '0.75rem', color: '#9ca3af' },
+  mobileCardMainRow: { display: 'flex', alignItems: 'center', gap: '0.7rem', marginBottom: '0.7rem' },
+  mobileCardTitle: { fontSize: '0.9rem', fontWeight: 700, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  mobileCardSubtext: { fontSize: '0.78rem', color: '#6b7280', marginTop: '0.15rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  mobileCardFieldsRow: { display: 'flex', gap: '1.25rem', paddingTop: '0.6rem', borderTop: '1px solid #f3f4f0' },
+  mobileCardField: { display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', minWidth: 0 },
+  mobileCardFieldLabel: { fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
+  mobileCardFieldValue: { fontSize: '0.82rem', fontWeight: 600, color: '#374151' },
   empty: { textAlign: 'center' as const, padding: '3rem', color: '#9ca3af' },
   pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem', marginTop: '1.5rem' },
   pageLabel: { fontSize: '0.875rem', fontWeight: 600, color: '#33342a' },

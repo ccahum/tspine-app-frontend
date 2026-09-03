@@ -6,6 +6,7 @@ import Layout from '../../../components/layout/Layout';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import { programacionesService } from '../../../services/programaciones.service';
 import { toLocalDateString } from '../../../lib/date.utils';
+import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 
 const getDaysInMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
 const getFirstDayOfMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1).getDay();
@@ -33,6 +34,7 @@ interface ProgramacionInfo {
 type ViewType = 'mes' | 'semana' | 'dia';
 
 export default function CalendarPage() {
+  const { isMobile } = useResponsiveStyles();
   const navigate = useNavigate();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState<ViewType>('mes');
@@ -88,8 +90,65 @@ export default function CalendarPage() {
 
   const monthYear = currentDate.toLocaleString('es-MX', { month: 'long', year: 'numeric' });
 
-  // Render Mes
+  // Render Mes — en mobile, la grilla de 7 columnas es inutilizable (cada columna queda en
+  // ~45px), así que se muestra una agenda vertical con solo los días que tienen cirugías.
+  const renderMesAgendaMobile = () => {
+    const daysInMonth = getDaysInMonth(currentDate);
+    const isCurrentMonth = currentDate.getMonth() === today.getMonth() && currentDate.getFullYear() === today.getFullYear();
+
+    const diasConEventos = Array.from({ length: daysInMonth }, (_, i) => i + 1)
+      .map(day => {
+        const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+        return { day, date, progs: getProgramacionesForDay(date) };
+      })
+      .filter(d => d.progs.length > 0);
+
+    if (diasConEventos.length === 0) {
+      return <div style={styles.mesAgendaEmpty}>Sin cirugías programadas este mes</div>;
+    }
+
+    return (
+      <div style={styles.mesAgendaList}>
+        {diasConEventos.map(({ day, date, progs }) => {
+          const isToday = isCurrentMonth && day === today.getDate();
+          const dayLabel = date.toLocaleString('es-MX', { weekday: 'long', day: 'numeric' });
+          return (
+            <div key={day} style={styles.mesAgendaGroup}>
+              <div style={styles.mesAgendaDateRow}>
+                <span style={isToday ? styles.todayBadge : styles.mesAgendaDayNum}>{day}</span>
+                <span style={styles.mesAgendaDayLabel}>{dayLabel}</span>
+              </div>
+              <div style={styles.dayDetailContent}>
+                {progs.map(prog => {
+                  const color = getSedeColor(prog.sede);
+                  return (
+                    <div
+                      key={prog.id}
+                      onClick={() => navigate(`/operacion/programaciones/${prog.id}`)}
+                      style={{ ...styles.dayProgItem, borderLeft: `4px solid ${color}` }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, color: '#16170f', fontSize: '0.85rem' }}>
+                          <span style={{ ...styles.eventDot, backgroundColor: color }} />
+                          {prog.medicos[0] || 'Sin médico'}
+                        </div>
+                        {prog.horaQx && <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>{prog.horaQx}</div>}
+                      </div>
+                      <div style={{ fontSize: '0.78rem', color: '#9ca3af' }}>{prog.sede || '-'}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   const renderMes = () => {
+    if (isMobile) return renderMesAgendaMobile();
+
     const daysInMonth = getDaysInMonth(currentDate);
     const firstDay = getFirstDayOfMonth(currentDate);
     const days = Array(firstDay).fill(null).concat(Array.from({ length: daysInMonth }, (_, i) => i + 1));
@@ -159,7 +218,7 @@ export default function CalendarPage() {
   const renderSemana = () => {
     const weekDates = getWeekDates();
     return (
-      <div style={styles.weekContainer}>
+      <div style={{ ...styles.weekContainer, gridTemplateColumns: isMobile ? '1fr' : 'repeat(7, 1fr)' }}>
         {weekDates.map(date => {
           const progs = getProgramacionesForDay(date);
           const isToday = date.toDateString() === today.toDateString();
@@ -254,30 +313,30 @@ export default function CalendarPage() {
           Volver
         </button>
 
-        <div style={styles.topBar}>
-          <div style={styles.viewTabs}>
+        <div style={{ ...styles.topBar, ...(isMobile ? styles.topBarMobile : {}) }}>
+          <div style={{ ...styles.viewTabs, ...(isMobile ? { width: '100%', justifyContent: 'center' as const } : {}) }}>
             {(['mes', 'semana', 'dia'] as ViewType[]).map(v => (
               <button
                 key={v}
                 onClick={() => setView(v)}
-                style={{ ...styles.viewTab, ...(view === v ? styles.viewTabActive : {}) }}
+                style={{ ...styles.viewTab, ...(view === v ? styles.viewTabActive : {}), ...(isMobile ? { flex: 1 } : {}) }}
               >
                 {v === 'mes' ? 'Mes' : v === 'semana' ? 'Semana' : 'Día'}
               </button>
             ))}
           </div>
 
-          <div style={styles.monthNav}>
+          <div style={{ ...styles.monthNav, ...(isMobile ? { justifySelf: 'stretch' as const, justifyContent: 'space-between' as const } : {}) }}>
             <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1))} style={styles.navBtn}>
               <ChevronLeft size={18} />
             </button>
-            <h2 style={styles.monthYear}>{monthYear.charAt(0).toUpperCase() + monthYear.slice(1)}</h2>
+            <h2 style={{ ...styles.monthYear, ...(isMobile ? { minWidth: 0, fontSize: '1.1rem' } : {}) }}>{monthYear.charAt(0).toUpperCase() + monthYear.slice(1)}</h2>
             <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1))} style={styles.navBtn}>
               <ChevronRight size={18} />
             </button>
           </div>
 
-          <div style={styles.topBarSpacer} />
+          {!isMobile && <div style={styles.topBarSpacer} />}
         </div>
 
         <div style={styles.sedesLegend}>
@@ -305,6 +364,7 @@ const styles: Record<string, React.CSSProperties> = {
   backLink: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem', padding: '0.25rem 0.1rem', border: 'none', background: 'transparent', color: '#6b7280', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, transition: 'color 0.15s ease' },
 
   topBar: { display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', marginBottom: '1.25rem', gap: '1rem' },
+  topBarMobile: { gridTemplateColumns: '1fr', gap: '0.75rem' },
   viewTabs: { display: 'flex', gap: '0.4rem', backgroundColor: '#fff', border: '1px solid #eeeee6', padding: '0.3rem', borderRadius: '10px', width: 'fit-content' },
   viewTab: { padding: '0.5rem 1.1rem', border: '1px solid transparent', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', backgroundColor: 'transparent', color: '#6b6b60', transition: 'all 0.15s ease' },
   viewTabActive: { backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' },
@@ -342,6 +402,13 @@ const styles: Record<string, React.CSSProperties> = {
   dayColumnHeader: { padding: '0.65rem', fontSize: '0.8rem', fontWeight: 700, color: '#33342a', borderBottom: '1px solid #eeeee6', textAlign: 'center' as const, backgroundColor: '#f9fafb', textTransform: 'capitalize' as const },
   dayColumnHeaderToday: { backgroundColor: '#e9f2d8', color: '#3f6510' },
   dayColumnContent: { flex: 1, padding: '0.5rem', display: 'flex', flexDirection: 'column' as const, gap: '0.4rem', overflow: 'auto', maxHeight: '420px' },
+
+  mesAgendaList: { display: 'flex', flexDirection: 'column' as const, gap: '1.25rem' },
+  mesAgendaGroup: { display: 'flex', flexDirection: 'column' as const, gap: '0.6rem' },
+  mesAgendaDateRow: { display: 'flex', alignItems: 'center', gap: '0.6rem' },
+  mesAgendaDayNum: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '22px', height: '22px', borderRadius: '50%', backgroundColor: '#f4f4ee', color: '#33342a', fontSize: '0.75rem', fontWeight: 700, lineHeight: 1 },
+  mesAgendaDayLabel: { fontSize: '0.85rem', fontWeight: 700, color: '#16170f', textTransform: 'capitalize' as const },
+  mesAgendaEmpty: { textAlign: 'center' as const, color: '#9ca3af', fontSize: '0.875rem', padding: '2rem 1rem' },
 
   dayDetail: { padding: '1rem' },
   dayDetailTitle: { fontSize: '1.4rem', fontWeight: 700, color: '#16170f', marginBottom: '1.25rem', textTransform: 'capitalize' as const },

@@ -21,7 +21,7 @@ export interface LoginResponse {
 }
 
 export interface LoginStepResponse {
-  estado: 'REQUIERE_CONFIGURAR_2FA' | 'REQUIERE_CODIGO';
+  estado: 'REQUIERE_CAMBIO_PASSWORD' | 'REQUIERE_CONFIGURAR_2FA' | 'REQUIERE_CODIGO';
   pendingToken: string;
 }
 
@@ -33,6 +33,11 @@ export interface TotpSetupResponse {
 export const authService = {
   login: async (data: LoginRequest): Promise<LoginStepResponse> => {
     const res = await api.post<LoginStepResponse>('/auth/login', data);
+    return res.data;
+  },
+
+  cambiarPasswordInicial: async (pendingToken: string, nuevaPassword: string): Promise<LoginStepResponse> => {
+    const res = await api.post<LoginStepResponse>('/auth/cambiar-password-inicial', { pendingToken, nuevaPassword });
     return res.data;
   },
 
@@ -54,6 +59,14 @@ export const authService = {
   me: async (): Promise<Usuario> => {
     const res = await api.get<Usuario>('/auth/me');
     return res.data;
+  },
+
+  olvidePassword: async (usuario: string): Promise<void> => {
+    await api.post('/auth/olvide-password', { usuario });
+  },
+
+  resetPassword: async (token: string, nuevaPassword: string): Promise<void> => {
+    await api.post('/auth/reset-password', { token, nuevaPassword });
   },
 
   logout: () => {

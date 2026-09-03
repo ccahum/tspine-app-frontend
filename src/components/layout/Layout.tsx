@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import Header from './Header';
 import Sidebar from './Sidebar';
@@ -9,12 +10,13 @@ interface LayoutProps {
 
 export default function Layout({ children }: LayoutProps) {
   const { isMobile } = useResponsiveStyles();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   return (
     <div style={styles.root}>
-      <Header />
-      {!isMobile && <Sidebar />}
-      <main style={{ ...styles.main, marginLeft: isMobile ? 0 : '60px' }}>
+      <Header onMenuClick={() => setMobileNavOpen(true)} />
+      <Sidebar mobileOpen={mobileNavOpen} onCloseMobile={() => setMobileNavOpen(false)} />
+      <main className="page-fade-in" style={{ ...styles.main, marginLeft: isMobile ? 0 : '60px' }}>
         {children}
       </main>
     </div>

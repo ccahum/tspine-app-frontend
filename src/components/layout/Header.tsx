@@ -1,21 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { Search, Bell, ChevronDown, LogOut, ClipboardList, FileText, Receipt, Loader } from 'lucide-react';
+import { Search, Bell, ChevronDown, LogOut, ClipboardList, FileText, Receipt, Loader, UserRound, Menu } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../../services/auth.service';
 import { busquedaGlobalService, type BusquedaGlobalResult } from '../../services/busquedaGlobal.service';
 import { notificacionesService, NOTIFICACIONES_PAGE_SIZE, type Notificacion } from '../../services/notificaciones.service';
+import SuccessToast from '../SuccessToast';
 import logo from '../../assets/luminar-logo-v1.png';
+import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
+
+// Cuánto se ve el toast de "Sesión cerrada" antes de mandar a /login — corto a propósito,
+// es solo una confirmación visual rápida, no hay nada más que esperar en esta pantalla.
+const LOGOUT_REDIRECT_DELAY_MS = 500;
 
 const getInitials = (name: string): string => name.trim().slice(0, 2).toUpperCase();
-
-// Guarda en localStorage (sobrevive recargas) el momento en que el usuario abrió la campana por
-// última vez, para que el punto rojo solo cuente notificaciones creadas DESPUÉS de eso — así no
-// reaparece cada 60s por las mismas notificaciones que ya vio pero no ha marcado como leídas.
-const LAST_SEEN_KEY = 'tspine_notif_last_seen_at';
-const countUnseen = (list: Notificacion[]): number => {
-  const lastSeenAt = localStorage.getItem(LAST_SEEN_KEY);
-  return list.filter(n => !n.leida && (!lastSeenAt || n.createdAt > lastSeenAt)).length;
-};
 
 // Color del punto/tinte según el tipo de notificación — rojo si algo se rechazó, verde si se
 // aprobó, ámbar para lo pendiente/informativo. Los tipos nuevos que no estén aquí caen en gris.
@@ -26,12 +23,20 @@ const NOTIF_TIPO_COLOR: Record<string, string> = {
 };
 const getNotifColor = (tipo: string): string => NOTIF_TIPO_COLOR[tipo] ?? '#6b7280';
 
-export default function Header() {
+interface HeaderProps {
+  onMenuClick?: () => void;
+}
+
+export default function Header({ onMenuClick }: HeaderProps) {
+  const { isMobile } = useResponsiveStyles();
   const navigate = useNavigate();
   const location = useLocation();
   const isDashboard = location.pathname === '/dashboard';
   const usuario = JSON.parse(localStorage.getItem('usuario') ?? '{}');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [showLogoutToast, setShowLogoutToast] = useState(false);
+  const [showWelcomeToast, setShowWelcomeToast] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchWrapRef = useRef<HTMLDivElement>(null);
@@ -49,12 +54,23 @@ export default function Header() {
   const [notifHasMore, setNotifHasMore] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
 
+  // Solo se muestra justo después de iniciar sesión (LoginPage deja la marca) — se borra apenas
+  // se lee, así no reaparece si el usuario navega entre páginas (el Header se vuelve a montar
+  // en cada una, porque cada página envuelve su contenido en <Layout> por su cuenta).
+  useEffect(() => {
+    if (sessionStorage.getItem('tspine_mostrar_bienvenida')) {
+      sessionStorage.removeItem('tspine_mostrar_bienvenida');
+      setShowWelcomeToast(true);
+    }
+  }, []);
+
   // El contador (para el punto rojo) se revisa cada 60s sin importar si el desplegable está
-  // abierto — cuenta solo lo no leído Y creado después del último "visto" (ver countUnseen).
+  // abierto — usa el conteo real del backend (leida:false en DB), así queda sincronizado entre
+  // navegadores/dispositivos en vez de depender de un "ya lo vi" guardado solo localmente.
   useEffect(() => {
     const fetchCount = () => {
-      notificacionesService.listar()
-        .then(list => setUnreadCount(countUnseen(list)))
+      notificacionesService.noLeidasCount()
+        .then(({ count }) => setUnreadCount(count))
         .catch(() => {});
     };
     fetchCount();
@@ -66,11 +82,12 @@ export default function Header() {
     const opening = !notifOpen;
     setNotifOpen(opening);
     if (opening) {
-      // El punto rojo desaparece al abrir la campana (ya las "viste") y se queda oculto hasta
-      // que llegue algo genuinamente nuevo — cada notificación individual sigue sin marcarse
-      // como leída hasta que le des clic, eso solo afecta el resaltado dentro de la lista.
+      // Se limpia el punto rojo al abrir la campana (server-side, vía marcarVistas — no
+      // localStorage, así queda igual sin importar desde qué navegador/dispositivo entres).
+      // El resaltado de cada notificación individual en la lista sigue dependiendo solo de
+      // `leida`, que no cambia hasta que le des clic a esa notificación en particular.
       setUnreadCount(0);
-      localStorage.setItem(LAST_SEEN_KEY, new Date().toISOString());
+      notificacionesService.marcarVistas().catch(() => {});
       setNotifLoading(true);
       notificacionesService.listar()
         .then(list => { setNotifications(list); setNotifHasMore(list.length === NOTIFICACIONES_PAGE_SIZE); })
@@ -117,14 +134,26 @@ export default function Header() {
     return `hace ${diffD} d`;
   };
 
-  const handleLogout = () => {
+  const confirmarCerrarSesion = () => {
     authService.logout();
-    navigate('/login');
+    setMenuOpen(false);
+    setConfirmLogout(false);
+    setShowLogoutToast(true);
+    // Desvanece la app completa antes de cambiar a /login, para que no se sienta como un corte
+    // brusco entre el dashboard y la pantalla de login.
+    document.getElementById('root')?.classList.add('app-fade-out');
+    setTimeout(() => {
+      document.getElementById('root')?.classList.remove('app-fade-out');
+      navigate('/login');
+    }, LOGOUT_REDIRECT_DELAY_MS);
   };
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+        setConfirmLogout(false);
+      }
       if (searchWrapRef.current && !searchWrapRef.current.contains(e.target as Node)) setSearchOpen(false);
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false);
     };
@@ -173,12 +202,17 @@ export default function Header() {
   const showDropdown = searchOpen && query.trim().length >= 2;
 
   return (
-    <header style={styles.header}>
+    <header style={{ ...styles.header, gap: isMobile ? '0.75rem' : '1.5rem', padding: isMobile ? '0 0.75rem' : '0 1.5rem' }}>
       <div style={styles.left}>
+        {isMobile && (
+          <button style={styles.menuBtn} onClick={onMenuClick} title="Menú">
+            <Menu size={22} />
+          </button>
+        )}
         <img
           src={logo}
           alt="Tecnología Spine"
-          style={{ ...styles.logo, transition: 'transform 0.2s ease', cursor: 'pointer' }}
+          style={{ ...styles.logo, height: isMobile ? '32px' : '40px', transition: 'transform 0.2s ease', cursor: 'pointer' }}
           onClick={() => navigate('/dashboard')}
           onMouseEnter={e => {
             e.currentTarget.style.transform = 'scale(1.1)';
@@ -293,7 +327,7 @@ export default function Header() {
           </button>
 
           {notifOpen && (
-            <div className="dropdown-anim" style={styles.notifDropdown}>
+            <div className="dropdown-anim" style={{ ...styles.notifDropdown, width: isMobile ? 'calc(100vw - 1.5rem)' : '360px', right: isMobile ? '-0.5rem' : 0 }}>
               <div style={styles.notifDropdownHeader}>
                 <span style={styles.notifDropdownTitle}>Notificaciones</span>
                 {!!notifications?.some(n => !n.leida) && (
@@ -341,27 +375,57 @@ export default function Header() {
         <div style={{ position: 'relative' as const }} ref={menuRef}>
           <button style={styles.userBtn} onClick={() => setMenuOpen(o => !o)}>
             <div style={styles.avatar}>{getInitials(usuario.nombreCompleto ?? '')}</div>
-            <div style={styles.userTextCol}>
-              <span style={styles.userName}>{usuario.nombreCompleto}</span>
-              <span style={styles.userRole}>{usuario.perfilNombre}</span>
-            </div>
-            <ChevronDown size={16} color="#9ca3af" style={{ transform: menuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
+            {!isMobile && (
+              <div style={styles.userTextCol}>
+                <span style={styles.userName}>{usuario.correo?.split('@')[0] ?? usuario.nombreCompleto}</span>
+                <span style={styles.userRole}>{usuario.perfilNombre}</span>
+              </div>
+            )}
+            {!isMobile && (
+              <ChevronDown size={16} color="#9ca3af" style={{ transform: menuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
+            )}
           </button>
 
           {menuOpen && (
             <div style={styles.dropdown}>
-              <button
-                style={styles.dropdownItem}
-                onClick={handleLogout}
-                onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#fef2f2'; }}
-                onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-              >
-                <LogOut size={16} /> Cerrar sesión
-              </button>
+              {confirmLogout ? (
+                <div className="dropdown-anim" style={styles.logoutConfirmBox}>
+                  <span style={styles.logoutConfirmText}>¿Cerrar sesión?</span>
+                  <div style={styles.logoutConfirmActions}>
+                    <button style={styles.logoutCancelBtn} onClick={() => setConfirmLogout(false)}>Cancelar</button>
+                    <button style={styles.logoutConfirmBtn} onClick={confirmarCerrarSesion}>Sí, cerrar</button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  style={styles.dropdownItem}
+                  onClick={() => setConfirmLogout(true)}
+                  onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#fef2f2'; }}
+                  onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                >
+                  <LogOut size={16} /> Cerrar sesión
+                </button>
+              )}
             </div>
           )}
         </div>
       </div>
+
+      <SuccessToast
+        show={showLogoutToast}
+        message="Cerrando sesión..."
+        color="#dc2626"
+        textColor="#dc2626"
+        icon={<LogOut size={24} strokeWidth={2.2} />}
+        onClose={() => setShowLogoutToast(false)}
+        duration={LOGOUT_REDIRECT_DELAY_MS}
+      />
+      <SuccessToast
+        show={showWelcomeToast}
+        message={`¡Bienvenido, ${usuario.nombreCompleto}!`}
+        icon={<UserRound size={26} strokeWidth={2.2} />}
+        onClose={() => setShowWelcomeToast(false)}
+      />
     </header>
   );
 }
@@ -389,6 +453,19 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   logo: { height: '40px' },
+  menuBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '36px',
+    height: '36px',
+    backgroundColor: 'transparent',
+    border: 'none',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    color: '#374151',
+    flexShrink: 0,
+  },
   center: {
     flex: 1,
     display: 'flex',
@@ -691,5 +768,41 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#dc2626',
     fontWeight: 600,
     textAlign: 'left' as const,
+  },
+  logoutConfirmBox: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '0.6rem',
+    padding: '0.75rem 0.9rem',
+  },
+  logoutConfirmText: {
+    fontSize: '0.85rem',
+    fontWeight: 600,
+    color: '#16170f',
+  },
+  logoutConfirmActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: '0.5rem',
+  },
+  logoutCancelBtn: {
+    padding: '0.4rem 0.7rem',
+    border: '1px solid #e5e7eb',
+    borderRadius: '6px',
+    backgroundColor: '#fff',
+    color: '#374151',
+    fontSize: '0.78rem',
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
+  logoutConfirmBtn: {
+    padding: '0.4rem 0.7rem',
+    border: 'none',
+    borderRadius: '6px',
+    backgroundColor: '#dc2626',
+    color: '#fff',
+    fontSize: '0.78rem',
+    fontWeight: 600,
+    cursor: 'pointer',
   },
 };

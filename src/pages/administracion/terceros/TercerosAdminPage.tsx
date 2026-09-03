@@ -6,6 +6,7 @@ import Layout from '../../../components/layout/Layout';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import SuccessToast from '../../../components/SuccessToast';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
+import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import {
   tercerosAdminService,
   CLASIFICACIONES_TERCERO,
@@ -429,7 +430,7 @@ function DetalleModal({ item, onClose, onUpdated }: { item: TerceroItem; onClose
               <div style={styles.optionalBox}>
                 <DetalleRow label="Nombre completo">{detalle.nombreCompleto}</DetalleRow>
                 <DetalleRow label="Primer nombre">{detalle.primerNombre ?? '-'}</DetalleRow>
-                <DetalleRow label="Nombre comercial">{detalle.nombreComercial ?? '-'}</DetalleRow>
+                <DetalleRow label="Nombre comercial">{detalle.nombreComercial || detalle.nombreCompleto}</DetalleRow>
                 <DetalleRow label="Correo">{detalle.correo ?? '-'}</DetalleRow>
                 <DetalleRow label="Tipo de contacto">{detalle.tipoContacto === null ? '-' : detalle.tipoContacto ? 'Externo' : 'Interno'}</DetalleRow>
                 <DetalleRow label="Tipo de persona">{detalle.tipoPersona === null ? '-' : detalle.tipoPersona ? 'Moral' : 'Física'}</DetalleRow>
@@ -1224,7 +1225,38 @@ function NuevoTerceroModal({ catalogos, onClose, onCreated }: {
   );
 }
 
+const TerceroCard = memo(({ item, onSelect }: { item: TerceroItem; onSelect: (item: TerceroItem) => void }) => (
+  <div style={styles.mobileCard} onClick={() => onSelect(item)}>
+    <div style={styles.mobileCardTopRow}>
+      <span style={styles.mobileCardNombre}>{item.nombreCompleto}</span>
+      {item.clasificaciones.length > 0 && (
+        <span style={styles.clasifBadge}>{CLASIFICACION_LABEL[item.clasificaciones[0]]}</span>
+      )}
+    </div>
+    <div style={styles.mobileCardMainRow}>
+      <span style={styles.mobileCardCorreo}>{item.correo ?? '-'}</span>
+    </div>
+    <div style={styles.mobileCardFieldsRow}>
+      <div style={styles.mobileCardField}>
+        <span style={styles.mobileCardFieldLabel}>Contacto</span>
+        <span style={styles.mobileCardFieldValue}>{item.tipoContacto === null ? '-' : item.tipoContacto ? 'Externo' : 'Interno'}</span>
+      </div>
+      <div style={styles.mobileCardField}>
+        <span style={styles.mobileCardFieldLabel}>Persona</span>
+        <span style={styles.mobileCardFieldValue}>{item.tipoPersona === null ? '-' : item.tipoPersona ? 'Moral' : 'Física'}</span>
+      </div>
+      <div style={styles.mobileCardField}>
+        <span style={styles.mobileCardFieldLabel}>Estado</span>
+        <span style={{ ...styles.estadoBadge, ...(item.activo ? styles.estadoActivo : styles.estadoInactivo) }}>
+          {item.activo ? 'Activo' : 'Inactivo'}
+        </span>
+      </div>
+    </div>
+  </div>
+));
+
 export default function TercerosAdminPage() {
+  const { isMobile } = useResponsiveStyles();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [clasifFiltro, setClasifFiltro] = useState<ClasificacionTercero | ''>('');
@@ -1319,6 +1351,12 @@ export default function TercerosAdminPage() {
             <div style={styles.empty}>Cargando...</div>
           ) : items.length === 0 ? (
             <div style={styles.empty}>Sin registros</div>
+          ) : isMobile ? (
+            <div style={styles.mobileCardList}>
+              {items.map(item => (
+                <TerceroCard key={item.id} item={item} onSelect={setSelected} />
+              ))}
+            </div>
           ) : (
             <table style={styles.table}>
               <thead>
@@ -1396,6 +1434,16 @@ const styles: Record<string, React.CSSProperties> = {
   td: { padding: '0.65rem 0.875rem', borderBottom: '1px solid #f3f4f0', verticalAlign: 'middle' as const, color: '#33342a' },
   tr: { backgroundColor: '#fff', cursor: 'pointer', transition: 'background-color 0.15s ease' },
   clasifBadge: { display: 'inline-block', padding: '0.15rem 0.5rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 600, backgroundColor: '#eef2ff', color: '#4338ca' },
+  mobileCardList: { display: 'flex', flexDirection: 'column' as const, gap: '0.75rem', padding: '0.75rem' },
+  mobileCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '12px', padding: '0.85rem', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' },
+  mobileCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' },
+  mobileCardNombre: { fontSize: '0.9rem', fontWeight: 700, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  mobileCardMainRow: { marginBottom: '0.7rem' },
+  mobileCardCorreo: { fontSize: '0.8125rem', color: '#6b7280', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  mobileCardFieldsRow: { display: 'flex', gap: '1.25rem', paddingTop: '0.6rem', borderTop: '1px solid #f3f4f0' },
+  mobileCardField: { display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', minWidth: 0 },
+  mobileCardFieldLabel: { fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
+  mobileCardFieldValue: { fontSize: '0.82rem', fontWeight: 600, color: '#374151' },
   subListEmpty: { fontSize: '0.85rem', color: '#9ca3af', fontStyle: 'italic' as const },
   subList: { display: 'flex', flexDirection: 'column' as const, gap: '0.6rem' },
   subListItem: { display: 'flex', flexDirection: 'column' as const, gap: '0.2rem', padding: '0.6rem 0.75rem', backgroundColor: '#f9fafb', border: '1px solid #eeeee6', borderRadius: '10px' },

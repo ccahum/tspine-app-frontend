@@ -8,6 +8,7 @@ import DateRangeFilter from '../../../components/filters/DateRangeFilter';
 import { remisionesService, ESTADOS_REMISION, type RemisionListItem, type RemisionListResponse } from '../../../services/remisiones.service';
 import { programacionesService, type ProgramacionItem } from '../../../services/programaciones.service';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
+import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 
 const formatDate = (dateString: string | null): string => {
   if (!dateString) return '-';
@@ -133,6 +134,42 @@ const RemisionRow = memo(({ item, index, navigate }: { item: RemisionListItem; i
   </tr>
 ));
 
+const RemisionCard = memo(({ item, navigate }: { item: RemisionListItem; navigate: (path: string) => void }) => (
+  <div style={styles.mobileCard} onClick={() => navigate(`/operacion/remisiones/${item.id}`)}>
+    <div style={styles.mobileCardTopRow}>
+      <span style={styles.mobileCardId}>{item.numRemision ?? item.id}</span>
+      <EstadoBadge estado={item.estado} />
+    </div>
+    <div style={styles.mobileCardMainRow}>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={styles.mobileCardPrograma}>{item.numProgram ?? item.programacionId ?? '-'}</div>
+        <div style={styles.mobileCardSubtext}>{formatDate(item.fechaQx)}{item.horaQx ? ` · ${item.horaQx}` : ''}</div>
+        <div style={styles.mobileCardSubtext}>{item.sede ?? '-'}{item.ciudad ? ` · ${item.ciudad}` : ''}</div>
+      </div>
+    </div>
+    <div style={styles.mobileCardFieldsRow}>
+      <div style={{ ...styles.mobileCardField, flex: 1, minWidth: 0 }}>
+        <span style={styles.mobileCardFieldLabel}>Médico</span>
+        <span style={{ ...styles.mobileCardFieldValue, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.medicos.join(', ') || '-'}</span>
+      </div>
+      <div style={{ ...styles.mobileCardField, flex: 1, minWidth: 0 }}>
+        <span style={styles.mobileCardFieldLabel}>Hospital</span>
+        <span style={{ ...styles.mobileCardFieldValue, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.hospital ?? '-'}</span>
+      </div>
+    </div>
+    <div style={styles.mobileCardFieldsRow}>
+      <div style={{ ...styles.mobileCardField, flex: 1, minWidth: 0 }}>
+        <span style={styles.mobileCardFieldLabel}>Empresa</span>
+        <span style={{ ...styles.mobileCardFieldValue, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.empresa ?? '-'}</span>
+      </div>
+      <div style={{ ...styles.mobileCardField, flex: 1, minWidth: 0 }}>
+        <span style={styles.mobileCardFieldLabel}>Tarifa</span>
+        <span style={{ ...styles.mobileCardFieldValue, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.tarifa ?? '-'}</span>
+      </div>
+    </div>
+  </div>
+));
+
 function ProgramacionPickerModal({ onClose, onSelect }: { onClose: () => void; onSelect: (id: string) => void }) {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -214,6 +251,7 @@ function ProgramacionPickerModal({ onClose, onSelect }: { onClose: () => void; o
 }
 
 export default function RemisionesPage() {
+  const { isMobile } = useResponsiveStyles();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
@@ -344,6 +382,12 @@ export default function RemisionesPage() {
             <div style={styles.empty}>Cargando...</div>
           ) : items.length === 0 ? (
             <div style={styles.empty}>Sin registros</div>
+          ) : isMobile ? (
+            <div style={styles.mobileCardList}>
+              {items.map(item => (
+                <RemisionCard key={item.id} item={item} navigate={navigate} />
+              ))}
+            </div>
           ) : (
             <table style={styles.table}>
               <thead>
@@ -420,6 +464,17 @@ const styles: Record<string, React.CSSProperties> = {
   td: { padding: '0.65rem 0.875rem', borderBottom: '1px solid #f3f4f6', verticalAlign: 'middle' as const, color: '#333' },
   tr: { backgroundColor: '#fff', cursor: 'pointer', transition: 'all 0.2s ease' },
   empty: { textAlign: 'center' as const, padding: '3rem', color: '#999' },
+  mobileCardList: { display: 'flex', flexDirection: 'column' as const, gap: '0.75rem', padding: '0.75rem' },
+  mobileCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '12px', padding: '0.85rem', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' },
+  mobileCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem', gap: '0.5rem' },
+  mobileCardId: { fontSize: '0.85rem', fontWeight: 700, color: '#6b8c1f' },
+  mobileCardMainRow: { display: 'flex', alignItems: 'center', gap: '0.7rem', marginBottom: '0.15rem' },
+  mobileCardPrograma: { fontSize: '0.9rem', fontWeight: 700, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  mobileCardSubtext: { fontSize: '0.78rem', color: '#6b7280', marginTop: '0.15rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  mobileCardFieldsRow: { display: 'flex', gap: '1.25rem', paddingTop: '0.6rem', borderTop: '1px solid #f3f4f6' },
+  mobileCardField: { display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', minWidth: 0 },
+  mobileCardFieldLabel: { fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
+  mobileCardFieldValue: { fontSize: '0.82rem', fontWeight: 600, color: '#374151' },
   pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem', marginTop: '1.5rem' },
   pageBtn: { padding: '0.5rem 1rem', backgroundColor: '#6b8c1f', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '0.875rem', transition: 'all 0.2s ease' },
   pageBtnDisabled: { backgroundColor: '#e5e7eb', color: '#9ca3af', cursor: 'not-allowed' as const },

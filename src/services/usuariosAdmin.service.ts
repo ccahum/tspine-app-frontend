@@ -17,20 +17,26 @@ export interface PerfilOption {
   nombre: string;
 }
 
-export interface CreateUsuarioPayload {
-  nombreCompleto: string;
-  usuario: string;
-  password: string;
-  perfilId: string;
-  sedeId?: string;
-}
-
 export interface UpdateUsuarioPayload {
   nombreCompleto?: string;
   perfilId?: string;
   sedeId?: string;
   activo?: boolean;
   password?: string;
+}
+
+export interface TerceroDisponible {
+  id: string;
+  nombreCompleto: string;
+  correo: string | null;
+}
+
+export interface CreateUsuarioDesdeTerceroPayload {
+  terceroId: string;
+  usuario: string;
+  password: string;
+  perfilId: string;
+  sedeId?: string;
 }
 
 export const usuariosAdminService = {
@@ -44,8 +50,13 @@ export const usuariosAdminService = {
     return res.data;
   },
 
-  create: async (data: CreateUsuarioPayload): Promise<UsuarioAdminItem> => {
-    const res = await api.post<UsuarioAdminItem>('/administracion/usuarios', data);
+  findTercerosDisponibles: async (q: string): Promise<TerceroDisponible[]> => {
+    const res = await api.get<TerceroDisponible[]>('/administracion/usuarios/terceros-disponibles', { params: { q } });
+    return res.data;
+  },
+
+  createFromTercero: async (data: CreateUsuarioDesdeTerceroPayload): Promise<UsuarioAdminItem> => {
+    const res = await api.post<UsuarioAdminItem>('/administracion/usuarios/desde-tercero', data);
     return res.data;
   },
 

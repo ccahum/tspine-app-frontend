@@ -37,6 +37,31 @@ const getTecnicoInitials = (nombreCompleto: string): string => {
   return (words[0][0] + words[words.length - 2][0]).toUpperCase();
 };
 
+function RemisionFirma({ id }: { id: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    setSrc(null);
+    setError(false);
+    remisionesService.fetchFirmaBlob(id).then(blob => {
+      if (cancelled) return;
+      objectUrl = URL.createObjectURL(blob);
+      setSrc(objectUrl);
+    }).catch(() => { if (!cancelled) setError(true); });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [id]);
+
+  if (error) return <span style={styles.firmaEmpty}>No disponible</span>;
+  if (!src) return <span style={styles.firmaEmpty}>Cargando...</span>;
+  return <img src={src} alt="Firma" style={styles.firmaThumb} onClick={() => window.open(src, '_blank')} />;
+}
+
 function AnimatedMoney({ value, start, duration = 500 }: { value: unknown; start: boolean; duration?: number }) {
   const target = typeof value === 'string' ? Number.parseFloat(value) : Number(value);
   const [display, setDisplay] = useState(0);
@@ -1316,7 +1341,7 @@ export default function RemisionDetailPage() {
             </div>
           </div>
 
-          <div style={styles.infoBar}>
+          <div style={{ ...styles.infoBar, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)' }}>
             <div style={styles.infoBarItem}>
               <span style={styles.infoBarLabel}>Total</span>
               <span style={styles.infoBarValue}><AnimatedMoney value={remision.total} start={statsMounted} /></span>
@@ -1423,7 +1448,7 @@ export default function RemisionDetailPage() {
               <div style={styles.generalItem}><span style={styles.generalLabel}>Cubrimiento</span><span style={styles.generalValue}>{remision.cubrimiento?.nombre || '-'}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>Responsable Económico</span><span style={styles.generalValue}>{remision.responsableEconomico?.nombreCompleto || '-'}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>Anestesiólogo</span><span style={styles.generalValue}>{remision.anestesiologo || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Firma</span><span style={styles.generalValue}>{remision.firma || '-'}</span></div>
+              <div style={styles.generalItem}><span style={styles.generalLabel}>Firma</span>{remision.firmaDisponible ? <RemisionFirma id={remision.id} /> : <span style={styles.firmaEmpty}>No disponible</span>}</div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>Consumo</span><span style={styles.generalValue}>{remision.programacion?.consumo || '-'}</span></div>
             </div>
           </div>
@@ -2450,6 +2475,8 @@ const styles: Record<string, React.CSSProperties> = {
   generalItem: { display: 'flex', flexDirection: 'column' as const, gap: '0.35rem', minWidth: 0 },
   generalLabel: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
   generalValue: { fontSize: '0.875rem', fontWeight: 600, color: '#333', lineHeight: 1.4, wordBreak: 'break-word' as const },
+  firmaThumb: { maxHeight: '48px', maxWidth: '160px', objectFit: 'contain' as const, backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '0.25rem', cursor: 'pointer' },
+  firmaEmpty: { fontSize: '0.875rem', fontWeight: 600, color: '#9ca3af', fontStyle: 'italic' as const },
   compactHeaderPositioner: {
     position: 'fixed' as const, top: '60px', left: 0, right: 0, zIndex: 50,
     maxWidth: '1400px', margin: '0 auto',
@@ -2478,18 +2505,18 @@ const styles: Record<string, React.CSSProperties> = {
   infoRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', padding: '0.75rem 0', marginBottom: '0.75rem', borderBottom: '1px solid #f3f4f6' },
   label: { fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em', flexShrink: 0 },
   value: { fontSize: '0.875rem', fontWeight: 600, color: '#333', textAlign: 'right' as const },
-  bonoRow: { display: 'grid', gridTemplateColumns: '1fr 1fr 120px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff' },
-  facturaRow: { display: 'grid', gridTemplateColumns: '90px 100px 1fr 1fr 110px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff' },
+  bonoRow: { display: 'grid', gridTemplateColumns: '1fr 1fr 120px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff', minWidth: '480px' },
+  facturaRow: { display: 'grid', gridTemplateColumns: '90px 100px 1fr 1fr 110px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff', minWidth: '680px' },
   tableTotalRow: { display: 'flex', justifyContent: 'space-between', padding: '0.75rem 1.25rem', borderTop: '2px solid #e5e7eb', backgroundColor: '#f9fafb', fontSize: '0.85rem', fontWeight: 700, color: '#333' },
   sectionTitleRow: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' },
   sectionTitle: { fontSize: '1.1rem', fontWeight: 700, color: '#333', margin: 0 },
   badge: { backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '0.75rem', fontWeight: 700, minWidth: '1.5rem', height: '1.5rem', padding: '0 0.4rem', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
-  remList: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', overflow: 'hidden' },
+  remList: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', overflowX: 'auto' as const, overflowY: 'hidden' as const },
   emptyState: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', padding: '2rem', textAlign: 'center' as const, color: '#9ca3af', fontSize: '0.875rem' },
   colHeader: { backgroundColor: '#f9fafb', borderBottom: '2px solid #e5e7eb' },
   colHeaderText: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
-  consumoRow: { display: 'grid', gridTemplateColumns: '40px 85px 1fr 85px 85px 85px', alignItems: 'center', padding: '0.6rem 1rem', gap: '0.4rem', backgroundColor: '#fff' },
-  tecnicoRow: { display: 'grid', gridTemplateColumns: '1fr 140px 120px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff' },
+  consumoRow: { display: 'grid', gridTemplateColumns: '40px 85px 1fr 85px 85px 85px', alignItems: 'center', padding: '0.6rem 1rem', gap: '0.4rem', backgroundColor: '#fff', minWidth: '560px' },
+  tecnicoRow: { display: 'grid', gridTemplateColumns: '1fr 140px 120px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff', minWidth: '480px' },
   scrollBody: { maxHeight: '320px', overflowY: 'auto' as const },
   rowBorder: { borderTop: '1px solid #f3f4f6' },
   rowHover: { backgroundColor: '#f3f4f6', cursor: 'pointer' },

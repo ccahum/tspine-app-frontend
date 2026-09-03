@@ -117,6 +117,43 @@ const ProgramacionRow = memo(({ item, navigate, index }: { item: ProgramacionIte
   );
 });
 
+const ProgramacionCard = memo(({ item, navigate }: { item: ProgramacionItem; navigate: (path: string) => void }) => {
+  const today = isFechaHoy(item.fechaQx);
+  return (
+    <div
+      style={{ ...styles.mobileCard, ...(today ? styles.mobileCardToday : {}) }}
+      onClick={() => navigate(`/operacion/programaciones/${item.id}`)}
+    >
+      <div style={styles.mobileCardTopRow}>
+        <span style={styles.mobileCardId}>{item.id}</span>
+        <StatusBadges item={item} />
+      </div>
+      <div style={styles.mobileCardMainRow}>
+        <div style={styles.mobileCardFechaHora}>
+          <span style={styles.mobileCardFecha}>{formatDate(item.fechaQx)}</span>
+          <span style={styles.mobileCardHora}>{item.horaQx ?? '-'}</span>
+        </div>
+        <div style={styles.mobileCardSedeCiudad}>
+          {item.sede ?? '-'}{item.ciudad ? ` · ${item.ciudad}` : ''}
+        </div>
+      </div>
+      <div style={styles.mobileCardFieldsRow}>
+        <div style={{ ...styles.mobileCardField, flex: 1, minWidth: 0 }}>
+          <span style={styles.mobileCardFieldLabel}>Médico</span>
+          <span style={styles.mobileCardFieldValue}>{item.medicos.join(', ') || '-'}</span>
+        </div>
+        <div style={{ ...styles.mobileCardField, flex: 1, minWidth: 0 }}>
+          <span style={styles.mobileCardFieldLabel}>Hospital</span>
+          <span style={styles.mobileCardFieldValue}>{item.hospital ?? '-'}</span>
+        </div>
+      </div>
+      {item.observaciones && (
+        <div style={styles.mobileCardObservaciones}>{item.observaciones}</div>
+      )}
+    </div>
+  );
+});
+
 export default function ProgramacionesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -822,6 +859,12 @@ export default function ProgramacionesPage() {
           <div style={styles.empty}>Cargando...</div>
         ) : items.length === 0 ? (
           <div style={styles.empty}>Sin registros</div>
+        ) : isMobile ? (
+          <div style={styles.mobileCardList}>
+            {items.map(item => (
+              <ProgramacionCard key={item.id} item={item} navigate={navigate} />
+            ))}
+          </div>
         ) : (
           <table style={styles.table}>
             <thead ref={theadRef}>
@@ -966,6 +1009,21 @@ const styles: Record<string, React.CSSProperties> = {
   th: { padding: '0.65rem 0.875rem', textAlign: 'left', fontWeight: 700, color: '#555', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: '2px solid #e5e7eb', whiteSpace: 'nowrap', position: 'sticky', top: 0, backgroundColor: '#f9fafb', zIndex: 1 },
   td: { padding: '0.65rem 0.875rem', borderBottom: '1px solid #f3f4f6', verticalAlign: 'middle', color: '#333' },
   tr: { backgroundColor: '#fff', cursor: 'pointer', transition: 'all 0.2s ease', backfaceVisibility: 'hidden', WebkitFontSmoothing: 'antialiased' },
+  mobileCardList: { display: 'flex', flexDirection: 'column' as const, gap: '0.75rem', padding: '0.75rem' },
+  mobileCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '12px', padding: '0.85rem', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' },
+  mobileCardToday: { backgroundColor: 'rgba(107, 140, 31, 0.14)', border: '1px solid rgba(107, 140, 31, 0.3)' },
+  mobileCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' },
+  mobileCardId: { fontSize: '0.85rem', fontWeight: 700, color: '#6b8c1f' },
+  mobileCardMainRow: { marginBottom: '0.7rem' },
+  mobileCardFechaHora: { display: 'flex', alignItems: 'baseline', gap: '0.5rem' },
+  mobileCardFecha: { fontSize: '0.9rem', fontWeight: 700, color: '#16170f' },
+  mobileCardHora: { fontSize: '0.82rem', fontWeight: 600, color: '#374151' },
+  mobileCardSedeCiudad: { fontSize: '0.78rem', color: '#6b7280', marginTop: '0.15rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  mobileCardFieldsRow: { display: 'flex', gap: '1.25rem', paddingTop: '0.6rem', borderTop: '1px solid #f3f4f0' },
+  mobileCardField: { display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', minWidth: 0 },
+  mobileCardFieldLabel: { fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
+  mobileCardFieldValue: { fontSize: '0.82rem', fontWeight: 600, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  mobileCardObservaciones: { fontSize: '0.76rem', fontStyle: 'italic' as const, color: '#9ca3af', marginTop: '0.5rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   empty: { textAlign: 'center', padding: '3rem', color: '#999' },
   pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem', marginTop: '1.5rem' },
   loader: { padding: '2rem', textAlign: 'center' as const },

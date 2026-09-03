@@ -108,6 +108,11 @@ body {
   to { stroke-dashoffset: 0; }
 }
 
+@keyframes toast-icon-pop {
+  from { transform: scale(0.5); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
 .btn-press {
   transform: translateY(0);
   box-shadow: 0 0 0 rgba(0, 0, 0, 0);
@@ -161,6 +166,16 @@ body {
   animation: page-content-fade-in 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+@keyframes app-fade-out {
+  to { opacity: 0; }
+}
+
+/* Se aplica directo al #root al cerrar sesión, para que la app entera se desvanezca antes de
+   cambiar a /login en vez de cortar de golpe — ver Header.confirmarCerrarSesion. */
+.app-fade-out {
+  animation: app-fade-out 0.45s ease forwards;
+}
+
 @keyframes sidebar-submenu-in {
   from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: translateY(0); }
@@ -209,6 +224,15 @@ body {
 
 .compact-header-slide-out {
   animation: compact-header-slide-out 0.12s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes mobile-drawer-slide-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+.mobile-drawer-anim {
+  animation: mobile-drawer-slide-in 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .login-link-btn {

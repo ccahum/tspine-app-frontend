@@ -317,15 +317,15 @@ const styles: Record<string, React.CSSProperties> = {
   emptyState: { padding: '3rem', textAlign: 'center' as const, color: '#9ca3af', fontSize: '0.9rem', backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #eeeee6' },
 
   grupoList: { display: 'flex', flexDirection: 'column' as const, gap: '1rem' },
-  grupoCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '12px', overflow: 'hidden' },
+  grupoCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '12px', overflowX: 'auto' as const, overflowY: 'hidden' as const },
   grupoHeader: { display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.85rem 1.1rem', borderBottom: '1px solid #f3f4f6', backgroundColor: '#fafaf8' },
   grupoFolio: { fontFamily: 'monospace', fontSize: '0.85rem', fontWeight: 700, color: '#db2777' },
   badge: { backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '0.75rem', fontWeight: 700, minWidth: '1.5rem', height: '1.5rem', padding: '0 0.4rem', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
 
-  colHeaderRow: { display: 'grid', gridTemplateColumns: '110px 1fr 1fr 90px 2fr 24px', padding: '0.5rem 1.1rem', gap: '0.5rem' },
+  colHeaderRow: { display: 'grid', gridTemplateColumns: '110px 1fr 1fr 90px 2fr 24px', padding: '0.5rem 1.1rem', gap: '0.5rem', minWidth: '850px' },
   colHeaderText: { fontSize: '0.68rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
 
-  itemRow: { display: 'grid', gridTemplateColumns: '110px 1fr 1fr 90px 2fr 24px', gap: '0.5rem', alignItems: 'center', padding: '0.6rem 1.1rem', borderTop: '1px solid #f3f4f6', transition: 'background-color 0.15s ease' },
+  itemRow: { display: 'grid', gridTemplateColumns: '110px 1fr 1fr 90px 2fr 24px', gap: '0.5rem', alignItems: 'center', padding: '0.6rem 1.1rem', borderTop: '1px solid #f3f4f6', transition: 'background-color 0.15s ease', minWidth: '850px' },
   actionsCell: { display: 'flex', alignItems: 'center', gap: '0.3rem' },
   thumbBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '7px', border: 'none', backgroundColor: 'transparent', color: '#6b7280', cursor: 'pointer', transition: 'all 0.15s ease' },
   itemCell: { fontSize: '0.85rem', color: '#333', cursor: 'pointer' },

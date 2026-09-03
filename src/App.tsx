@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './pages/login/LoginPage';
+import ResetPasswordPage from './pages/login/ResetPasswordPage';
 import DashboardPage from './pages/dashboard/DashboardPage';
 import OperacionPage from './pages/operacion/OperacionPage';
 import ProgramacionesPage from './pages/operacion/programaciones/ProgramacionesPage';
@@ -48,6 +49,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/dashboard" element={<Private element={<DashboardPage />} />} />
         <Route path="/operacion" element={<Private element={<OperacionPage />} />} />
         <Route path="/operacion/programaciones" element={<Private element={<ProgramacionesPage />} />} />
