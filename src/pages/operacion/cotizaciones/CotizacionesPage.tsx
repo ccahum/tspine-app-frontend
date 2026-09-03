@@ -1059,6 +1059,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
         valueId={form.hospitalId}
         valueLabel={form.hospitalLabel}
         onSelect={(id, label) => { setForm({ ...form, hospitalId: id, hospitalLabel: label }); setError(null); }}
+        clasificacion="HOSPITAL"
       />
       {error?.field === 'hospital' && <span style={styles.errorText}>{error.message}</span>}
 
@@ -1359,6 +1360,7 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
               valueId={form.hospitalId}
               valueLabel={form.hospitalLabel}
               onSelect={(id, label) => { setForm({ ...form, hospitalId: id, hospitalLabel: label }); setError(null); }}
+              clasificacion="HOSPITAL"
             />
             {error?.field === 'hospital' && <span style={styles.errorText}>{error.message}</span>}
 
