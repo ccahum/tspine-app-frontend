@@ -530,12 +530,15 @@ const styles: Record<string, React.CSSProperties> = {
   imagePanel: {
     flex: '1 1 63%',
     position: 'relative' as const,
+    // "contain" (en vez de "cover") para que la foto se vea completa siempre, sin recortar
+    // ningún lado — la foto es más ancha (2:1) que el panel, así que "cover" siempre iba a
+    // cortar el cirujano o las pantallas. El espacio sobrante lo rellena backgroundColor,
+    // que coincide con el tono oscuro de la propia foto para que no se note el relleno.
+    backgroundColor: '#0a140f',
     backgroundImage: `linear-gradient(180deg, rgba(10,20,15,0.22) 0%, rgba(10,20,15,0.3) 45%, rgba(6,14,10,0.88) 100%), url(${portada})`,
-    backgroundSize: 'cover',
-    // La foto es más ancha que el panel (2:1) — "center" recortaba justo las pantallas del
-    // lado derecho, que es lo más relevante de la imagen. Se corre el foco hacia la derecha
-    // para que se alcancen a ver.
-    backgroundPosition: '70% center',
+    backgroundSize: '100% 100%, contain',
+    backgroundPosition: 'center, center',
+    backgroundRepeat: 'no-repeat, no-repeat',
     display: 'flex',
     flexDirection: 'column' as const,
     justifyContent: 'space-between',
