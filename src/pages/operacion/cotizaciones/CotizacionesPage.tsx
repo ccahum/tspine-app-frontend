@@ -42,6 +42,11 @@ const CUBRIMIENTO_TO_CLASIFICACION: Record<string, string> = {
   '1A18': 'ASEGURADORA',
 };
 
+// Letras (con acentos), números, espacios y puntuación básica — sin símbolos raros
+// (@#$%^&*<>{}[] etc). Los nombres de cirugía suelen llevar niveles como "L4-L5", por eso
+// se permiten números y guión, a diferencia del sanitizeText de solo-letras de otras páginas.
+const sanitizeCirugiaDirigido = (value: string): string => value.replace(/[^A-Za-z0-9À-ÿ\s.,'-]/g, '');
+
 const formatDate = (dateString: string | null): string => {
   if (!dateString) return '-';
   try {
@@ -1049,7 +1054,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-dirigidoA">
         <label style={styles.formLabel}>Dirigido a *</label>
-        <input style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} onChange={e => { setForm({ ...form, dirigidoA: e.target.value }); setError(null); }} />
+        <input style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} onChange={e => { setForm({ ...form, dirigidoA: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
         {error?.field === 'dirigidoA' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -1075,7 +1080,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-cirugia">
         <label style={styles.formLabel}>Cirugía *</label>
-        <input style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} onChange={e => { setForm({ ...form, cirugia: e.target.value }); setError(null); }} />
+        <input style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} onChange={e => { setForm({ ...form, cirugia: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
         {error?.field === 'cirugia' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -1378,7 +1383,7 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-dirigidoA">
               <label style={styles.formLabel}>Dirigido a *</label>
-              <input style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} onChange={e => { setForm({ ...form, dirigidoA: e.target.value }); setError(null); }} />
+              <input style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} onChange={e => { setForm({ ...form, dirigidoA: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
               {error?.field === 'dirigidoA' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
@@ -1406,7 +1411,7 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-cirugia">
               <label style={styles.formLabel}>Cirugía *</label>
-              <input style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} onChange={e => { setForm({ ...form, cirugia: e.target.value }); setError(null); }} />
+              <input style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} onChange={e => { setForm({ ...form, cirugia: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
               {error?.field === 'cirugia' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
