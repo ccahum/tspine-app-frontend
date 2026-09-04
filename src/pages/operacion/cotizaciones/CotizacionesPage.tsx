@@ -1029,6 +1029,8 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
     if (!form.cubrimientoId) { setError({ field: 'cubrimiento', message: 'Selecciona el cubrimiento.' }); return; }
     if (!form.empresaId) { setError({ field: 'empresa', message: 'Selecciona la empresa.' }); return; }
     if (!form.responsableEconomicoId) { setError({ field: 'responsable', message: 'Selecciona el responsable económico.' }); return; }
+    if (form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID && !form.numProveedor.trim()) { setError({ field: 'numProveedor', message: 'Ingresa el N° de proveedor.' }); return; }
+    if (form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID && !form.tiempoEntrega.trim()) { setError({ field: 'tiempoEntrega', message: 'Ingresa el tiempo de entrega.' }); return; }
     if (!form.impuestos) { setError({ field: 'impuestos', message: 'Selecciona impuestos.' }); return; }
     setError(null);
     updateMutation.mutate();
@@ -1132,9 +1134,10 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
       />
       {error?.field === 'responsable' && <span style={styles.errorText}>{error.message}</span>}
 
-      <div style={styles.formGroup}>
-        <label style={styles.formLabel}>N° Proveedor</label>
-        <input style={styles.formInput} value={form.numProveedor} onChange={e => setForm({ ...form, numProveedor: e.target.value })} />
+      <div style={styles.formGroup} id="cotizacion-edit-field-numProveedor">
+        <label style={styles.formLabel}>N° Proveedor{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
+        <input style={{ ...styles.formInput, ...(error?.field === 'numProveedor' ? styles.inputError : {}) }} value={form.numProveedor} onChange={e => { setForm({ ...form, numProveedor: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+        {error?.field === 'numProveedor' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
       <div style={styles.formGroup}>
@@ -1144,9 +1147,10 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
         </span>
       </div>
 
-      <div style={styles.formGroup}>
-        <label style={styles.formLabel}>Tiempo de Entrega</label>
-        <input style={styles.formInput} value={form.tiempoEntrega} onChange={e => setForm({ ...form, tiempoEntrega: e.target.value })} />
+      <div style={styles.formGroup} id="cotizacion-edit-field-tiempoEntrega">
+        <label style={styles.formLabel}>Tiempo de Entrega{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
+        <input style={{ ...styles.formInput, ...(error?.field === 'tiempoEntrega' ? styles.inputError : {}) }} value={form.tiempoEntrega} onChange={e => { setForm({ ...form, tiempoEntrega: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+        {error?.field === 'tiempoEntrega' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
       <div style={styles.formGroup}>
@@ -1349,6 +1353,8 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
     if (!form.cubrimientoId) { setError({ field: 'cubrimiento', message: 'Selecciona el cubrimiento.' }); return; }
     if (!form.empresaId) { setError({ field: 'empresa', message: 'Selecciona la empresa.' }); return; }
     if (!form.responsableEconomicoId) { setError({ field: 'responsable', message: 'Selecciona el responsable económico.' }); return; }
+    if (form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID && !form.numProveedor.trim()) { setError({ field: 'numProveedor', message: 'Ingresa el N° de proveedor.' }); return; }
+    if (form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID && !form.tiempoEntrega.trim()) { setError({ field: 'tiempoEntrega', message: 'Ingresa el tiempo de entrega.' }); return; }
     if (!form.impuestos) { setError({ field: 'impuestos', message: 'Selecciona impuestos.' }); return; }
     setError(null);
     createMutation.mutate();
@@ -1465,9 +1471,10 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
             />
             {error?.field === 'responsable' && <span style={styles.errorText}>{error.message}</span>}
 
-            <div style={styles.formGroup}>
-              <label style={styles.formLabel}>N° Proveedor</label>
-              <input style={styles.formInput} value={form.numProveedor} onChange={e => setForm({ ...form, numProveedor: e.target.value })} />
+            <div style={styles.formGroup} id="cotizacion-create-field-numProveedor">
+              <label style={styles.formLabel}>N° Proveedor{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
+              <input style={{ ...styles.formInput, ...(error?.field === 'numProveedor' ? styles.inputError : {}) }} value={form.numProveedor} onChange={e => { setForm({ ...form, numProveedor: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+              {error?.field === 'numProveedor' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
             <div style={styles.formGroup}>
@@ -1477,9 +1484,10 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
               </span>
             </div>
 
-            <div style={styles.formGroup}>
-              <label style={styles.formLabel}>Tiempo de Entrega</label>
-              <input style={styles.formInput} value={form.tiempoEntrega} onChange={e => setForm({ ...form, tiempoEntrega: e.target.value })} />
+            <div style={styles.formGroup} id="cotizacion-create-field-tiempoEntrega">
+              <label style={styles.formLabel}>Tiempo de Entrega{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
+              <input style={{ ...styles.formInput, ...(error?.field === 'tiempoEntrega' ? styles.inputError : {}) }} value={form.tiempoEntrega} onChange={e => { setForm({ ...form, tiempoEntrega: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+              {error?.field === 'tiempoEntrega' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
             <div style={styles.formGroup}>
