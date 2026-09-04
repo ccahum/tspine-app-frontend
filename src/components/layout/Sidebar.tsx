@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { esSuperAdmin } from '../../lib/auth.utils';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
+import { prefetchRoute } from '../../routeImports';
 
 const operacionSubmodules = [
   { icon: Calendar, label: 'Programación', path: '/operacion/programaciones' },
@@ -124,7 +125,10 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
                 color: active ? '#fff' : '#ccc',
               }}
               title={!showLabels ? label : ''}
-              onMouseEnter={e => { if (!active && !isOpen) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)'; }}
+              onMouseEnter={e => {
+                if (!active && !isOpen) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)';
+                prefetchRoute(path);
+              }}
               onMouseLeave={e => { if (!active && !isOpen) e.currentTarget.style.backgroundColor = 'transparent'; }}
             >
               <Icon size={20} style={{ flexShrink: 0 }} />
@@ -150,7 +154,10 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
                         backgroundColor: subActive ? '#6b8c1f' : 'transparent',
                         color: subActive ? '#fff' : '#b5b5ab',
                       }}
-                      onMouseEnter={e => { if (!subActive) { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#fff'; } }}
+                      onMouseEnter={e => {
+                        if (!subActive) { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#fff'; }
+                        prefetchRoute(subPath);
+                      }}
                       onMouseLeave={e => { if (!subActive) { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#b5b5ab'; } }}
                     >
                       <span style={styles.subLabel}>{subLabel}</span>

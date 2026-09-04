@@ -2,31 +2,37 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Loader } from 'lucide-react';
 import LoginPage from './pages/login/LoginPage';
+// Página casi universal justo después del login — se deja en el bundle principal (pesa poco)
+// para que esa primera transición nunca muestre el loader de carga.
+import DashboardPage from './pages/dashboard/DashboardPage';
 import { esSuperAdmin } from './lib/auth.utils';
+import { routeImports } from './routeImports';
 
-const ResetPasswordPage = lazy(() => import('./pages/login/ResetPasswordPage'));
-const DashboardPage = lazy(() => import('./pages/dashboard/DashboardPage'));
-const OperacionPage = lazy(() => import('./pages/operacion/OperacionPage'));
-const ProgramacionesPage = lazy(() => import('./pages/operacion/programaciones/ProgramacionesPage'));
+// as any: routeImports está tipado como () => Promise<unknown> para que Sidebar no necesite
+// conocer el tipo real del módulo — cada entrada individual sí es un import() válido de
+// componente, TS solo no puede verlo a través del Record genérico.
+const ResetPasswordPage = lazy(routeImports['/reset-password'] as any);
+const OperacionPage = lazy(routeImports['/operacion'] as any);
+const ProgramacionesPage = lazy(routeImports['/operacion/programaciones'] as any);
 const ProgramacionDetailPage = lazy(() => import('./pages/operacion/programaciones/ProgramacionDetailPage'));
-const RemisionesPage = lazy(() => import('./pages/operacion/remisiones/RemisionesPage'));
+const RemisionesPage = lazy(routeImports['/operacion/remision'] as any);
 const RemisionDetailPage = lazy(() => import('./pages/operacion/remisiones/RemisionDetailPage'));
 const ConsumoDetailPage = lazy(() => import('./pages/operacion/consumos/ConsumoDetailPage'));
 const ProductoValidadoDetailPage = lazy(() => import('./pages/operacion/consumos/ProductoValidadoDetailPage'));
 const ComisionDetailPage = lazy(() => import('./pages/operacion/consumos/ComisionDetailPage'));
 const RequisicionDetailPage = lazy(() => import('./pages/operacion/requisiciones/RequisicionDetailPage'));
-const CalendarPage = lazy(() => import('./pages/operacion/calendario/CalendarPage'));
-const ListasPrecioPage = lazy(() => import('./pages/operacion/listas-precio/ListasPrecioPage'));
-const PreciosEspecialesPage = lazy(() => import('./pages/operacion/precios-especiales/PreciosEspecialesPage'));
-const CotizacionesPage = lazy(() => import('./pages/operacion/cotizaciones/CotizacionesPage'));
-const AutorizacionConsumosPage = lazy(() => import('./pages/operacion/autorizacion-consumos/AutorizacionConsumosPage'));
-const SolicitudProgramacionPage = lazy(() => import('./pages/operacion/solicitud-programacion/SolicitudProgramacionPage'));
-const AdministracionPage = lazy(() => import('./pages/administracion/AdministracionPage'));
-const UsuariosAdminPage = lazy(() => import('./pages/administracion/usuarios/UsuariosAdminPage'));
-const TercerosAdminPage = lazy(() => import('./pages/administracion/terceros/TercerosAdminPage'));
-const VehicularPage = lazy(() => import('./pages/vehicular/VehicularPage'));
-const CatalogoVehicularPage = lazy(() => import('./pages/vehicular/catalogo/CatalogoVehicularPage'));
-const ControlViajesPage = lazy(() => import('./pages/vehicular/control-viajes/ControlViajesPage'));
+const CalendarPage = lazy(routeImports['/operacion/calendario'] as any);
+const ListasPrecioPage = lazy(routeImports['/operacion/listas-precio'] as any);
+const PreciosEspecialesPage = lazy(routeImports['/operacion/precios-especiales'] as any);
+const CotizacionesPage = lazy(routeImports['/operacion/cotizaciones'] as any);
+const AutorizacionConsumosPage = lazy(routeImports['/operacion/autorizacion-consumos'] as any);
+const SolicitudProgramacionPage = lazy(routeImports['/operacion/solicitud-programacion'] as any);
+const AdministracionPage = lazy(routeImports['/administracion'] as any);
+const UsuariosAdminPage = lazy(routeImports['/administracion/usuarios'] as any);
+const TercerosAdminPage = lazy(routeImports['/administracion/terceros'] as any);
+const VehicularPage = lazy(routeImports['/vehicular'] as any);
+const CatalogoVehicularPage = lazy(routeImports['/vehicular/catalogo'] as any);
+const ControlViajesPage = lazy(routeImports['/vehicular/control-viajes'] as any);
 
 function PageLoader() {
   return (
