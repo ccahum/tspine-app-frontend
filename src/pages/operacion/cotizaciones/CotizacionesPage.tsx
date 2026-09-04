@@ -774,7 +774,8 @@ function TerceroButtonList({ label, required, clasificacion, valueId, onSelect, 
             key={o.id}
             type="button"
             style={{ ...styles.pickBtn, ...(valueId === o.id ? styles.pickBtnActive : {}), ...(error ? styles.inputError : {}) }}
-            onClick={() => onSelect(o.id, o.nombreCompleto)}
+            onMouseDown={e => e.preventDefault()}
+            onClick={e => { onSelect(o.id, o.nombreCompleto); e.currentTarget.blur(); }}
           >
             {o.nombreCompleto}
           </button>
@@ -1094,12 +1095,14 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
               key={opt.id}
               type="button"
               style={{ ...styles.pickBtn, ...(form.cubrimientoId === opt.id ? styles.pickBtnActive : {}), ...(error?.field === 'cubrimiento' ? styles.inputError : {}) }}
-              onClick={() => {
+              onMouseDown={e => e.preventDefault()}
+              onClick={e => {
                 const autoResponsable = opt.id === CUBRIMIENTO_HOSPITALES_ID && form.hospitalId
                   ? { responsableEconomicoId: form.hospitalId, responsableEconomicoLabel: form.hospitalLabel }
                   : { responsableEconomicoId: '', responsableEconomicoLabel: '' };
                 setForm({ ...form, cubrimientoId: opt.id, ...autoResponsable });
                 setError(null);
+                e.currentTarget.blur();
               }}
             >
               {opt.label}
@@ -1168,7 +1171,8 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
               key={n}
               type="button"
               style={{ ...styles.pickBtn, ...(form.nivel === n ? styles.pickBtnActive : {}) }}
-              onClick={() => setForm({ ...form, nivel: form.nivel === n ? '' : n })}
+              onMouseDown={e => e.preventDefault()}
+              onClick={e => { setForm({ ...form, nivel: form.nivel === n ? '' : n }); e.currentTarget.blur(); }}
             >
               {n}
             </button>
@@ -1188,8 +1192,8 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
       <div style={styles.formGroup}>
         <label style={styles.formLabel}>¿Tiene Dcto? *</label>
         <div style={styles.pickBtnGrid}>
-          <button type="button" style={{ ...styles.pickBtn, ...(!form.tieneDcto ? styles.pickBtnActive : {}) }} onClick={() => setForm({ ...form, tieneDcto: false })}>No</button>
-          <button type="button" style={{ ...styles.pickBtn, ...(form.tieneDcto ? styles.pickBtnActive : {}) }} onClick={() => setForm({ ...form, tieneDcto: true })}>Sí</button>
+          <button type="button" style={{ ...styles.pickBtn, ...(!form.tieneDcto ? styles.pickBtnActive : {}) }} onMouseDown={e => e.preventDefault()} onClick={e => { setForm({ ...form, tieneDcto: false }); e.currentTarget.blur(); }}>No</button>
+          <button type="button" style={{ ...styles.pickBtn, ...(form.tieneDcto ? styles.pickBtnActive : {}) }} onMouseDown={e => e.preventDefault()} onClick={e => { setForm({ ...form, tieneDcto: true }); e.currentTarget.blur(); }}>Sí</button>
         </div>
       </div>
 
@@ -1227,7 +1231,8 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
               key={opt}
               type="button"
               style={{ ...styles.pickBtn, ...(form.impuestos === opt ? styles.pickBtnActive : {}), ...(error?.field === 'impuestos' ? styles.inputError : {}) }}
-              onClick={() => { setForm({ ...form, impuestos: opt }); setError(null); }}
+              onMouseDown={e => e.preventDefault()}
+              onClick={e => { setForm({ ...form, impuestos: opt }); setError(null); e.currentTarget.blur(); }}
             >
               {opt}
             </button>
@@ -1429,12 +1434,14 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
                     key={opt.id}
                     type="button"
                     style={{ ...styles.pickBtn, ...(form.cubrimientoId === opt.id ? styles.pickBtnActive : {}), ...(error?.field === 'cubrimiento' ? styles.inputError : {}) }}
-                    onClick={() => {
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={e => {
                       const autoResponsable = opt.id === CUBRIMIENTO_HOSPITALES_ID && form.hospitalId
                         ? { responsableEconomicoId: form.hospitalId, responsableEconomicoLabel: form.hospitalLabel }
                         : { responsableEconomicoId: '', responsableEconomicoLabel: '' };
                       setForm({ ...form, cubrimientoId: opt.id, empresaId: '', empresaLabel: '', ...autoResponsable });
                       setError(null);
+                      e.currentTarget.blur();
                     }}
                   >
                     {opt.label}
@@ -1505,7 +1512,8 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
                     key={n}
                     type="button"
                     style={{ ...styles.pickBtn, ...(form.nivel === n ? styles.pickBtnActive : {}) }}
-                    onClick={() => setForm({ ...form, nivel: form.nivel === n ? '' : n })}
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={e => { setForm({ ...form, nivel: form.nivel === n ? '' : n }); e.currentTarget.blur(); }}
                   >
                     {n}
                   </button>
@@ -1525,8 +1533,8 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>¿Tiene Dcto? *</label>
               <div style={styles.pickBtnGrid}>
-                <button type="button" style={{ ...styles.pickBtn, ...(!form.tieneDcto ? styles.pickBtnActive : {}) }} onClick={() => setForm({ ...form, tieneDcto: false })}>No</button>
-                <button type="button" style={{ ...styles.pickBtn, ...(form.tieneDcto ? styles.pickBtnActive : {}) }} onClick={() => setForm({ ...form, tieneDcto: true })}>Sí</button>
+                <button type="button" style={{ ...styles.pickBtn, ...(!form.tieneDcto ? styles.pickBtnActive : {}) }} onMouseDown={e => e.preventDefault()} onClick={e => { setForm({ ...form, tieneDcto: false }); e.currentTarget.blur(); }}>No</button>
+                <button type="button" style={{ ...styles.pickBtn, ...(form.tieneDcto ? styles.pickBtnActive : {}) }} onMouseDown={e => e.preventDefault()} onClick={e => { setForm({ ...form, tieneDcto: true }); e.currentTarget.blur(); }}>Sí</button>
               </div>
             </div>
 
@@ -1564,7 +1572,8 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
                     key={opt}
                     type="button"
                     style={{ ...styles.pickBtn, ...(form.impuestos === opt ? styles.pickBtnActive : {}), ...(error?.field === 'impuestos' ? styles.inputError : {}) }}
-                    onClick={() => { setForm({ ...form, impuestos: opt }); setError(null); }}
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={e => { setForm({ ...form, impuestos: opt }); setError(null); e.currentTarget.blur(); }}
                   >
                     {opt}
                   </button>
