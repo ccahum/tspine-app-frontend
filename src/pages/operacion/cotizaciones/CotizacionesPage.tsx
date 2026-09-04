@@ -2129,8 +2129,8 @@ const styles: Record<string, React.CSSProperties> = {
   iconBtnEdit: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0 0.75rem', height: '34px', border: 'none', backgroundColor: '#6b8c1f', borderRadius: '8px', cursor: 'pointer', color: '#fff', fontWeight: 600, fontSize: '0.82rem' },
   confirmBox: { display: 'flex', flexDirection: 'column' as const, gap: '1rem', padding: '1rem', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px' },
   pickBtnGrid: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.5rem' },
-  pickBtn: { padding: '0.5rem 0.9rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', color: '#374151', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer', outline: 'none' },
-  pickBtnActive: { backgroundColor: '#6b8c1f', borderColor: '#6b8c1f', color: '#fff' },
+  pickBtn: { padding: '0.5rem 0.9rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', color: '#374151', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const },
+  pickBtnActive: { backgroundColor: '#6b8c1f', border: '1px solid #6b8c1f', color: '#fff' },
   // Mismo formato de "pill" que los botones de acción del header en ProgramacionDetailPage/RemisionDetailPage
   // (clases .header-btn-secondary / .header-btn-primary / .header-btn-danger en index.css aportan el fondo y el hover).
   pillBtn: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.1rem', border: '1px solid #e5e7eb', borderRadius: '12px', color: '#33342a', fontWeight: 600, fontSize: '0.84375rem', cursor: 'pointer', whiteSpace: 'nowrap' as const },
