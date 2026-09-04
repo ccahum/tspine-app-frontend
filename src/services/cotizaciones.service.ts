@@ -183,6 +183,9 @@ export const cotizacionesService = {
   getTarifas: (): Promise<TarifaOption[]> =>
     api.get('/operacion/cotizaciones/tarifas').then(r => r.data),
 
+  getTerceroTarifa: (terceroId: string): Promise<{ tarifaId: string | null; tarifaNombre: string | null }> =>
+    api.get(`/operacion/cotizaciones/tercero-tarifa/${terceroId}`).then(r => r.data),
+
   getPaquetes: (): Promise<PaqueteOption[]> =>
     api.get('/operacion/cotizaciones/paquetes').then(r => r.data),
 

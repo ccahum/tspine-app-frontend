@@ -21,15 +21,15 @@ import {
   type CotizacionItem,
   type ProductoOption,
   type TerceroOption,
-  type TarifaOption,
   type PaqueteOption,
 } from '../../../services/cotizaciones.service';
 
 type AutoTableDoc = jsPDF & { autoTable: (options: Record<string, unknown>) => void; lastAutoTable: { finalY: number } };
 
+const CUBRIMIENTO_HOSPITALES_ID = 'Zd5c45';
 const CUBRIMIENTO_OPTIONS = [
   { id: '1A15', label: 'Particulares' },
-  { id: 'Zd5c45', label: 'Hospitales' },
+  { id: CUBRIMIENTO_HOSPITALES_ID, label: 'Hospitales' },
   { id: '1A17', label: 'Distribuidor' },
   { id: '1A18', label: 'Aseguradora' },
 ];
@@ -960,8 +960,6 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
     responsableEconomicoId: cotizacion.responsableEconomicoId ?? '',
     responsableEconomicoLabel: cotizacion.responsableEconomico ?? '',
     numProveedor: cotizacion.numProveedor ?? '',
-    tarifaId: cotizacion.tarifaId ?? '',
-    tarifaLabel: cotizacion.tarifa ?? '',
     tiempoEntrega: cotizacion.tiempoEntrega ?? '',
     observaciones: cotizacion.observaciones ?? '',
     paqueteId: cotizacion.paqueteId ?? '',
@@ -975,14 +973,20 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
 
   const { subtotal, vrDcto, totalAntesImpuestos, iva, retencion, total } = computeTotales(cotizacion.items, form.tieneDcto, form.porcentajeDcto, form.impuestos);
 
-  const { data: tarifas = [] } = useQuery<TarifaOption[]>({
-    queryKey: ['cotizaciones-tarifas'],
-    queryFn: () => cotizacionesService.getTarifas(),
-  });
   const { data: paquetes = [] } = useQuery<PaqueteOption[]>({
     queryKey: ['cotizaciones-paquetes'],
     queryFn: () => cotizacionesService.getPaquetes(),
   });
+
+  // Tarifa: si el responsable económico tiene tarifa propia asignada se usa esa; si no, cae al
+  // cubrimiento general seleccionado (misma id que la subtarifa de nivel superior).
+  const { data: terceroTarifa } = useQuery({
+    queryKey: ['cotizacion-tercero-tarifa', form.responsableEconomicoId],
+    queryFn: () => cotizacionesService.getTerceroTarifa(form.responsableEconomicoId),
+    enabled: !!form.responsableEconomicoId,
+  });
+  const tarifaId = terceroTarifa?.tarifaId || form.cubrimientoId;
+  const tarifaLabel = terceroTarifa?.tarifaNombre || CUBRIMIENTO_OPTIONS.find(o => o.id === form.cubrimientoId)?.label || '';
 
   const updateMutation = useMutation({
     mutationFn: () => cotizacionesService.updateCotizacion(cotizacion.id, {
@@ -995,7 +999,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
       empresaId: form.empresaId,
       responsableEconomicoId: form.responsableEconomicoId,
       numProveedor: form.numProveedor,
-      tarifaId: form.tarifaId,
+      tarifaId,
       tiempoEntrega: form.tiempoEntrega,
       observaciones: form.observaciones,
       paqueteId: form.paqueteId,
@@ -1058,7 +1062,13 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
         error={error?.field === 'hospital'}
         valueId={form.hospitalId}
         valueLabel={form.hospitalLabel}
-        onSelect={(id, label) => { setForm({ ...form, hospitalId: id, hospitalLabel: label }); setError(null); }}
+        onSelect={(id, label) => {
+          const autoResponsable = form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID
+            ? { responsableEconomicoId: id, responsableEconomicoLabel: label }
+            : {};
+          setForm({ ...form, hospitalId: id, hospitalLabel: label, ...autoResponsable });
+          setError(null);
+        }}
         clasificacion="HOSPITAL"
       />
       {error?.field === 'hospital' && <span style={styles.errorText}>{error.message}</span>}
@@ -1077,7 +1087,13 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
               key={opt.id}
               type="button"
               style={{ ...styles.pickBtn, ...(form.cubrimientoId === opt.id ? styles.pickBtnActive : {}), ...(error?.field === 'cubrimiento' ? styles.inputError : {}) }}
-              onClick={() => { setForm({ ...form, cubrimientoId: opt.id, responsableEconomicoId: '', responsableEconomicoLabel: '' }); setError(null); }}
+              onClick={() => {
+                const autoResponsable = opt.id === CUBRIMIENTO_HOSPITALES_ID && form.hospitalId
+                  ? { responsableEconomicoId: form.hospitalId, responsableEconomicoLabel: form.hospitalLabel }
+                  : { responsableEconomicoId: '', responsableEconomicoLabel: '' };
+                setForm({ ...form, cubrimientoId: opt.id, ...autoResponsable });
+                setError(null);
+              }}
             >
               {opt.label}
             </button>
@@ -1116,7 +1132,12 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved }: {
         <input style={styles.formInput} value={form.numProveedor} onChange={e => setForm({ ...form, numProveedor: e.target.value })} />
       </div>
 
-      <ListPicker label="Tarifa" options={tarifas} valueId={form.tarifaId} valueLabel={form.tarifaLabel} onSelect={(id, label) => setForm({ ...form, tarifaId: id, tarifaLabel: label })} />
+      <div style={styles.formGroup}>
+        <label style={styles.formLabel}>Tarifa</label>
+        <span style={{ ...styles.formInput, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>
+          {tarifaLabel || 'Selecciona hospital/responsable económico y cubrimiento'}
+        </span>
+      </div>
 
       <div style={styles.formGroup}>
         <label style={styles.formLabel}>Tiempo de Entrega</label>
@@ -1279,6 +1300,16 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
     queryFn: () => cotizacionesService.getPaquetes(),
   });
 
+  // Tarifa: si el responsable económico tiene tarifa propia asignada se usa esa; si no, cae al
+  // cubrimiento general seleccionado (misma id que la subtarifa de nivel superior).
+  const { data: terceroTarifa } = useQuery({
+    queryKey: ['cotizacion-tercero-tarifa', form.responsableEconomicoId],
+    queryFn: () => cotizacionesService.getTerceroTarifa(form.responsableEconomicoId),
+    enabled: !!form.responsableEconomicoId,
+  });
+  const tarifaId = terceroTarifa?.tarifaId || form.cubrimientoId;
+  const tarifaLabel = terceroTarifa?.tarifaNombre || CUBRIMIENTO_OPTIONS.find(o => o.id === form.cubrimientoId)?.label || '';
+
   const createMutation = useMutation({
     mutationFn: () => cotizacionesService.createCotizacion({
       fecha: form.fecha,
@@ -1290,6 +1321,7 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
       empresaId: form.empresaId,
       responsableEconomicoId: form.responsableEconomicoId,
       numProveedor: form.numProveedor,
+      tarifaId,
       tiempoEntrega: form.tiempoEntrega,
       observaciones: form.observaciones,
       paqueteId: form.paqueteId,
@@ -1359,7 +1391,15 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
               error={error?.field === 'hospital'}
               valueId={form.hospitalId}
               valueLabel={form.hospitalLabel}
-              onSelect={(id, label) => { setForm({ ...form, hospitalId: id, hospitalLabel: label }); setError(null); }}
+              onSelect={(id, label) => {
+                // Si el cubrimiento ya es Hospitales, el responsable económico por defecto es el
+                // propio hospital — el usuario lo puede cambiar después si hace falta.
+                const autoResponsable = form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID
+                  ? { responsableEconomicoId: id, responsableEconomicoLabel: label }
+                  : {};
+                setForm({ ...form, hospitalId: id, hospitalLabel: label, ...autoResponsable });
+                setError(null);
+              }}
               clasificacion="HOSPITAL"
             />
             {error?.field === 'hospital' && <span style={styles.errorText}>{error.message}</span>}
@@ -1378,7 +1418,13 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
                     key={opt.id}
                     type="button"
                     style={{ ...styles.pickBtn, ...(form.cubrimientoId === opt.id ? styles.pickBtnActive : {}), ...(error?.field === 'cubrimiento' ? styles.inputError : {}) }}
-                    onClick={() => { setForm({ ...form, cubrimientoId: opt.id, empresaId: '', empresaLabel: '', responsableEconomicoId: '', responsableEconomicoLabel: '' }); setError(null); }}
+                    onClick={() => {
+                      const autoResponsable = opt.id === CUBRIMIENTO_HOSPITALES_ID && form.hospitalId
+                        ? { responsableEconomicoId: form.hospitalId, responsableEconomicoLabel: form.hospitalLabel }
+                        : { responsableEconomicoId: '', responsableEconomicoLabel: '' };
+                      setForm({ ...form, cubrimientoId: opt.id, empresaId: '', empresaLabel: '', ...autoResponsable });
+                      setError(null);
+                    }}
                   >
                     {opt.label}
                   </button>
@@ -1417,6 +1463,13 @@ function NuevaCotizacionModal({ onClose, onCreated }: {
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>N° Proveedor</label>
               <input style={styles.formInput} value={form.numProveedor} onChange={e => setForm({ ...form, numProveedor: e.target.value })} />
+            </div>
+
+            <div style={styles.formGroup}>
+              <label style={styles.formLabel}>Tarifa</label>
+              <span style={{ ...styles.formInput, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>
+                {tarifaLabel || 'Selecciona hospital/responsable económico y cubrimiento'}
+              </span>
             </div>
 
             <div style={styles.formGroup}>
