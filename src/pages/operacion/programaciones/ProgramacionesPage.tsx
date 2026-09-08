@@ -1,14 +1,13 @@
 import { useState, useEffect, useRef, memo, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { PieChart, Pie, Cell, Legend, Tooltip, ResponsiveContainer } from 'recharts';
-import { Search, Lock, AlertCircle, CircleX, DollarSign, Plus, X, Calendar, BarChart3, Activity, MapPin, CheckCircle, Circle, ArrowDown, ArrowUp, ArrowRight } from 'lucide-react';
-import Layout from '../../../components/layout/Layout';
+import { Search, Lock, AlertCircle, CircleX, DollarSign, Plus, X, Calendar, BarChart3, Activity, MapPin, ArrowDown, ArrowUp, ArrowRight } from 'lucide-react';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import DateRangeFilter from '../../../components/filters/DateRangeFilter';
 import StatusFilter from '../../../components/filters/StatusFilter';
 import ProgramacionesStats from './ProgramacionesStats';
 import SuccessToast from '../../../components/SuccessToast';
+import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { programacionesService } from '../../../services/programaciones.service';
@@ -75,7 +74,7 @@ function StatusBadges({ item }: { item: ProgramacionItem }) {
   );
 }
 
-const ProgramacionRow = memo(({ item, navigate, index }: { item: ProgramacionItem; navigate: (path: string) => void; index: number }) => {
+const ProgramacionRow = memo(({ item, navigate, index }: { item: ProgramacionItem; navigate: (path: string, routeKey?: string) => void; index: number }) => {
   const today = isFechaHoy(item.fechaQx);
   const baseBg = today ? 'rgba(107, 140, 31, 0.14)' : '#fff';
   return (
@@ -83,7 +82,7 @@ const ProgramacionRow = memo(({ item, navigate, index }: { item: ProgramacionIte
     key={item.id}
     data-today-row={today ? 'true' : undefined}
     style={{ ...styles.tr, backgroundColor: baseBg }}
-    onClick={() => navigate(`/operacion/programaciones/${item.id}`)}
+    onClick={() => navigate(`/operacion/programaciones/${item.id}`, '/operacion/programaciones/:id')}
     onMouseEnter={e => {
       e.currentTarget.style.backgroundColor = today ? 'rgba(107, 140, 31, 0.26)' : '#f3f4f6';
       e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)';
@@ -117,12 +116,12 @@ const ProgramacionRow = memo(({ item, navigate, index }: { item: ProgramacionIte
   );
 });
 
-const ProgramacionCard = memo(({ item, navigate }: { item: ProgramacionItem; navigate: (path: string) => void }) => {
+const ProgramacionCard = memo(({ item, navigate }: { item: ProgramacionItem; navigate: (path: string, routeKey?: string) => void }) => {
   const today = isFechaHoy(item.fechaQx);
   return (
     <div
       style={{ ...styles.mobileCard, ...(today ? styles.mobileCardToday : {}) }}
-      onClick={() => navigate(`/operacion/programaciones/${item.id}`)}
+      onClick={() => navigate(`/operacion/programaciones/${item.id}`, '/operacion/programaciones/:id')}
     >
       <div style={styles.mobileCardTopRow}>
         <span style={styles.mobileCardId}>{item.id}</span>
@@ -155,7 +154,7 @@ const ProgramacionCard = memo(({ item, navigate }: { item: ProgramacionItem; nav
 });
 
 export default function ProgramacionesPage() {
-  const navigate = useNavigate();
+  const navigate = useNavigateWithLoading();
   const queryClient = useQueryClient();
   const { isMobile } = useResponsiveStyles();
   const [search, setSearch] = useState('');
@@ -181,11 +180,16 @@ export default function ProgramacionesPage() {
   const [newHospitalSearch, setNewHospitalSearch] = useState('');
   const [newProgramacionError, setNewProgramacionError] = useState<{ field: string; message: string } | null>(null);
   const [showCreateSuccess, setShowCreateSuccess] = useState(false);
+
+  useEffect(() => {
+    if (!newProgramacionError) return;
+    document.getElementById(`programacion-new-field-${newProgramacionError.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [newProgramacionError]);
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [selectedMonthForSedes, setSelectedMonthForSedes] = useState<number>(new Date().getMonth() + 1);
 
   const query: ProgramacionQuery = {
-    page, limit: 300,
+    page, limit: 200,
     search: search || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
@@ -390,7 +394,7 @@ export default function ProgramacionesPage() {
   };
 
   return (
-    <Layout>
+    <>
       {showNewModal && (
         <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowNewModal(false)}>
           <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
@@ -402,7 +406,7 @@ export default function ProgramacionesPage() {
             </div>
 
             <div style={styles.modalBody}>
-              <div style={styles.formGroup}>
+              <div style={styles.formGroup} id="programacion-new-field-fechaQx">
                 <label style={styles.label}>Fecha QX *</label>
                 <input
                   type="date"
@@ -422,7 +426,7 @@ export default function ProgramacionesPage() {
                 {newProgramacionError?.field === 'fechaQx' && <span style={styles.errorText}>{newProgramacionError.message}</span>}
               </div>
 
-              <div style={styles.formGroup}>
+              <div style={styles.formGroup} id="programacion-new-field-horaQx">
                 <label style={styles.label}>Hora QX *</label>
                 <div style={styles.horaGrid}>
                   <select
@@ -457,7 +461,7 @@ export default function ProgramacionesPage() {
                 {newProgramacionError?.field === 'horaQx' && <span style={styles.errorText}>{newProgramacionError.message}</span>}
               </div>
 
-              <div style={styles.formGroup}>
+              <div style={styles.formGroup} id="programacion-new-field-sedeId">
                 <label style={styles.label}>Sede *</label>
                 <div style={styles.sedeGrid}>
                   {sedeOptions.map(s => (
@@ -468,7 +472,6 @@ export default function ProgramacionesPage() {
                       onMouseDown={e => e.preventDefault()}
                       onClick={e => { setNewForm({ ...newForm, sedeId: s.id }); setNewProgramacionError(null); e.currentTarget.blur(); }}
                     >
-                      {newForm.sedeId === s.id ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
                       {s.nombre}
                     </button>
                   ))}
@@ -476,7 +479,7 @@ export default function ProgramacionesPage() {
                 {newProgramacionError?.field === 'sedeId' && <span style={styles.errorText}>{newProgramacionError.message}</span>}
               </div>
 
-              <div style={styles.formGroup}>
+              <div style={styles.formGroup} id="programacion-new-field-hospitalId">
                 <label style={styles.label}>Hospital *</label>
                 {selectedNewHospital && (
                   <div style={styles.medicoTagsWrap}>
@@ -523,7 +526,7 @@ export default function ProgramacionesPage() {
                 </div>
               )}
 
-              <div style={styles.formGroup}>
+              <div style={styles.formGroup} id="programacion-new-field-medicos">
                 <label style={styles.label}>Médico *</label>
                 {newMedicos.length > 0 && (
                   <div style={styles.medicoTagsWrap}>
@@ -563,7 +566,7 @@ export default function ProgramacionesPage() {
                 {newProgramacionError?.field === 'medicos' && <span style={styles.errorText}>{newProgramacionError.message}</span>}
               </div>
 
-              <div style={styles.formGroup}>
+              <div style={styles.formGroup} id="programacion-new-field-consumo">
                 <label style={styles.label}>Consumo *</label>
                 <textarea
                   ref={autoResizeTextarea}
@@ -956,7 +959,7 @@ export default function ProgramacionesPage() {
         </div>
       )}
       </div>
-    </Layout>
+    </>
   );
 }
 
@@ -1029,22 +1032,22 @@ const styles: Record<string, React.CSSProperties> = {
   loader: { padding: '2rem', textAlign: 'center' as const },
   modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 },
   modalContent: { backgroundColor: '#fff', borderRadius: '12px', width: '90%', maxWidth: '600px', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
-  modalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.5rem', backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb', borderTopLeftRadius: '12px', borderTopRightRadius: '12px' },
+  modalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.5rem', backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb', borderTopLeftRadius: '12px', borderTopRightRadius: '12px', position: 'sticky' as const, top: 0, zIndex: 1 },
   modalTitle: { fontSize: '1.25rem', fontWeight: 700, color: '#333', margin: 0 },
   closeBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '36px', height: '36px', border: 'none', backgroundColor: '#f3f4f6', borderRadius: '8px', cursor: 'pointer', color: '#666' },
   modalBody: { padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' },
   formGroup: { display: 'flex', flexDirection: 'column', gap: '0.5rem' },
   label: { fontSize: '0.75rem', fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: '0.05em' },
   input: { padding: '0.75rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', fontSize: '0.875rem', outline: 'none', fontFamily: 'inherit' },
-  inputError: { borderColor: '#dc2626' },
+  inputError: { border: '1.5px solid #dc2626' },
   errorText: { fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 },
   horaGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' },
   sedeGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' },
   sedeBtn: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 0.75rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', color: '#374151', fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const },
-  sedeBtnActive: { backgroundColor: '#6b8c1f', border: '1px solid #6b8c1f', color: '#fff' },
-  ciudadPill: { display: 'inline-flex', alignSelf: 'flex-start' as const, padding: '0.4rem 0.85rem', borderRadius: '999px', border: '1px solid #e5e7eb', backgroundColor: '#f9fafb', fontSize: '0.85rem', fontWeight: 600, color: '#374151' },
+  sedeBtnActive: { backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' },
+  ciudadPill: { display: 'inline-flex', alignSelf: 'flex-start' as const, padding: '0.4rem 0.85rem', borderRadius: '999px', border: '1px solid #dbe8c2', backgroundColor: '#e9f2d8', fontSize: '0.85rem', fontWeight: 600, color: '#3f6510' },
   medicoTagsWrap: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.5rem' },
-  medicoTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#f3f4f6', color: '#333', fontSize: '0.8rem', fontWeight: 600 },
+  medicoTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510', fontSize: '0.8rem', fontWeight: 600 },
   medicoDropdown: { position: 'absolute' as const, top: 'calc(100% + 0.35rem)', left: 0, right: 0, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', maxHeight: '220px', overflowY: 'auto' as const, zIndex: 20 },
   medicoDropdownItem: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#333', cursor: 'pointer' },
   modalFooter: { display: 'flex', gap: '1rem', padding: '1.5rem', borderTop: '1px solid #e5e7eb', justifyContent: 'flex-end' },
