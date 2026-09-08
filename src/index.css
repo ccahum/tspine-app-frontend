@@ -60,6 +60,18 @@ input:-webkit-autofill:active {
   animation: spin 0.8s linear infinite;
 }
 
+@keyframes content-loader-bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
+}
+.content-loader-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6b8c1f, #3f6510);
+  animation: content-loader-bounce 1s ease-in-out infinite;
+}
+
 :root {
   font-family: 'Outfit', 'Manrope', system-ui, 'Segoe UI', Roboto, sans-serif;
   font-size: 16px;
@@ -262,7 +274,7 @@ body {
   transition: color 0.15s ease;
 }
 .login-link-btn:hover {
-  color: #3f6510;
+  color: #6a7c09;
   text-decoration: underline;
 }
 

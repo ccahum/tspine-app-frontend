@@ -408,7 +408,7 @@ export default function LoginPage() {
                 </div>
                 <ul style={styles.requisitosList}>
                   {evaluarPassword(nuevaPassword).map(r => (
-                    <li key={r.label} style={{ ...styles.requisitoItem, color: r.cumple ? '#3f6510' : '#8a8a7e' }}>
+                    <li key={r.label} style={{ ...styles.requisitoItem, color: r.cumple ? '#6a7c09' : '#8a8a7e' }}>
                       {r.cumple ? <Check size={14} /> : <XIcon size={14} />}
                       {r.label}
                     </li>
@@ -503,7 +503,7 @@ export default function LoginPage() {
           {step === 'EXITO' && (
             <div className="page-fade-in" style={{ ...styles.form, textAlign: 'center' as const, alignItems: 'center' }}>
               <div className="login-success-check" style={styles.successIconWrap}>
-                <CheckCircle2 size={40} color="#3f6510" strokeWidth={2.5} />
+                <CheckCircle2 size={40} color="#6a7c09" strokeWidth={2.5} />
               </div>
               <h1 style={styles.title}>¡Listo!</h1>
               <p style={styles.subtitle}>Iniciando sesión...</p>
@@ -668,7 +668,7 @@ const styles: Record<string, React.CSSProperties> = {
   forgotLink: {
     fontSize: '0.85rem',
     fontWeight: 700,
-    color: '#4d7a13',
+    color: '#6a7c09',
     cursor: 'default',
   },
   error: {
@@ -699,7 +699,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   button: {
     padding: '0.85rem',
-    backgroundColor: '#3f6510',
+    backgroundColor: '#6a7c09',
     color: '#fff',
     border: 'none',
     borderRadius: '10px',
