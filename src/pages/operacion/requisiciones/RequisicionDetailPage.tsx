@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Loader, FileText, X, Plus, Pencil, CheckCircle, Circle, Trash2, AlertCircle } from 'lucide-react';
-import Layout from '../../../components/layout/Layout';
 import SuccessToast from '../../../components/SuccessToast';
 import {
   remisionesService,
@@ -264,12 +263,12 @@ export default function RequisicionDetailPage() {
     document.getElementById(`insumo-field-${insumoError.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [insumoError]);
 
-  if (isLoading) return <Layout><div style={{ padding: '2rem', textAlign: 'center' }}><Loader className="spinner" size={32} /></div></Layout>;
-  if (error) return <Layout><div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>Error al cargar: {(error as any)?.message || 'Error desconocido'}</div></Layout>;
-  if (!req) return <Layout><div style={{ padding: '2rem', textAlign: 'center', color: '#999' }}>Requisición no encontrada</div></Layout>;
+  if (isLoading) return <div style={{ padding: '2rem', textAlign: 'center' }}><Loader className="spinner" size={32} /></div>;
+  if (error) return <div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>Error al cargar: {(error as any)?.message || 'Error desconocido'}</div>;
+  if (!req) return <div style={{ padding: '2rem', textAlign: 'center', color: '#999' }}>Requisición no encontrada</div>;
 
   return (
-    <Layout>
+    <>
       <div style={styles.container}>
         <div style={styles.header}>
           <button onClick={() => navigate(-1)} style={styles.backBtn}>
@@ -714,7 +713,7 @@ export default function RequisicionDetailPage() {
           </div>
         </div>
       )}
-    </Layout>
+    </>
   );
 }
 

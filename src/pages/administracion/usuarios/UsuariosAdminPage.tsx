@@ -2,7 +2,6 @@ import { useState, useEffect, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Search, Plus, X } from 'lucide-react';
-import Layout from '../../../components/layout/Layout';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import SuccessToast from '../../../components/SuccessToast';
 import {
@@ -447,7 +446,7 @@ export default function UsuariosAdminPage() {
   );
 
   return (
-    <Layout>
+    <>
       <div style={styles.pageWrapper}>
         <button
           type="button"
@@ -546,7 +545,7 @@ export default function UsuariosAdminPage() {
         />
       )}
       <SuccessToast show={!!toastMessage} message={toastMessage ?? ''} onClose={() => setToastMessage(null)} />
-    </Layout>
+    </>
   );
 }
 

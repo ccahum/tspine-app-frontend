@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Wrench, ShoppingCart, Archive, Landmark,
   TrendingUp, ClipboardList, Users, Truck,
 } from 'lucide-react';
-import Layout from '../../components/layout/Layout';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 import { esSuperAdmin } from '../../lib/auth.utils';
+import { useNavigateWithLoading } from '../../hooks/useNavigateWithLoading';
 
 const ACCENT = '#4a7c59';
 
@@ -22,7 +21,7 @@ const modules = [
 ];
 
 function ModuleCard({ icon: Icon, label, description, path }: typeof modules[0]) {
-  const navigate = useNavigate();
+  const navigate = useNavigateWithLoading();
   const [hovered, setHovered] = useState(false);
 
   return (
@@ -52,7 +51,6 @@ export default function DashboardPage() {
   const modulosVisibles = modules.filter(mod => mod.path !== '/administracion' || esSuperAdmin());
 
   return (
-    <Layout>
       <div style={{ ...styles.container, paddingLeft: isMobile ? '1rem' : '2rem', paddingRight: isMobile ? '1rem' : '2rem' }}>
         <div style={styles.welcome}>
           <h2 style={styles.welcomeTitle}>Inicio</h2>
@@ -65,7 +63,6 @@ export default function DashboardPage() {
           ))}
         </div>
       </div>
-    </Layout>
   );
 }
 

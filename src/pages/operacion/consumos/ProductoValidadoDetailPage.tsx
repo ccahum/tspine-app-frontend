@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Loader, Plus, X } from 'lucide-react';
-import Layout from '../../../components/layout/Layout';
 import SuccessToast from '../../../components/SuccessToast';
 import { remisionesService, type ValConsumoDetalle, type ConsumoValidacionLote } from '../../../services/remisiones.service';
 import { programacionesService, type SedeOption } from '../../../services/programaciones.service';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
+import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 
 const formatMoney = (value: any): string => {
@@ -50,7 +50,7 @@ const formatDateTime = (dateString: string | null): string => {
 export default function ProductoValidadoDetailPage() {
   const { isMobile } = useResponsiveStyles();
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
+  const navigate = useNavigateWithLoading();
   const queryClient = useQueryClient();
   const [selectedLote, setSelectedLote] = useState<ConsumoValidacionLote | null>(null);
   const [hoveredLoteId, setHoveredLoteId] = useState<string | null>(null);
@@ -117,12 +117,12 @@ export default function ProductoValidadoDetailPage() {
     createLoteMutation.mutate();
   };
 
-  if (isLoading) return <Layout><div style={{ padding: '2rem', textAlign: 'center' }}><Loader className="spinner" size={32} /></div></Layout>;
-  if (error) return <Layout><div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>Error al cargar: {(error as any)?.message || 'Error desconocido'}</div></Layout>;
-  if (!pv) return <Layout><div style={{ padding: '2rem', textAlign: 'center', color: '#999' }}>Producto validado no encontrado</div></Layout>;
+  if (isLoading) return <div style={{ padding: '2rem', textAlign: 'center' }}><Loader className="spinner" size={32} /></div>;
+  if (error) return <div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>Error al cargar: {(error as any)?.message || 'Error desconocido'}</div>;
+  if (!pv) return <div style={{ padding: '2rem', textAlign: 'center', color: '#999' }}>Producto validado no encontrado</div>;
 
   return (
-    <Layout>
+    <>
       <div style={styles.container}>
         <div style={styles.header}>
           <button onClick={() => navigate(-1)} style={styles.backBtn}>
@@ -143,7 +143,7 @@ export default function ProductoValidadoDetailPage() {
               <span style={styles.label}>N° Remisión</span>
               <span
                 style={{ ...styles.value, textAlign: 'left' as const, color: '#db2777', cursor: pv.remisionId ? 'pointer' : 'default' }}
-                onClick={() => pv.remisionId && navigate(`/operacion/remisiones/${pv.remisionId}`)}
+                onClick={() => pv.remisionId && navigate(`/operacion/remisiones/${pv.remisionId}`, '/operacion/remisiones/:id')}
               >
                 {pv.numRemision || pv.remisionId || '-'}
               </span>
@@ -325,7 +325,7 @@ export default function ProductoValidadoDetailPage() {
       )}
 
       <SuccessToast show={!!toastMessage} message={toastMessage ?? ''} onClose={() => setToastMessage(null)} />
-    </Layout>
+    </>
   );
 }
 

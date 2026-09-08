@@ -1,10 +1,10 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
+import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Loader, FileText, CheckCircle, Circle, X, Plus, Lock, AlertCircle, CircleX, DollarSign, Trash2 } from 'lucide-react';
 import { SiGmail } from 'react-icons/si';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
-import Layout from '../../../components/layout/Layout';
 import SignaturePad from '../../../components/SignaturePad';
 import SuccessToast from '../../../components/SuccessToast';
 import { programacionesService, type ProgramacionDetail, type SedeOption, type HospitalOption, type MedicoOption } from '../../../services/programaciones.service';
@@ -123,7 +123,7 @@ const PROGRAMACION_FLAGS: { key: 'sinRemision' | 'consumoNoValidado' | 'sinComis
 
 export default function ProgramacionDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
+  const navigate = useNavigateWithLoading();
   const [searchParams, setSearchParams] = useSearchParams();
   const { isMobile } = useResponsiveStyles();
   const [mainTab, setMainTab] = useState('resumen');
@@ -1074,9 +1074,9 @@ export default function ProgramacionDetailPage() {
     document.getElementById(`documento-field-${documentoError.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [documentoError]);
 
-  if (isLoading) return <Layout><div style={{ padding: '2rem', textAlign: 'center' }}><Loader className="spinner" size={32} /></div></Layout>;
-  if (error) return <Layout><div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>Error al cargar: {(error as any)?.message || 'Error desconocido'}</div></Layout>;
-  if (!programacion) return <Layout><div style={{ padding: '2rem', textAlign: 'center', color: '#999' }}>Programación no encontrada</div></Layout>;
+  if (isLoading) return <div style={{ padding: '2rem', textAlign: 'center' }}><Loader className="spinner" size={32} /></div>;
+  if (error) return <div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>Error al cargar: {(error as any)?.message || 'Error desconocido'}</div>;
+  if (!programacion) return <div style={{ padding: '2rem', textAlign: 'center', color: '#999' }}>Programación no encontrada</div>;
 
   const mainTabItems: { key: string; label: string; count: number | null }[] = [
     { key: 'resumen', label: 'Resumen', count: null },
@@ -1094,7 +1094,7 @@ export default function ProgramacionDetailPage() {
   const finBarPct = (v: number) => finBarTotal > 0 ? (v / finBarTotal) * 100 : 0;
 
   return (
-    <Layout>
+    <>
       {showCompactHeader && (
         <div style={{ ...styles.compactHeaderPositioner, left: isMobile ? 0 : '60px' }}>
           <div
@@ -1480,7 +1480,7 @@ export default function ProgramacionDetailPage() {
                       <div
                         key={rem.id}
                         style={{ ...styles.remGridRow, ...(i > 0 ? styles.remRowBorder : {}), cursor: 'pointer' }}
-                        onClick={() => navigate(`/operacion/remisiones/${rem.id}`)}
+                        onClick={() => navigate(`/operacion/remisiones/${rem.id}`, '/operacion/remisiones/:id')}
                         onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f3f4f6'; }}
                         onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; }}
                       >
@@ -1551,7 +1551,7 @@ export default function ProgramacionDetailPage() {
                       <div
                         key={req.id}
                         style={{ ...styles.requisicionRow, ...(i > 0 ? styles.remRowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
-                        onClick={() => navigate(`/operacion/requisiciones/${req.id}`)}
+                        onClick={() => navigate(`/operacion/requisiciones/${req.id}`, '/operacion/requisiciones/:id')}
                         onMouseEnter={() => setHoveredRequisicionId(req.id)}
                         onMouseLeave={() => setHoveredRequisicionId(null)}
                       >
@@ -1748,7 +1748,7 @@ export default function ProgramacionDetailPage() {
                         const cellProps = {
                           onMouseEnter: () => setHoveredConsumoId(item.id),
                           onMouseLeave: () => setHoveredConsumoId(null),
-                          onClick: () => navigate(`/operacion/consumos/${item.id}`),
+                          onClick: () => navigate(`/operacion/consumos/${item.id}`, '/operacion/consumos/:id'),
                         };
                         return (
                           <Fragment key={item.id}>
@@ -1820,7 +1820,7 @@ export default function ProgramacionDetailPage() {
                         const cellProps = {
                           onMouseEnter: () => setHoveredValidacionId(item.id),
                           onMouseLeave: () => setHoveredValidacionId(null),
-                          onClick: () => navigate(`/operacion/producto-validado/${item.id}`),
+                          onClick: () => navigate(`/operacion/producto-validado/${item.id}`, '/operacion/producto-validado/:id'),
                         };
                         return (
                           <Fragment key={item.id}>
@@ -1877,7 +1877,7 @@ export default function ProgramacionDetailPage() {
                           const cellProps = {
                             onMouseEnter: () => setHoveredComisionId(item.id),
                             onMouseLeave: () => setHoveredComisionId(null),
-                            onClick: () => navigate(`/operacion/comisiones/${item.id}`),
+                            onClick: () => navigate(`/operacion/comisiones/${item.id}`, '/operacion/comisiones/:id'),
                           };
                           return (
                             <Fragment key={item.id}>
@@ -2029,7 +2029,7 @@ export default function ProgramacionDetailPage() {
                 <span style={styles.label}>Remisión</span>
                 <span
                   style={{ ...styles.value, color: '#db2777', cursor: selectedTecnico.remision ? 'pointer' : 'default' }}
-                  onClick={() => selectedTecnico.remision && navigate(`/operacion/remisiones/${selectedTecnico.remision.id}`)}
+                  onClick={() => selectedTecnico.remision && navigate(`/operacion/remisiones/${selectedTecnico.remision.id}`, '/operacion/remisiones/:id')}
                 >
                   {selectedTecnico.remision?.numRemision || selectedTecnico.remision?.id || '-'}
                 </span>
@@ -2058,7 +2058,7 @@ export default function ProgramacionDetailPage() {
                 <span style={styles.label}>Programación</span>
                 <span
                   style={{ ...styles.value, color: '#db2777', cursor: selectedDocumento.programacion ? 'pointer' : 'default' }}
-                  onClick={() => selectedDocumento.programacion && navigate(`/operacion/programaciones/${selectedDocumento.programacion.id}`)}
+                  onClick={() => selectedDocumento.programacion && navigate(`/operacion/programaciones/${selectedDocumento.programacion.id}`, '/operacion/programaciones/:id')}
                 >
                   {selectedDocumento.programacion?.numProgram || selectedDocumento.programacion?.id || '-'}
                 </span>
@@ -2130,7 +2130,7 @@ export default function ProgramacionDetailPage() {
                 <span style={styles.label}>Remisión No</span>
                 <span
                   style={{ ...styles.value, color: '#db2777', cursor: selectedNotaCredito.factura?.remision ? 'pointer' : 'default' }}
-                  onClick={() => selectedNotaCredito.factura?.remision && navigate(`/operacion/remisiones/${selectedNotaCredito.factura.remision.id}`)}
+                  onClick={() => selectedNotaCredito.factura?.remision && navigate(`/operacion/remisiones/${selectedNotaCredito.factura.remision.id}`, '/operacion/remisiones/:id')}
                 >
                   {selectedNotaCredito.factura?.remision?.numRemision || selectedNotaCredito.factura?.remision?.id || '-'}
                 </span>
@@ -2139,7 +2139,7 @@ export default function ProgramacionDetailPage() {
                 <span style={styles.label}>Programación No</span>
                 <span
                   style={{ ...styles.value, color: '#db2777', cursor: selectedNotaCredito.factura?.remision?.programacion ? 'pointer' : 'default' }}
-                  onClick={() => selectedNotaCredito.factura?.remision?.programacion && navigate(`/operacion/programaciones/${selectedNotaCredito.factura.remision.programacion.id}`)}
+                  onClick={() => selectedNotaCredito.factura?.remision?.programacion && navigate(`/operacion/programaciones/${selectedNotaCredito.factura.remision.programacion.id}`, '/operacion/programaciones/:id')}
                 >
                   {selectedNotaCredito.factura?.remision?.programacion?.numProgram || selectedNotaCredito.factura?.remision?.programacion?.id || '-'}
                 </span>
@@ -2164,7 +2164,7 @@ export default function ProgramacionDetailPage() {
                 <span style={styles.label}>No de Programación</span>
                 <span
                   style={{ ...styles.value, color: '#db2777', cursor: selectedFuente.programacion ? 'pointer' : 'default' }}
-                  onClick={() => selectedFuente.programacion && navigate(`/operacion/programaciones/${selectedFuente.programacion.id}`)}
+                  onClick={() => selectedFuente.programacion && navigate(`/operacion/programaciones/${selectedFuente.programacion.id}`, '/operacion/programaciones/:id')}
                 >
                   {selectedFuente.programacion?.numProgram || selectedFuente.programacion?.id || '-'}
                 </span>
@@ -3542,7 +3542,7 @@ export default function ProgramacionDetailPage() {
         </div>
       )}
 
-    </Layout>
+    </>
   );
 }
 

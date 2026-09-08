@@ -1,15 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
+import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Loader, X, ChevronDown, Receipt, CheckCircle, Circle, Plus, AlertCircle } from 'lucide-react';
-import jsPDF from 'jspdf';
-// Import solo por su efecto secundario: registra doc.autoTable(...) en el prototipo de jsPDF.
-// (el default export del paquete no interopera bien con el bundling de Vite, ver doc.autoTable abajo)
-import 'jspdf-autotable';
+// jsPDF (+ jspdf-autotable, html2canvas, dompurify) pesa ~380kB/124kB gzip. Se carga con import()
+// dinámico dentro de cada buildRemisionPdf*, solo cuando el usuario realmente pide un PDF.
+import type jsPDF from 'jspdf';
 import logoUrl from '../../../assets/logo.png';
 import logoCabcari from '../../../assets/logo-cabcari.jpg';
 import logoNeurotec from '../../../assets/logo-neurotec.jpg';
-import Layout from '../../../components/layout/Layout';
 import PdfIcon from '../../../components/icons/PdfIcon';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import SuccessToast from '../../../components/SuccessToast';
@@ -251,7 +250,8 @@ async function buildRemisionPdfTecnologiaSpine(data: RemisionDetail): Promise<Au
   const empresaInfo = getEmpresaInfo(data);
   const empresaLogo = getEmpresaLogo(data.empresa?.nombreCompleto);
 
-  const doc = new jsPDF() as AutoTableDoc;
+  const [{ default: JsPDF }] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
+  const doc = new JsPDF() as AutoTableDoc;
   const pageWidth = doc.internal.pageSize.getWidth();
   const marginX = 14;
   const rightX = pageWidth - marginX;
@@ -456,7 +456,8 @@ async function buildRemisionPdfCabcari(data: RemisionDetail): Promise<AutoTableD
   const empresaInfo = getEmpresaInfo(data);
   const empresaLogo = getEmpresaLogo(data.empresa?.nombreCompleto);
 
-  const doc = new jsPDF() as AutoTableDoc;
+  const [{ default: JsPDF }] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
+  const doc = new JsPDF() as AutoTableDoc;
   const pageWidth = doc.internal.pageSize.getWidth();
   const marginX = 14;
   const rightX = pageWidth - marginX;
@@ -661,7 +662,8 @@ async function buildRemisionPdfNeurotec(data: RemisionDetail): Promise<AutoTable
   const empresaInfo = getEmpresaInfo(data);
   const empresaLogo = getEmpresaLogo(data.empresa?.nombreCompleto);
 
-  const doc = new jsPDF() as AutoTableDoc;
+  const [{ default: JsPDF }] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
+  const doc = new JsPDF() as AutoTableDoc;
   const pageWidth = doc.internal.pageSize.getWidth();
   const marginX = 14;
   const rightX = pageWidth - marginX;
@@ -866,7 +868,7 @@ const getEstadoColors = (estado: string | null) => ESTADO_COLORS[(estado ?? '').
 
 export default function RemisionDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
+  const navigate = useNavigateWithLoading();
   const { isMobile } = useResponsiveStyles();
   const [mainTab, setMainTab] = useState('resumen');
   const [hoveredConsumoId, setHoveredConsumoId] = useState<string | null>(null);
@@ -1196,9 +1198,9 @@ export default function RemisionDetailPage() {
     document.getElementById(`comision-field-${comisionError.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [comisionError]);
 
-  if (isLoading) return <Layout><div style={{ padding: '2rem', textAlign: 'center' }}><Loader className="spinner" size={32} /></div></Layout>;
-  if (error) return <Layout><div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>Error al cargar: {(error as any)?.message || 'Error desconocido'}</div></Layout>;
-  if (!remision) return <Layout><div style={{ padding: '2rem', textAlign: 'center', color: '#999' }}>Remisión no encontrada</div></Layout>;
+  if (isLoading) return <div style={{ padding: '2rem', textAlign: 'center' }}><Loader className="spinner" size={32} /></div>;
+  if (error) return <div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>Error al cargar: {(error as any)?.message || 'Error desconocido'}</div>;
+  if (!remision) return <div style={{ padding: '2rem', textAlign: 'center', color: '#999' }}>Remisión no encontrada</div>;
 
   const bonosComisionesFlat = remision.bonosComisiones.flatMap(g => g.items.map(it => ({ ...it, categoria: g.categoria })));
   const totalBonosComisiones = bonosComisionesFlat.reduce((sum, it) => sum + it.monto, 0);
@@ -1218,7 +1220,7 @@ export default function RemisionDetailPage() {
   ];
 
   return (
-    <Layout>
+    <>
       {showCompactHeader && (
         <div style={{ ...styles.compactHeaderPositioner, left: isMobile ? 0 : '60px' }}>
           <div
@@ -1516,7 +1518,7 @@ export default function RemisionDetailPage() {
                           style={{ ...styles.bonoRow, ...(i > 0 ? styles.rowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
                           onMouseEnter={() => setHoveredBonoId(item.id)}
                           onMouseLeave={() => setHoveredBonoId(null)}
-                          onClick={() => navigate(`/operacion/comisiones/${item.id}`)}
+                          onClick={() => navigate(`/operacion/comisiones/${item.id}`, '/operacion/comisiones/:id')}
                         >
                           <span style={styles.cellText}>{item.categoria}</span>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
@@ -1586,7 +1588,7 @@ export default function RemisionDetailPage() {
                       style={{ ...styles.consumoRow, ...(i > 0 ? styles.rowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
                       onMouseEnter={() => setHoveredConsumoId(c.id)}
                       onMouseLeave={() => setHoveredConsumoId(null)}
-                      onClick={() => navigate(`/operacion/consumos/${c.id}`)}
+                      onClick={() => navigate(`/operacion/consumos/${c.id}`, '/operacion/consumos/:id')}
                     >
                       <span style={styles.cellText}>{c.cantidad}</span>
                       <span style={styles.cellCode}>{c.productoReferencia || c.productoId || '-'}</span>
@@ -1662,7 +1664,7 @@ export default function RemisionDetailPage() {
                 <span style={styles.label}>Remisión</span>
                 <span
                   style={{ ...styles.value, color: '#db2777', cursor: selectedTecnico.remision ? 'pointer' : 'default' }}
-                  onClick={() => selectedTecnico.remision && navigate(`/operacion/remisiones/${selectedTecnico.remision.id}`)}
+                  onClick={() => selectedTecnico.remision && navigate(`/operacion/remisiones/${selectedTecnico.remision.id}`, '/operacion/remisiones/:id')}
                 >
                   {selectedTecnico.remision?.numRemision || selectedTecnico.remision?.id || '-'}
                 </span>
@@ -2433,7 +2435,7 @@ export default function RemisionDetailPage() {
       <SuccessToast show={showEditSuccess} message="Remisión editada" onClose={() => setShowEditSuccess(false)} />
       <SuccessToast show={showFacturaSuccess} message="Factura generada" onClose={() => setShowFacturaSuccess(false)} />
 
-    </Layout>
+    </>
   );
 }
 

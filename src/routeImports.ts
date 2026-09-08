@@ -19,6 +19,15 @@ export const routeImports: Record<string, () => Promise<unknown>> = {
   '/vehicular': () => import('./pages/vehicular/VehicularPage'),
   '/vehicular/catalogo': () => import('./pages/vehicular/catalogo/CatalogoVehicularPage'),
   '/vehicular/control-viajes': () => import('./pages/vehicular/control-viajes/ControlViajesPage'),
+  // Páginas de detalle: la URL real siempre lleva un id variable (ej. /operacion/programaciones/ABC123),
+  // así que se registran bajo una clave de "plantilla" (con :id) en vez de la ruta exacta — quien navega
+  // a una de estas páginas debe pasarle esta clave explícitamente a useNavigateWithLoading (ver ese hook).
+  '/operacion/programaciones/:id': () => import('./pages/operacion/programaciones/ProgramacionDetailPage'),
+  '/operacion/remisiones/:id': () => import('./pages/operacion/remisiones/RemisionDetailPage'),
+  '/operacion/consumos/:id': () => import('./pages/operacion/consumos/ConsumoDetailPage'),
+  '/operacion/producto-validado/:id': () => import('./pages/operacion/consumos/ProductoValidadoDetailPage'),
+  '/operacion/comisiones/:id': () => import('./pages/operacion/consumos/ComisionDetailPage'),
+  '/operacion/requisiciones/:id': () => import('./pages/operacion/requisiciones/RequisicionDetailPage'),
 };
 
 export function prefetchRoute(path: string) {

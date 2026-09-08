@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import Layout from '../../../components/layout/Layout';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import { programacionesService } from '../../../services/programaciones.service';
 import { toLocalDateString } from '../../../lib/date.utils';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 
 const getDaysInMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
 const getFirstDayOfMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1).getDay();
@@ -35,7 +34,7 @@ type ViewType = 'mes' | 'semana' | 'dia';
 
 export default function CalendarPage() {
   const { isMobile } = useResponsiveStyles();
-  const navigate = useNavigate();
+  const navigate = useNavigateWithLoading();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState<ViewType>('mes');
   const [programacionesByDate, setProgramacionesByDate] = useState<{ [key: string]: ProgramacionInfo[] }>({});
@@ -43,7 +42,7 @@ export default function CalendarPage() {
 
   const { data: allProgramaciones } = useQuery({
     queryKey: ['programaciones-calendar'],
-    queryFn: () => programacionesService.findAll({ limit: 10000 }),
+    queryFn: () => programacionesService.findAllForCalendar(),
   });
 
   const { data: sedeOptions = [] } = useQuery({
@@ -52,9 +51,9 @@ export default function CalendarPage() {
   });
 
   useEffect(() => {
-    if (allProgramaciones?.data) {
+    if (allProgramaciones) {
       const grouped: { [key: string]: ProgramacionInfo[] } = {};
-      allProgramaciones.data.forEach(p => {
+      allProgramaciones.forEach(p => {
         if (p.fechaQx) {
           const key = p.fechaQx.split('T')[0];
           if (!grouped[key]) grouped[key] = [];
@@ -63,7 +62,7 @@ export default function CalendarPage() {
             medicos: p.medicos || [],
             fechaQx: p.fechaQx,
             horaQx: p.horaQx ?? undefined,
-            sede: p.sede || (p as any).sedeId,
+            sede: p.sede ?? undefined,
           });
         }
       });
@@ -124,7 +123,7 @@ export default function CalendarPage() {
                   return (
                     <div
                       key={prog.id}
-                      onClick={() => navigate(`/operacion/programaciones/${prog.id}`)}
+                      onClick={() => navigate(`/operacion/programaciones/${prog.id}`, '/operacion/programaciones/:id')}
                       style={{ ...styles.dayProgItem, borderLeft: `4px solid ${color}` }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
@@ -181,7 +180,7 @@ export default function CalendarPage() {
                     return (
                       <div
                         key={prog.id}
-                        onClick={() => navigate(`/operacion/programaciones/${prog.id}`)}
+                        onClick={() => navigate(`/operacion/programaciones/${prog.id}`, '/operacion/programaciones/:id')}
                         style={{ ...styles.eventChip, backgroundColor: `${color}18`, zIndex: hoveredEventId === prog.id ? 30 : 1 }}
                         onMouseEnter={e => { setHoveredEventId(prog.id); e.currentTarget.style.filter = 'brightness(0.97)'; }}
                         onMouseLeave={e => { setHoveredEventId(null); e.currentTarget.style.filter = 'none'; }}
@@ -235,7 +234,7 @@ export default function CalendarPage() {
                   return (
                     <div
                       key={prog.id}
-                      onClick={() => navigate(`/operacion/programaciones/${prog.id}`)}
+                      onClick={() => navigate(`/operacion/programaciones/${prog.id}`, '/operacion/programaciones/:id')}
                       style={{ ...styles.eventChip, backgroundColor: `${color}18`, zIndex: hoveredEventId === prog.id ? 30 : 1 }}
                       onMouseEnter={e => { setHoveredEventId(prog.id); e.currentTarget.style.filter = 'brightness(0.97)'; }}
                       onMouseLeave={e => { setHoveredEventId(null); e.currentTarget.style.filter = 'none'; }}
@@ -277,7 +276,7 @@ export default function CalendarPage() {
               return (
                 <div
                   key={prog.id}
-                  onClick={() => navigate(`/operacion/programaciones/${prog.id}`)}
+                  onClick={() => navigate(`/operacion/programaciones/${prog.id}`, '/operacion/programaciones/:id')}
                   style={{ ...styles.dayProgItem, borderLeft: `4px solid ${color}` }}
                   onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'; }}
                   onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.05)'; }}
@@ -300,7 +299,6 @@ export default function CalendarPage() {
   };
 
   return (
-    <Layout>
       <div style={styles.pageWrapper}>
         <button
           type="button"
@@ -355,7 +353,6 @@ export default function CalendarPage() {
           {view === 'dia' && renderDia()}
         </div>
       </div>
-    </Layout>
   );
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import {
   Home,
   Wrench,
@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { esSuperAdmin } from '../../lib/auth.utils';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
+import { useNavigateWithLoading } from '../../hooks/useNavigateWithLoading';
 import { prefetchRoute } from '../../routeImports';
 
 const operacionSubmodules = [
@@ -72,7 +73,7 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
   const { isMobile } = useResponsiveStyles();
   const [expanded, setExpanded] = useState(false);
   const [openModule, setOpenModule] = useState<string | null>(null);
-  const navigate = useNavigate();
+  const navigateTo = useNavigateWithLoading();
   const location = useLocation();
 
   // Administración solo se ofrece a superadmins — el backend ya la rechaza para los demás, pero
@@ -99,13 +100,13 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
     if (hasSubmodules && showLabels) {
       setOpenModule(prev => (prev === path ? null : path));
     } else {
-      navigate(path);
+      navigateTo(path);
       if (isMobile) onCloseMobile?.();
     }
   };
 
   const handleSubItemClick = (subPath: string) => {
-    navigate(subPath);
+    navigateTo(subPath);
     if (isMobile) onCloseMobile?.();
   };
 

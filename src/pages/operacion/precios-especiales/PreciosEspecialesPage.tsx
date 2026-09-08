@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { Search, X, Plus } from 'lucide-react';
-import Layout from '../../../components/layout/Layout';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import SuccessToast from '../../../components/SuccessToast';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
@@ -542,7 +541,7 @@ export default function PreciosEspecialesPage() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  const query = { page, limit: 300, search: search || undefined };
+  const query = { page, limit: 200, search: search || undefined };
 
   const { data, isLoading } = useQuery({
     queryKey: ['precios-especiales', query],
@@ -553,7 +552,7 @@ export default function PreciosEspecialesPage() {
   const items = data?.data ?? [];
 
   return (
-    <Layout>
+    <>
       <div style={styles.pageWrapper}>
         <button
           type="button"
@@ -656,7 +655,7 @@ export default function PreciosEspecialesPage() {
         />
       )}
       <SuccessToast show={!!toastMessage} message={toastMessage ?? ''} onClose={() => setToastMessage(null)} />
-    </Layout>
+    </>
   );
 }
 

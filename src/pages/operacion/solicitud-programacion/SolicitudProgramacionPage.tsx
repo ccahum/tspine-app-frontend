@@ -1,13 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { Plus, X, ThumbsUp, ThumbsDown, CheckCircle, Circle, AlertTriangle } from 'lucide-react';
-import Layout from '../../../components/layout/Layout';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import SuccessToast from '../../../components/SuccessToast';
 import { solicitudProgramacionService, type SolicitudProgramacionItem } from '../../../services/solicitudProgramacion.service';
 import { programacionesService, type SedeOption, type HospitalOption, type MedicoOption } from '../../../services/programaciones.service';
 import { getTodayMexico, getNowMexicoTime } from '../../../lib/date.utils';
+import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 
 type TabKey = 'PENDIENTE' | 'APROBADA' | 'RECHAZADA' | 'TODO';
 
@@ -103,7 +103,7 @@ function RechazarModal({ item, onCancel, onConfirm, submitting }: {
 const TAB_KEYS: TabKey[] = ['PENDIENTE', 'APROBADA', 'RECHAZADA', 'TODO'];
 
 export default function SolicitudProgramacionPage() {
-  const navigate = useNavigate();
+  const navigate = useNavigateWithLoading();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState<TabKey>('PENDIENTE');
@@ -275,7 +275,7 @@ export default function SolicitudProgramacionPage() {
   };
 
   return (
-    <Layout>
+    <>
       <div style={styles.pageWrapper}>
         <button
           type="button"
@@ -403,7 +403,7 @@ export default function SolicitudProgramacionPage() {
                   <button
                     type="button"
                     style={styles.linkProgramacion}
-                    onClick={() => navigate(`/operacion/programaciones/${item.programacionId}`)}
+                    onClick={() => navigate(`/operacion/programaciones/${item.programacionId}`, '/operacion/programaciones/:id')}
                   >
                     Ver programación creada →
                   </button>
@@ -667,7 +667,7 @@ export default function SolicitudProgramacionPage() {
       )}
 
       <SuccessToast show={!!toastMessage} message={toastMessage ?? ''} onClose={() => setToastMessage(null)} />
-    </Layout>
+    </>
   );
 }
 

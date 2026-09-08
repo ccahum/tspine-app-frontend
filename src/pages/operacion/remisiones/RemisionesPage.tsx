@@ -1,14 +1,13 @@
 import { useState, useRef, useEffect, memo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Search, ChevronDown, Check, Plus, X } from 'lucide-react';
-import Layout from '../../../components/layout/Layout';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import DateRangeFilter from '../../../components/filters/DateRangeFilter';
 import { remisionesService, ESTADOS_REMISION, type RemisionListItem, type RemisionListResponse } from '../../../services/remisiones.service';
 import { programacionesService, type ProgramacionItem } from '../../../services/programaciones.service';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 
 const formatDate = (dateString: string | null): string => {
   if (!dateString) return '-';
@@ -95,10 +94,10 @@ function EstadoFilter({ selected, onChange }: { selected: string | undefined; on
   );
 }
 
-const RemisionRow = memo(({ item, index, navigate }: { item: RemisionListItem; index: number; navigate: (path: string) => void }) => (
+const RemisionRow = memo(({ item, index, navigate }: { item: RemisionListItem; index: number; navigate: (path: string, routeKey?: string) => void }) => (
   <tr
     style={styles.tr}
-    onClick={() => navigate(`/operacion/remisiones/${item.id}`)}
+    onClick={() => navigate(`/operacion/remisiones/${item.id}`, '/operacion/remisiones/:id')}
     onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f3f4f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)'; }}
     onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; e.currentTarget.style.boxShadow = 'none'; }}
   >
@@ -109,7 +108,7 @@ const RemisionRow = memo(({ item, index, navigate }: { item: RemisionListItem; i
     <td style={styles.td}>
       <span
         style={{ color: item.programacionId ? '#3f6510' : '#9ca3af', fontWeight: 600, cursor: item.programacionId ? 'pointer' : 'default' }}
-        onClick={e => { if (item.programacionId) { e.stopPropagation(); navigate(`/operacion/programaciones/${item.programacionId}`); } }}
+        onClick={e => { if (item.programacionId) { e.stopPropagation(); navigate(`/operacion/programaciones/${item.programacionId}`, '/operacion/programaciones/:id'); } }}
       >
         {item.numProgram ?? item.programacionId ?? '-'}
       </span>
@@ -134,8 +133,8 @@ const RemisionRow = memo(({ item, index, navigate }: { item: RemisionListItem; i
   </tr>
 ));
 
-const RemisionCard = memo(({ item, navigate }: { item: RemisionListItem; navigate: (path: string) => void }) => (
-  <div style={styles.mobileCard} onClick={() => navigate(`/operacion/remisiones/${item.id}`)}>
+const RemisionCard = memo(({ item, navigate }: { item: RemisionListItem; navigate: (path: string, routeKey?: string) => void }) => (
+  <div style={styles.mobileCard} onClick={() => navigate(`/operacion/remisiones/${item.id}`, '/operacion/remisiones/:id')}>
     <div style={styles.mobileCardTopRow}>
       <span style={styles.mobileCardId}>{item.numRemision ?? item.id}</span>
       <EstadoBadge estado={item.estado} />
@@ -252,7 +251,7 @@ function ProgramacionPickerModal({ onClose, onSelect }: { onClose: () => void; o
 
 export default function RemisionesPage() {
   const { isMobile } = useResponsiveStyles();
-  const navigate = useNavigate();
+  const navigate = useNavigateWithLoading();
   const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -280,7 +279,7 @@ export default function RemisionesPage() {
 
   const query = {
     page,
-    limit: 300,
+    limit: 200,
     search: search || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
@@ -302,7 +301,7 @@ export default function RemisionesPage() {
   const items = data?.data ?? [];
 
   return (
-    <Layout>
+    <>
       <div style={styles.pageWrapper}>
         <button
           type="button"
@@ -432,10 +431,10 @@ export default function RemisionesPage() {
       {showPickerModal && (
         <ProgramacionPickerModal
           onClose={() => setShowPickerModal(false)}
-          onSelect={id => navigate(`/operacion/programaciones/${id}?agregarRemision=1`)}
+          onSelect={id => navigate(`/operacion/programaciones/${id}?agregarRemision=1`, '/operacion/programaciones/:id')}
         />
       )}
-    </Layout>
+    </>
   );
 }
 

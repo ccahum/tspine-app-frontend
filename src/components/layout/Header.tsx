@@ -55,8 +55,8 @@ export default function Header({ onMenuClick }: HeaderProps) {
   const notifRef = useRef<HTMLDivElement>(null);
 
   // Solo se muestra justo después de iniciar sesión (LoginPage deja la marca) — se borra apenas
-  // se lee, así no reaparece si el usuario navega entre páginas (el Header se vuelve a montar
-  // en cada una, porque cada página envuelve su contenido en <Layout> por su cuenta).
+  // se lee. El Header es parte del shell fijo (ver App.tsx/Layout.tsx) y monta una sola vez por
+  // sesión, así que este efecto corre una única vez, no en cada navegación.
   useEffect(() => {
     if (sessionStorage.getItem('tspine_mostrar_bienvenida')) {
       sessionStorage.removeItem('tspine_mostrar_bienvenida');

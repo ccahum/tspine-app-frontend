@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Loader, X } from 'lucide-react';
-import Layout from '../../../components/layout/Layout';
 import { remisionesService, type DetTecnicoDetalle, type ProgramacionRealizadaItem, type EjecucionPagoItem } from '../../../services/remisiones.service';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 
 const formatMoney = (value: any): string => {
   if (value === null || value === undefined) return '-';
@@ -46,7 +46,7 @@ const formatDate = (dateString: string | null): string => {
 export default function ComisionDetailPage() {
   const { isMobile } = useResponsiveStyles();
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
+  const navigate = useNavigateWithLoading();
   const [selectedPago, setSelectedPago] = useState<ProgramacionRealizadaItem | null>(null);
   const [hoveredPagoId, setHoveredPagoId] = useState<string | null>(null);
   const [hoveredEjecucionId, setHoveredEjecucionId] = useState<string | null>(null);
@@ -68,12 +68,12 @@ export default function ComisionDetailPage() {
     enabled: !!id,
   });
 
-  if (isLoading) return <Layout><div style={{ padding: '2rem', textAlign: 'center' }}><Loader className="spinner" size={32} /></div></Layout>;
-  if (error) return <Layout><div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>Error al cargar: {(error as any)?.message || 'Error desconocido'}</div></Layout>;
-  if (!dt) return <Layout><div style={{ padding: '2rem', textAlign: 'center', color: '#999' }}>Comisión no encontrada</div></Layout>;
+  if (isLoading) return <div style={{ padding: '2rem', textAlign: 'center' }}><Loader className="spinner" size={32} /></div>;
+  if (error) return <div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>Error al cargar: {(error as any)?.message || 'Error desconocido'}</div>;
+  if (!dt) return <div style={{ padding: '2rem', textAlign: 'center', color: '#999' }}>Comisión no encontrada</div>;
 
   return (
-    <Layout>
+    <>
       <div style={styles.container}>
         <div style={styles.header}>
           <button onClick={() => navigate(-1)} style={styles.backBtn}>
@@ -95,7 +95,7 @@ export default function ComisionDetailPage() {
               <span style={styles.label}>N° Programación</span>
               <span
                 style={{ ...styles.value, textAlign: 'left' as const, color: '#db2777', cursor: dt.programacionId ? 'pointer' : 'default' }}
-                onClick={() => dt.programacionId && navigate(`/operacion/programaciones/${dt.programacionId}`)}
+                onClick={() => dt.programacionId && navigate(`/operacion/programaciones/${dt.programacionId}`, '/operacion/programaciones/:id')}
               >
                 {dt.numProgram || '-'}
               </span>
@@ -283,7 +283,7 @@ export default function ComisionDetailPage() {
           </div>
         </div>
       )}
-    </Layout>
+    </>
   );
 }
 

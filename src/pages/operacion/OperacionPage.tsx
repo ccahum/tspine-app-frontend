@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Wrench, FileText, Calendar, ClipboardCheck, ShieldCheck,
   CalendarDays, Tag, Tags, CalendarPlus,
 } from 'lucide-react';
-import Layout from '../../components/layout/Layout';
 import { MaterialIcon } from '../../components/icons/MaterialIcon';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
+import { useNavigateWithLoading } from '../../hooks/useNavigateWithLoading';
 
 const ACCENT = '#4a7c59';
 
@@ -22,7 +21,7 @@ const submodules = [
 ];
 
 function SubmoduleCard({ icon: Icon, label, description, path }: typeof submodules[0]) {
-  const navigate = useNavigate();
+  const navigate = useNavigateWithLoading();
   const [hovered, setHovered] = useState(false);
 
   return (
@@ -45,11 +44,10 @@ function SubmoduleCard({ icon: Icon, label, description, path }: typeof submodul
 }
 
 export default function OperacionPage() {
-  const navigate = useNavigate();
+  const navigate = useNavigateWithLoading();
   const { isMobile } = useResponsiveStyles();
 
   return (
-    <Layout>
       <div style={{ ...styles.container, paddingLeft: isMobile ? '1rem' : '2rem', paddingRight: isMobile ? '1rem' : '2rem' }}>
         <button
           type="button"
@@ -78,7 +76,6 @@ export default function OperacionPage() {
           ))}
         </div>
       </div>
-    </Layout>
   );
 }
 

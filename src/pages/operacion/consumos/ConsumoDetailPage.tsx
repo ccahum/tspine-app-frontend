@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Loader, X } from 'lucide-react';
-import Layout from '../../../components/layout/Layout';
 import { remisionesService, type ConsumoDetalle, type ConsumoValidacionLote, type ConsumoProductoValidadoItem } from '../../../services/remisiones.service';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 
 const formatMoney = (value: any): string => {
   if (value === null || value === undefined) return '-';
@@ -48,7 +48,7 @@ const formatDateTime = (dateString: string | null): string => {
 export default function ConsumoDetailPage() {
   const { isMobile } = useResponsiveStyles();
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
+  const navigate = useNavigateWithLoading();
   const [selectedLote, setSelectedLote] = useState<ConsumoValidacionLote | null>(null);
   const [selectedPv, setSelectedPv] = useState<ConsumoProductoValidadoItem | null>(null);
   const [hoveredPvId, setHoveredPvId] = useState<string | null>(null);
@@ -67,14 +67,14 @@ export default function ConsumoDetailPage() {
     enabled: !!id,
   });
 
-  if (isLoading) return <Layout><div style={{ padding: '2rem', textAlign: 'center' }}><Loader className="spinner" size={32} /></div></Layout>;
-  if (error) return <Layout><div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>Error al cargar: {(error as any)?.message || 'Error desconocido'}</div></Layout>;
-  if (!consumo) return <Layout><div style={{ padding: '2rem', textAlign: 'center', color: '#999' }}>Consumo no encontrado</div></Layout>;
+  if (isLoading) return <div style={{ padding: '2rem', textAlign: 'center' }}><Loader className="spinner" size={32} /></div>;
+  if (error) return <div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>Error al cargar: {(error as any)?.message || 'Error desconocido'}</div>;
+  if (!consumo) return <div style={{ padding: '2rem', textAlign: 'center', color: '#999' }}>Consumo no encontrado</div>;
 
   const lotesValidados = consumo.productoValidado.flatMap(pv => pv.lotes);
 
   return (
-    <Layout>
+    <>
       <div style={styles.container}>
         <div style={styles.header}>
           <button onClick={() => navigate(-1)} style={styles.backBtn}>
@@ -94,7 +94,7 @@ export default function ConsumoDetailPage() {
               <span style={styles.label}>N° Remisión</span>
               <span
                 style={{ ...styles.value, textAlign: 'left' as const, color: '#db2777', cursor: consumo.remisionId ? 'pointer' : 'default' }}
-                onClick={() => consumo.remisionId && navigate(`/operacion/remisiones/${consumo.remisionId}`)}
+                onClick={() => consumo.remisionId && navigate(`/operacion/remisiones/${consumo.remisionId}`, '/operacion/remisiones/:id')}
               >
                 {consumo.numRemision || consumo.remisionId || '-'}
               </span>
@@ -208,7 +208,7 @@ export default function ConsumoDetailPage() {
                 <span style={styles.label}>N° Remisión</span>
                 <span
                   style={{ ...styles.value, color: '#db2777', cursor: consumo.remisionId ? 'pointer' : 'default' }}
-                  onClick={() => consumo.remisionId && navigate(`/operacion/remisiones/${consumo.remisionId}`)}
+                  onClick={() => consumo.remisionId && navigate(`/operacion/remisiones/${consumo.remisionId}`, '/operacion/remisiones/:id')}
                 >
                   {consumo.numRemision || consumo.remisionId || '-'}
                 </span>
@@ -260,7 +260,7 @@ export default function ConsumoDetailPage() {
           </div>
         </div>
       )}
-    </Layout>
+    </>
   );
 }
 

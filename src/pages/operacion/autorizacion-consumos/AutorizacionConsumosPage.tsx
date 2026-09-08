@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ThumbsUp, ThumbsDown, ChevronRight } from 'lucide-react';
-import Layout from '../../../components/layout/Layout';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import SuccessToast from '../../../components/SuccessToast';
+import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import {
   autorizacionConsumosService,
   type EstadoAutorizacion,
@@ -77,7 +76,7 @@ function RechazarModal({ item, onCancel, onConfirm, submitting }: {
 }
 
 export default function AutorizacionConsumosPage() {
-  const navigate = useNavigate();
+  const navigate = useNavigateWithLoading();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<TabKey>('PENDIENTE');
   const [page, setPage] = useState(1);
@@ -130,7 +129,7 @@ export default function AutorizacionConsumosPage() {
   ];
 
   return (
-    <Layout>
+    <>
       <div style={styles.pageWrapper}>
         <button
           type="button"
@@ -174,7 +173,7 @@ export default function AutorizacionConsumosPage() {
                 <div style={styles.grupoHeader}>
                   <span
                     style={{ ...styles.grupoFolio, cursor: grupo.remisionId ? 'pointer' : 'default' }}
-                    onClick={() => grupo.remisionId && navigate(`/operacion/remisiones/${grupo.remisionId}`)}
+                    onClick={() => grupo.remisionId && navigate(`/operacion/remisiones/${grupo.remisionId}`, '/operacion/remisiones/:id')}
                   >
                     {grupo.numRemision ?? 'Sin remisión'}
                   </span>
@@ -229,32 +228,32 @@ export default function AutorizacionConsumosPage() {
                     </div>
                     <div
                       style={styles.itemCell}
-                      onClick={() => navigate(`/operacion/producto-validado/${item.id}`)}
+                      onClick={() => navigate(`/operacion/producto-validado/${item.id}`, '/operacion/producto-validado/:id')}
                     >
                       {item.sedeConsumo ?? '-'}
                     </div>
                     <div
                       style={styles.itemCell}
-                      onClick={() => navigate(`/operacion/producto-validado/${item.id}`)}
+                      onClick={() => navigate(`/operacion/producto-validado/${item.id}`, '/operacion/producto-validado/:id')}
                     >
                       {item.sedeUsuario ?? '-'}
                     </div>
                     <div
                       style={{ ...styles.itemCell, textAlign: 'right' as const }}
-                      onClick={() => navigate(`/operacion/producto-validado/${item.id}`)}
+                      onClick={() => navigate(`/operacion/producto-validado/${item.id}`, '/operacion/producto-validado/:id')}
                     >
                       {item.canVal}
                     </div>
                     <div
                       style={{ ...styles.itemCell, ...styles.itemCellTruncate }}
                       title={item.proVal ?? undefined}
-                      onClick={() => navigate(`/operacion/producto-validado/${item.id}`)}
+                      onClick={() => navigate(`/operacion/producto-validado/${item.id}`, '/operacion/producto-validado/:id')}
                     >
                       {item.proVal ?? '-'}
                     </div>
                     <div
                       style={styles.chevronCell}
-                      onClick={() => navigate(`/operacion/producto-validado/${item.id}`)}
+                      onClick={() => navigate(`/operacion/producto-validado/${item.id}`, '/operacion/producto-validado/:id')}
                     >
                       <ChevronRight size={16} color="#9ca3af" />
                     </div>
@@ -296,7 +295,7 @@ export default function AutorizacionConsumosPage() {
       )}
 
       <SuccessToast show={!!toastMessage} message={toastMessage ?? ''} onClose={() => setToastMessage(null)} />
-    </Layout>
+    </>
   );
 }
 

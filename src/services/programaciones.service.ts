@@ -19,6 +19,14 @@ export interface ProgramacionItem {
   alertaConsumos: boolean;
 }
 
+export interface ProgramacionCalendarItem {
+  id: string;
+  fechaQx: string | null;
+  horaQx: string | null;
+  sede: string | null;
+  medicos: string[];
+}
+
 export interface ProgramacionListResponse {
   data: ProgramacionItem[];
   total: number;
@@ -135,6 +143,11 @@ export const programacionesService = {
       Object.entries(query).filter(([, v]) => v !== undefined && v !== ''),
     );
     const res = await api.get<ProgramacionListResponse>('/operacion/programaciones', { params });
+    return res.data;
+  },
+
+  findAllForCalendar: async (): Promise<ProgramacionCalendarItem[]> => {
+    const res = await api.get<ProgramacionCalendarItem[]>('/operacion/programaciones/calendario');
     return res.data;
   },
 

@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { Search, MapPin, X, Plus, Camera, Upload, Car, CheckCircle, Circle } from 'lucide-react';
-import Layout from '../../../components/layout/Layout';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import SuccessToast from '../../../components/SuccessToast';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
@@ -554,7 +553,7 @@ export default function ControlViajesPage() {
   const items = data?.data ?? [];
 
   return (
-    <Layout>
+    <>
       <div style={styles.pageWrapper}>
         <button
           type="button"
@@ -652,7 +651,7 @@ export default function ControlViajesPage() {
         />
       )}
       <SuccessToast show={!!toastMessage} message={toastMessage ?? ''} onClose={() => setToastMessage(null)} />
-    </Layout>
+    </>
   );
 }
 
