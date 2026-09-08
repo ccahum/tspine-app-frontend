@@ -37,6 +37,7 @@ export interface CotizacionDetail extends CotizacionListItem {
   dirigidoA: string | null;
   hospitalId: string | null;
   empresaId: string | null;
+  sedeId: string | null;
   cubrimientoId: string | null;
   cubrimiento: string | null;
   responsableEconomicoId: string | null;
@@ -76,6 +77,11 @@ export interface PaqueteOption {
   nombre: string | null;
 }
 
+export interface SedeOption {
+  id: string;
+  nombre: string;
+}
+
 export interface UpdateCotizacionPayload {
   fecha?: string;
   dirigidoA?: string;
@@ -85,6 +91,7 @@ export interface UpdateCotizacionPayload {
   cubrimientoId?: string;
   empresaId?: string;
   responsableEconomicoId?: string;
+  sedeId?: string;
   numProveedor?: string;
   tarifaId?: string;
   tiempoEntrega?: string;
@@ -106,6 +113,7 @@ export interface CreateCotizacionPayload {
   cubrimientoId: string;
   empresaId: string;
   responsableEconomicoId: string;
+  sedeId: string;
   numProveedor?: string;
   tarifaId?: string;
   tiempoEntrega?: string;
@@ -121,7 +129,12 @@ export interface ProductoOption {
   id: string;
   nombre: string | null;
   referencia: string | null;
+  sistema: string | null;
   precioSugerido: number | null;
+}
+
+export interface PaqueteConsumoOption extends ProductoOption {
+  cantidad: number;
 }
 
 export interface CreateDetCotizaPayload {
@@ -165,8 +178,8 @@ export const cotizacionesService = {
   createCotizacion: (payload: CreateCotizacionPayload): Promise<CotizacionDetail> =>
     api.post('/operacion/cotizaciones', payload).then(r => r.data),
 
-  searchProductos: (search?: string, cotizacionId?: string): Promise<ProductoOption[]> =>
-    api.get('/operacion/cotizaciones/productos', { params: { ...(search ? { search } : {}), ...(cotizacionId ? { cotizacionId } : {}) } }).then(r => r.data),
+  searchProductos: (search?: string, cotizacionId?: string, tarifaId?: string): Promise<ProductoOption[]> =>
+    api.get('/operacion/cotizaciones/productos', { params: { ...(search ? { search } : {}), ...(cotizacionId ? { cotizacionId } : {}), ...(tarifaId ? { tarifaId } : {}) } }).then(r => r.data),
 
   createItem: (cotizacionId: string, payload: CreateDetCotizaPayload) =>
     api.post(`/operacion/cotizaciones/${cotizacionId}/items`, payload).then(r => r.data),
@@ -183,14 +196,26 @@ export const cotizacionesService = {
   getTarifas: (): Promise<TarifaOption[]> =>
     api.get('/operacion/cotizaciones/tarifas').then(r => r.data),
 
+  getSedes: (): Promise<SedeOption[]> =>
+    api.get('/operacion/cotizaciones/sedes').then(r => r.data),
+
   getTerceroTarifa: (terceroId: string): Promise<{ tarifaId: string | null; tarifaNombre: string | null }> =>
     api.get(`/operacion/cotizaciones/tercero-tarifa/${terceroId}`).then(r => r.data),
 
   getPaquetes: (): Promise<PaqueteOption[]> =>
     api.get('/operacion/cotizaciones/paquetes').then(r => r.data),
 
+  getPaqueteConsumos: (paqueteId: string, nivel: string, tarifaId?: string): Promise<PaqueteConsumoOption[]> =>
+    api.get(`/operacion/cotizaciones/paquetes/${paqueteId}/consumos`, { params: { nivel, ...(tarifaId ? { tarifaId } : {}) } }).then(r => r.data),
+
+  getPreciosPorProductos: (productoIds: string[], tarifaId: string): Promise<{ productoId: string; precio: number | null }[]> =>
+    api.post('/operacion/cotizaciones/productos/precios', { productoIds, tarifaId }).then(r => r.data),
+
   updateCotizacion: (id: string, payload: UpdateCotizacionPayload): Promise<CotizacionDetail> =>
     api.patch(`/operacion/cotizaciones/${id}`, payload).then(r => r.data),
+
+  recalcularPrecios: (id: string, tarifaId: string): Promise<{ actualizados: number; omitidos: number }> =>
+    api.patch(`/operacion/cotizaciones/${id}/recalcular-precios`, { tarifaId }).then(r => r.data),
 
   deleteCotizacion: (id: string) =>
     api.delete(`/operacion/cotizaciones/${id}`).then(r => r.data),

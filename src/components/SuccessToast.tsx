@@ -51,7 +51,7 @@ export default function SuccessToast({
         position: 'fixed',
         top: '76px',
         left: '50%',
-        zIndex: 10000,
+        zIndex: 10100,
         display: 'flex',
         alignItems: 'center',
         gap: '0.85rem',
