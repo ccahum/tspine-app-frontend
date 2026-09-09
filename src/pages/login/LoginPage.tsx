@@ -25,6 +25,11 @@ function esErrorBloqueoIntentos(err: unknown): boolean {
   return typeof mensaje === 'string' && mensaje.includes('Demasiados intentos fallidos');
 }
 
+// El usuario de login es un nombre corto (ej. "ccahum"), no un correo ni texto libre — se filtran
+// caracteres especiales al escribir en vez de solo validar al enviar, para que quede claro de
+// inmediato qué se acepta.
+const limpiarUsuario = (value: string): string => value.replace(/[^a-zA-Z0-9._-]/g, '');
+
 // Un cuadro por dígito, con auto-focus al primero y avance/retroceso automático entre casillas
 // para que el usuario no tenga que hacer click — solo escribir.
 function CodigoDigitsInput({
@@ -295,7 +300,7 @@ export default function LoginPage() {
                 <input
                   type="text"
                   value={usuario}
-                  onChange={(e) => setUsuario(e.target.value)}
+                  onChange={(e) => setUsuario(limpiarUsuario(e.target.value))}
                   style={styles.input}
                   placeholder="usuario"
                   autoFocus
@@ -369,7 +374,7 @@ export default function LoginPage() {
                     <input
                       type="text"
                       value={olvidePasswordUsuario}
-                      onChange={(e) => setOlvidePasswordUsuario(e.target.value)}
+                      onChange={(e) => setOlvidePasswordUsuario(limpiarUsuario(e.target.value))}
                       style={styles.input}
                       placeholder="usuario"
                       autoFocus

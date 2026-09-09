@@ -492,12 +492,34 @@ function cotizacionPdfFileName(data: CotizacionDetail): string {
   return `Cotizacion-${data.numCotizacion || data.id}.pdf`;
 }
 
-async function generarPdfCotizacion(data: CotizacionDetail) {
+async function generarPdfCotizacion(data: CotizacionDetail, forceDownload = false) {
   const doc = await buildCotizacionPdf(data);
-  doc.save(cotizacionPdfFileName(data));
+  const fileName = cotizacionPdfFileName(data);
+
+  if (forceDownload) {
+    // En móvil, doc.save() (un <a download> con blob "application/pdf") suele terminar abriendo
+    // el visor de PDF integrado del navegador en vez de descargar — cambiar el tipo del blob a uno
+    // genérico, sin visor asociado, hace que el navegador no tenga más opción que descargarlo.
+    const blob = doc.output('blob');
+    const downloadBlob = new Blob([blob], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(downloadBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    return;
+  }
+
+  doc.save(fileName);
 }
 
-async function enviarCotizacionPorWhatsapp(data: CotizacionDetail) {
+// true si de verdad se compartió/abrió WhatsApp, false si el usuario canceló el cuadro nativo de
+// compartir — el llamador usa esto para no mostrar un mensaje de éxito cuando en realidad no pasó
+// nada.
+async function enviarCotizacionPorWhatsapp(data: CotizacionDetail): Promise<boolean> {
   const doc = await buildCotizacionPdf(data);
   const fileName = cotizacionPdfFileName(data);
   const { total } = computeTotales(data.items, data.tieneDcto, data.porcentajeDcto, data.impuestos);
@@ -511,9 +533,9 @@ async function enviarCotizacionPorWhatsapp(data: CotizacionDetail) {
     if (nav.canShare({ files: [file] })) {
       try {
         await nav.share({ files: [file], title: fileName, text: mensaje });
-        return;
+        return true;
       } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') return;
+        if (err instanceof Error && err.name === 'AbortError') return false;
         // Si falla por otro motivo, se sigue con el flujo de respaldo abajo.
       }
     }
@@ -523,6 +545,7 @@ async function enviarCotizacionPorWhatsapp(data: CotizacionDetail) {
   // Se descarga el PDF y se abre WhatsApp con el mensaje, para que el usuario adjunte el PDF manualmente.
   doc.save(fileName);
   window.open(`https://wa.me/?text=${encodeURIComponent(mensaje)}`, '_blank');
+  return true;
 }
 
 const CotizacionRow = memo(({ item, index, onSelect }: { item: CotizacionListItem; index: number; onSelect: (id: string) => void }) => (
@@ -2738,7 +2761,7 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
     if (!data) return;
     setGeneratingPdf(true);
     try {
-      await generarPdfCotizacion(data);
+      await generarPdfCotizacion(data, isMobile);
     } catch (err) {
       alert('No se pudo generar el PDF. Intenta de nuevo.');
       console.error(err);
@@ -2751,7 +2774,8 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
     if (!data) return;
     setSendingWhatsapp(true);
     try {
-      await enviarCotizacionPorWhatsapp(data);
+      const enviado = await enviarCotizacionPorWhatsapp(data);
+      if (enviado) onNotify('Cotización enviada por WhatsApp');
     } catch (err) {
       alert('No se pudo enviar por WhatsApp. Intenta de nuevo.');
       console.error(err);
