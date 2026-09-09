@@ -1118,20 +1118,21 @@ export default function ProgramacionDetailPage() {
           Volver
         </button>
         <div style={styles.headerCard}>
-        <div style={styles.header}>
+        <div style={{ ...styles.header, ...(isMobile ? { flexWrap: 'wrap' as const } : {}) }}>
           <span style={styles.titleIconBadge}>
             <MaterialIcon name="event_note" size={30} color="#4d7a13" />
           </span>
-          <div style={styles.titleGroup}>
+          <div style={{ ...styles.titleGroup, ...(isMobile ? { gap: '0.1rem' } : {}) }}>
+            <span style={styles.titleLabel}>Programación</span>
             <div style={styles.titleRow}>
-              <h1 style={styles.title}>{programacion.hospital?.nombre || 'Programación'}</h1>
+              <h1 style={{ ...styles.title, ...(isMobile ? { fontSize: '1.15rem' } : {}) }}>{programacion.hospital?.nombre || 'Programación'}</h1>
             </div>
-            <div style={styles.breadcrumbRow}>
+            <div style={{ ...styles.breadcrumbRow, ...(isMobile ? { fontSize: '0.8rem' } : {}) }}>
               <span style={styles.breadcrumbId}>{programacion.id}</span>
             </div>
           </div>
 
-          <div style={styles.headerActions}>
+          <div style={{ ...styles.headerActions, ...(isMobile ? { flexWrap: 'wrap' as const, width: '100%' } : {}) }}>
             <input
               ref={whatsappFileInputRef}
               type="file"
@@ -1141,7 +1142,7 @@ export default function ProgramacionDetailPage() {
             />
             <button
               className="btn-press header-btn-secondary"
-              style={styles.btnPill}
+              style={{ ...styles.btnPill, ...(isMobile ? { order: 4 } : {}) }}
               onClick={() => setShowWhatsappConfirm(true)}
             >
               <i className="fa-brands fa-whatsapp" style={{ fontSize: 16, color: '#4d7a13' }} />
@@ -1160,6 +1161,7 @@ export default function ProgramacionDetailPage() {
                 ...styles.btnPill,
                 position: 'relative' as const,
                 overflow: 'hidden' as const,
+                ...(isMobile ? { order: 1 } : {}),
                 ...(gmailSending ? { pointerEvents: 'none' as const } : {}),
               }}
               onClick={() => setShowGmailConfirm(true)}
@@ -1183,9 +1185,9 @@ export default function ProgramacionDetailPage() {
               </span>
             </button>
 
-            <span style={styles.headerDivider} />
+            <span style={{ ...styles.headerDivider, ...(isMobile ? { order: 2 } : {}) }} />
 
-            <div style={{ position: 'relative' as const }} ref={agregarMenuRef}>
+            <div style={{ position: 'relative' as const, ...(isMobile ? { order: 3 } : {}) }} ref={agregarMenuRef}>
               <button
                 className="btn-press header-btn-primary"
                 style={styles.btnPillPrimary}
@@ -1229,7 +1231,7 @@ export default function ProgramacionDetailPage() {
               )}
             </div>
 
-            <div style={{ position: 'relative' as const }} ref={moreMenuRef}>
+            <div style={{ position: 'relative' as const, ...(isMobile ? { order: 5 } : {}) }} ref={moreMenuRef}>
               <button
                 className="btn-press header-btn-secondary"
                 style={styles.iconMenuBtn}
@@ -1318,7 +1320,7 @@ export default function ProgramacionDetailPage() {
           </div>
           <div style={styles.infoBarItem}>
             <span style={styles.infoBarLabel}>Estado</span>
-            <span style={styles.infoBarBadges}>
+            <span style={{ ...styles.infoBarBadges, ...(isMobile ? { display: 'grid' as const, gridTemplateColumns: 'repeat(2, 1fr)' } : {}) }}>
               {PROGRAMACION_FLAGS.filter(f => programacion[f.key]).length === 0 ? (
                 <span style={styles.infoBarValue}>-</span>
               ) : (
@@ -1333,7 +1335,7 @@ export default function ProgramacionDetailPage() {
           </div>
         </div>
 
-        <div style={styles.mainTabBar}>
+        <div style={{ ...styles.mainTabBar, ...(isMobile ? { overflowX: 'auto' as const, WebkitOverflowScrolling: 'touch' as const } : {}) }}>
           {mainTabItems.map(({ key, label, count }) => {
             const active = mainTab === key;
             return (
@@ -3549,7 +3551,7 @@ export default function ProgramacionDetailPage() {
 const styles: Record<string, React.CSSProperties> = {
   container: { padding: '0.05rem 1.5rem 1.5rem', maxWidth: '1400px', margin: '0 auto' },
   backLink: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem', padding: '0.25rem 0.1rem', border: 'none', background: 'transparent', color: '#6b7280', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, transition: 'color 0.15s ease' },
-  headerCard: { backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', padding: '1.25rem 1.5rem 0', marginBottom: '2rem', overflow: 'hidden' },
+  headerCard: { backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', padding: '1.25rem 1.5rem 0', marginBottom: '2rem' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1.5rem' },
   titleGroup: { flex: 1, display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', overflow: 'hidden' },
   titleLabel: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
@@ -3561,7 +3563,7 @@ const styles: Record<string, React.CSSProperties> = {
   statusPillAbierta: { backgroundColor: '#e9f2d8', color: '#3f6510', borderColor: '#dbe8c2' },
   statusPillCerrada: { backgroundColor: '#f4f4ee', color: '#6b6b60', borderColor: '#e9ece0' },
   statusDot: { width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0 },
-  breadcrumbRow: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem', color: '#9a9a90', marginTop: '0.25rem' },
+  breadcrumbRow: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem', color: '#9a9a90' },
   breadcrumbId: { fontWeight: 500, color: '#4d7a13' },
   headerActions: { display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 },
   btnPill: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.1rem', border: '1px solid #e5e7eb', borderRadius: '12px', color: '#33342a', fontWeight: 600, fontSize: '0.84375rem', cursor: 'pointer', whiteSpace: 'nowrap' as const, flexShrink: 0 },
@@ -3582,7 +3584,7 @@ const styles: Record<string, React.CSSProperties> = {
   estadoFlagBadge: { display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.2rem 0.45rem', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap' as const },
   infoBarValueMono: { fontSize: '0.9375rem', fontWeight: 700, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   mainTabBar: { display: 'flex', gap: '0.25rem', borderBottom: '1px solid #eeeee6' },
-  mainTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.75rem 1rem', border: 'none', background: 'transparent', fontSize: '0.84375rem', fontWeight: 600, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const },
+  mainTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.75rem 1rem', border: 'none', background: 'transparent', fontSize: '0.84375rem', fontWeight: 600, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, whiteSpace: 'nowrap' as const, flexShrink: 0 },
   mainTabBtnActive: { color: '#4d7a13', borderBottomColor: '#4d7a13' },
   mainTabBtnInactive: { color: '#6b7280', borderBottomColor: 'transparent' },
   mainTabBadge: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: '1.3rem', height: '1.3rem', padding: '0 0.4rem', borderRadius: '999px', backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '0.7rem', fontWeight: 700, lineHeight: 1 },

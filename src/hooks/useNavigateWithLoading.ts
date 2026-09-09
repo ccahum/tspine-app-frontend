@@ -36,13 +36,34 @@ export function useNavigateWithLoading() {
     }
     const loadPromise = routeImports[routeKey ?? path]?.();
     if (loadPromise && loading) {
-      loading.start();
-      loadPromise.finally(() => loading.end());
-      // Si start() y navigate() (que hace que el Outlet "suspenda" esperando el chunk) se
-      // disparan en el mismo tick, React agrupa ambos cambios y no pinta nada hasta que la carga
-      // termina. setTimeout corre después de que el navegador ya pintó el frame con el loader,
-      // garantizando que se vea antes de disparar la navegación real.
-      setTimeout(() => navigate(path), 50);
+      // El caso común es que el chunk YA esté en caché (prefetch por hover, o porque ya visitaste
+      // esa página antes — "Volver" casi siempre cae acá). Ahí loadPromise resuelve casi al
+      // instante, y aunque antes se garantizaba un mínimo de tiempo visible para el loader, ese
+      // destello de "cargando" de todos modos se sentía como un parpadeo — para algo que en
+      // realidad no tardó nada, no debería verse ningún loader.
+      //
+      // Por eso ahora el loader NO se prende de inmediato: se arma un timer de 100ms, y solo si
+      // loadPromise sigue sin resolver para cuando ese timer dispara (o sea, la carga sí está
+      // tardando de verdad) se muestra el loader. Si loadPromise gana la carrera, se navega directo
+      // sin mostrar nada — se siente instantáneo, como antes de este sistema de loader.
+      let mostroLoader = false;
+      const timer = setTimeout(() => {
+        mostroLoader = true;
+        loading.start();
+      }, 100);
+
+      loadPromise.then(() => {
+        clearTimeout(timer);
+        if (mostroLoader) {
+          // Si sí llegó a mostrarse, se le da un mínimo de tiempo visible antes de navegar (mismo
+          // motivo que antes: que el navegador ya haya pintado el loader antes de que Outlet
+          // "suspenda" esperando el chunk) — acá ya sabemos que la carga tardó, así que este
+          // mínimo no se siente como un parpadeo extra, es parte de la espera real.
+          setTimeout(() => { navigate(path); loading.end(); }, 50);
+        } else {
+          navigate(path);
+        }
+      });
     } else {
       navigate(path);
     }
