@@ -1,7 +1,8 @@
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import Header from './Header';
 import Sidebar from './Sidebar';
+import InactivityLogout from './InactivityLogout';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 import { NavigationLoadingContext } from '../../hooks/useNavigateWithLoading';
 
@@ -35,9 +36,31 @@ export default function Layout() {
   const [isNavigating, setIsNavigating] = useState(false);
   const location = useLocation();
 
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    // overflow:hidden solo en el body no basta en iOS Safari — el fondo se sigue pudiendo
+    // deslizar con el dedo mientras el drawer del menú está abierto. Fijar la posición del body
+    // en el scroll actual sí lo bloquea ahí (mismo patrón que los modales de detalle).
+    const scrollY = window.scrollY;
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.left = '0';
+    document.body.style.right = '0';
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.left = '';
+      document.body.style.right = '';
+      document.body.style.overflow = '';
+      window.scrollTo(0, scrollY);
+    };
+  }, [mobileNavOpen]);
+
   return (
     <NavigationLoadingContext.Provider value={{ start: () => setIsNavigating(true), end: () => setIsNavigating(false) }}>
       <div style={styles.root}>
+        <InactivityLogout />
         <Header onMenuClick={() => setMobileNavOpen(true)} />
         <Sidebar mobileOpen={mobileNavOpen} onCloseMobile={() => setMobileNavOpen(false)} />
         <main style={{ ...styles.main, marginLeft: isMobile ? 0 : '60px', position: 'relative' }}>
