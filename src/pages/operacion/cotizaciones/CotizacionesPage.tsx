@@ -536,12 +536,13 @@ const CotizacionRow = memo(({ item, index, onSelect }: { item: CotizacionListIte
     <td style={styles.td}>
       <span style={styles.idCode}>{item.numCotizacion || item.id}</span>
     </td>
-    <td style={styles.td}>{formatDate(item.fecha)}</td>
-    <td style={styles.td}>{item.usuario ?? '-'}</td>
+    <td style={{ ...styles.td, paddingRight: '0.3rem' }}>{formatDate(item.fecha)}</td>
+    <td style={{ ...styles.td, paddingLeft: '0.3rem' }}>{item.usuario ?? '-'}</td>
     <td style={{ ...styles.td, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.hospital ?? '-'}</td>
     <td style={{ ...styles.td, maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.medico ?? '-'}</td>
     <td style={{ ...styles.td, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, color: '#6b6b60' }}>{item.cirugia ?? '-'}</td>
     <td style={styles.td}>{item.sede ?? '-'}</td>
+    <td style={{ ...styles.td, fontWeight: 700, color: '#3f6510', whiteSpace: 'nowrap' as const }}>{formatMoney(item.total)}</td>
   </tr>
 ));
 
@@ -552,23 +553,26 @@ const CotizacionCard = memo(({ item, onSelect }: { item: CotizacionListItem; onS
       <span style={styles.mobileCardDate}>{formatDate(item.fecha)}</span>
     </div>
     <div style={styles.mobileCardMainRow}>
+      <span style={styles.modalTitleIconBadge}>
+        <MaterialIcon name="request_quote" size={18} color="#4d7a13" />
+      </span>
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={styles.mobileCardTitle}>{item.hospital ?? 'Sin hospital'}</div>
         <div style={styles.mobileCardSubtext}>{item.medico ?? '-'}</div>
       </div>
     </div>
     <div style={styles.mobileCardFieldsRow}>
-      <div style={styles.mobileCardField}>
+      <div style={{ ...styles.mobileCardField, flex: 1 }}>
         <span style={styles.mobileCardFieldLabel}>Sede</span>
         <span style={styles.mobileCardFieldValue}>{item.sede ?? '-'}</span>
       </div>
-      <div style={styles.mobileCardField}>
+      <div style={{ ...styles.mobileCardField, flex: 1 }}>
         <span style={styles.mobileCardFieldLabel}>Usuario</span>
         <span style={styles.mobileCardFieldValue}>{item.usuario ?? '-'}</span>
       </div>
-      <div style={{ ...styles.mobileCardField, flex: 1, minWidth: 0 }}>
+      <div style={{ ...styles.mobileCardField, flex: 1 }}>
         <span style={styles.mobileCardFieldLabel}>Cirugía</span>
-        <span style={{ ...styles.mobileCardFieldValue, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.cirugia ?? '-'}</span>
+        <span style={styles.mobileCardFieldValue}>{item.cirugia ?? '-'}</span>
       </div>
     </div>
   </div>
@@ -717,7 +721,7 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, onDone, onSaved }: {
                 />
               </div>
               <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Valor Unitario *</label>
+                <label style={styles.formLabel}>Valor Un*</label>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -878,7 +882,7 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, onAdd, onDone }: { tarifaId?
                 />
               </div>
               <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Valor Unitario *</label>
+                <label style={styles.formLabel}>Valor Un*</label>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -1047,7 +1051,7 @@ function StagedItemDetailModal({ item, tarifaId, onClose, onSave, onDelete }: {
                   <input type="text" inputMode="decimal" style={styles.formInput} value={form.cantidad} onChange={e => setForm({ ...form, cantidad: sanitizeNumeric(e.target.value) })} />
                 </div>
                 <div style={styles.formGroup}>
-                  <label style={styles.formLabel}>Valor Unitario *</label>
+                  <label style={styles.formLabel}>Valor Un*</label>
                   <input type="text" inputMode="decimal" style={styles.formInput} value={form.valorUnitario} onChange={e => setForm({ ...form, valorUnitario: sanitizeNumeric(e.target.value) })} />
                 </div>
                 <div style={styles.formGroup}>
@@ -1240,7 +1244,7 @@ function ItemDetailModal({ item, cotizacionId, onClose, onSaved, onDeleted }: {
                   <input type="text" inputMode="decimal" style={styles.formInput} value={form.cantidad} onChange={e => setForm({ ...form, cantidad: sanitizeNumeric(e.target.value) })} />
                 </div>
                 <div style={styles.formGroup}>
-                  <label style={styles.formLabel}>Valor Unitario *</label>
+                  <label style={styles.formLabel}>Valor Un*</label>
                   <input type="text" inputMode="decimal" style={styles.formInput} value={form.valorUnitario} onChange={e => setForm({ ...form, valorUnitario: sanitizeNumeric(e.target.value) })} />
                 </div>
                 <div style={styles.formGroup}>
@@ -1502,6 +1506,10 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
   const [selectedItem, setSelectedItem] = useState<CotizacionItem | null>(null);
   const [confirmDeleteItemId, setConfirmDeleteItemId] = useState<string | null>(null);
   const [confirmAddConsumoConPaquete, setConfirmAddConsumoConPaquete] = useState(false);
+  // hasFormChanges (más abajo) solo compara los campos del formulario — agregar/editar/eliminar
+  // consumos no toca esos campos, así que sin esto Guardar no detectaba el cambio y salía del modo
+  // edición sin llamar a la API ni mostrar el mensaje de éxito.
+  const [itemsChanged, setItemsChanged] = useState(false);
   const [form, setForm] = useState({
     fecha: toDateInputValue(cotizacion.fecha),
     dirigidoA: cotizacion.dirigidoA ?? '',
@@ -1583,6 +1591,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacion.id] });
       setConfirmDeleteItemId(null);
+      setItemsChanged(true);
       onNotify('Consumo eliminado');
       // Tocar los consumos (agregar o eliminar) de una cotización con paquete la desvincula del
       // paquete: ya no refleja fielmente lo que el paquete define. Se limpia en el formulario local;
@@ -1666,7 +1675,13 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
   const handleGuardar = () => {
     if (formError) { setError(formError); return; }
-    if (!hasFormChanges) { onCancel(); return; }
+    if (!hasFormChanges) {
+      // Los consumos (agregar/editar/eliminar) ya se guardan solos apenas ocurren, no con este
+      // botón — pero si eso fue lo único que cambió, Guardar debe avisar igual, no salir en
+      // silencio como si no hubiera pasado nada.
+      if (itemsChanged) onSaved('Cotización editada'); else onCancel();
+      return;
+    }
     setError(null);
     updateMutation.mutate();
   };
@@ -1951,6 +1966,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
             tarifaLabel={tarifaLabel}
             onDone={() => setShowAddItem(false)}
             onSaved={() => {
+              setItemsChanged(true);
               onNotify('Consumo agregado');
               setForm(prev => (prev.paqueteId ? { ...prev, paqueteId: '', paqueteLabel: '', nivel: '' } : prev));
             }}
@@ -1962,8 +1978,8 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
             item={selectedItem}
             cotizacionId={cotizacion.id}
             onClose={() => setSelectedItem(null)}
-            onSaved={() => onNotify('Consumo actualizado')}
-            onDeleted={() => onNotify('Consumo eliminado')}
+            onSaved={() => { setItemsChanged(true); onNotify('Consumo actualizado'); }}
+            onDeleted={() => { setItemsChanged(true); onNotify('Consumo eliminado'); }}
           />
         )}
       </div>
@@ -2516,7 +2532,7 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
                               type="button"
                               style={styles.rowDeleteBtn}
                               title="Eliminar"
-                              onClick={() => { setStagedItems(prev => prev.filter(x => x.localId !== it.localId)); onNotify('Ítem eliminado'); }}
+                              onClick={() => { setStagedItems(prev => prev.filter(x => x.localId !== it.localId)); onNotify('Consumo eliminado'); }}
                             >
                               <Trash2 size={14} />
                             </button>
@@ -2692,6 +2708,7 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
 }
 
 function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClose: () => void; onNotify: (message: string, variant?: 'check' | 'info') => void; onDeleted: () => void }) {
+  const { isMobile } = useResponsiveStyles();
   const navigate = useNavigateWithLoading();
   const queryClient = useQueryClient();
   const [selectedItem, setSelectedItem] = useState<CotizacionItem | null>(null);
@@ -2756,7 +2773,15 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
     <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
       <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
-          <h2 style={styles.modalTitle}>{data?.numCotizacion || data?.id || ''}</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={styles.modalTitleIconBadge}>
+              <MaterialIcon name="request_quote" size={20} color="#4d7a13" />
+            </span>
+            <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.1rem' }}>
+              <span style={styles.modalTitleLabel}>Cotización</span>
+              <h2 style={styles.modalTitle}>{data?.numCotizacion || data?.id || ''}</h2>
+            </div>
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             {data && !editing && !confirmDelete && (
               <div style={{ position: 'relative' as const }} ref={moreMenuRef}>
@@ -2939,12 +2964,12 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
                 </div>
               )}
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.6rem', marginTop: '1.5rem' }}>
-                <button className="btn-press header-btn-secondary" style={styles.pillBtn} onClick={handleEnviarWhatsapp} disabled={sendingWhatsapp}>
+              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, justifyContent: 'flex-end', gap: '0.6rem', marginTop: '1.5rem' }}>
+                <button className="btn-press header-btn-secondary" style={{ ...styles.pillBtn, ...(isMobile ? { justifyContent: 'center' as const, width: '100%' } : {}) }} onClick={handleEnviarWhatsapp} disabled={sendingWhatsapp}>
                   <i className="fa-brands fa-whatsapp" style={{ fontSize: 16, color: '#4d7a13' }} />
                   {sendingWhatsapp ? 'Enviando...' : 'Enviar por WhatsApp'}
                 </button>
-                <button className="btn-press header-btn-primary" style={styles.pillBtnPrimary} onClick={handleGenerarPdf} disabled={generatingPdf}>
+                <button className="btn-press header-btn-primary" style={{ ...styles.pillBtnPrimary, ...(isMobile ? { justifyContent: 'center' as const, width: '100%' } : {}) }} onClick={handleGenerarPdf} disabled={generatingPdf}>
                   <FileDown size={16} /> {generatingPdf ? 'Generando...' : 'Generar PDF'}
                 </button>
               </div>
@@ -2982,12 +3007,31 @@ export default function CotizacionesPage() {
   useSmoothWheelScroll(tableWrapRef, [], 3);
 
   useEffect(() => {
-    document.body.style.overflow = (showCreateModal || selectedId) ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
+    if (!(showCreateModal || selectedId)) return;
+    // overflow:hidden solo en el body no basta en iOS Safari — el fondo se sigue pudiendo
+    // deslizar con el dedo. Fijar la posición del body en el scroll actual sí lo bloquea ahí, y
+    // se restaura la posición exacta al cerrar el modal.
+    const scrollY = window.scrollY;
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.left = '0';
+    document.body.style.right = '0';
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.left = '';
+      document.body.style.right = '';
+      document.body.style.overflow = '';
+      window.scrollTo(0, scrollY);
+    };
   }, [showCreateModal, selectedId]);
 
   // Le da sombra a la tarjeta fija (título + toolbar) solo mientras está "pegada" arriba por el
-  // scroll — mismo patrón que Remisiones / Solicitud de Programación.
+  // scroll de la PÁGINA — mismo patrón que Remisiones / Solicitud de Programación. El colapso del
+  // título/filtros en móvil también depende únicamente de este scroll (no del scroll interno de
+  // tableWrap): desplazarse dentro de la lista de registros no debe afectar al apartado principal,
+  // solo el scroll de la página completa (hacia arriba o abajo, fuera del contenedor de la lista).
   const [isStuck, setIsStuck] = useState(false);
   useEffect(() => {
     const handleScroll = () => setIsStuck(window.scrollY > 4);
@@ -3032,12 +3076,51 @@ export default function CotizacionesPage() {
           Volver
         </button>
 
-        <div style={{ ...styles.contentCard, ...(isStuck ? styles.contentCardStuck : {}) }}>
-          <div style={styles.header}>
+        <div
+          style={{
+            ...styles.contentCard,
+            // Con el título/filtros colapsados solo queda la barra buscadora adentro, pero el
+            // padding del contenedor (pensado para cuando tenía todo el contenido) seguía siendo
+            // el mismo — se veía un contenedor mucho más alto de lo necesario.
+            ...(isMobile && isStuck ? {
+              padding: '0.6rem 1.25rem',
+              transition: `${styles.contentCard.transition}, padding 0.2s ease`,
+            } : {}),
+            // En móvil se deja la sombra siempre puesta, para separar visualmente la tarjeta de
+            // la lista incluso antes de que la página empiece a desplazarse.
+            ...(isStuck || isMobile ? styles.contentCardStuck : {}),
+          }}
+        >
+          <div
+            style={{
+              ...styles.header,
+              ...(isMobile ? {
+                maxHeight: isStuck ? '0px' : '40px',
+                opacity: isStuck ? 0 : 1,
+                marginBottom: isStuck ? 0 : styles.header.marginBottom,
+                overflow: 'hidden' as const,
+                transition: 'max-height 0.2s ease, opacity 0.15s ease, margin-bottom 0.2s ease',
+              } : {}),
+            }}
+          >
+            {!isMobile && (
+              <span style={styles.modalTitleIconBadge}>
+                <MaterialIcon name="request_quote" size={20} color="#4d7a13" />
+              </span>
+            )}
             <h1 style={styles.title}>Cotizaciones</h1>
           </div>
 
-          <div style={styles.toolbar}>
+          <div
+            style={{
+              ...styles.toolbar,
+              // El filtro/botón y el contador colapsan a 0 de alto, pero como el buscador (flex:1,
+              // minWidth:280px) no deja suficiente ancho para que quepan al lado, igual "envuelven"
+              // a su propia línea del flex-wrap — y el gap entre esas líneas invisibles seguía
+              // reservando espacio debajo del buscador.
+              ...(isMobile && isStuck ? { gap: 0 } : {}),
+            }}
+          >
             <div style={styles.searchWrap}>
               <Search size={15} color="#9ca3af" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
               <input
@@ -3048,22 +3131,64 @@ export default function CotizacionesPage() {
               />
             </div>
 
-            <DateRangeFilter
-              dateFrom={dateFrom}
-              dateTo={dateTo}
-              onChange={(from, to) => { setDateFrom(from); setDateTo(to); setPage(1); }}
-            />
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.75rem',
+                ...(isMobile ? {
+                  maxHeight: isStuck ? '0px' : '50px',
+                  opacity: isStuck ? 0 : 1,
+                  overflow: 'hidden' as const,
+                  transition: 'max-height 0.2s ease, opacity 0.15s ease',
+                } : {}),
+              }}
+            >
+              <DateRangeFilter
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                onChange={(from, to) => { setDateFrom(from); setDateTo(to); setPage(1); }}
+              />
 
-            <button className="btn-press header-btn-primary" style={styles.pillBtnPrimary} onClick={() => setShowCreateModal(true)}>
-              <Plus size={16} />
-              Nueva cotización
-            </button>
+              <button
+                className="btn-press header-btn-primary"
+                style={{ ...styles.pillBtnPrimary, ...(isMobile ? { padding: '0.4rem 0.7rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' as const } : {}) }}
+                onClick={() => setShowCreateModal(true)}
+              >
+                <Plus size={16} />
+                {isMobile ? (dateFrom || dateTo ? '' : 'Nueva') : 'Nueva cotización'}
+              </button>
+            </div>
 
-            <span style={styles.totalLabel}>{isLoading ? '...' : `${data?.total ?? 0} registros`}</span>
+            <span
+              style={{
+                ...styles.totalLabel,
+                // Ya no se colapsa junto con el título/filtros: se queda visible debajo de la
+                // barra buscadora incluso con la tarjeta colapsada. Como toolbar queda con gap:0
+                // en ese estado (para no reservar espacio de las líneas invisibles del filtro y
+                // el botón, que sí siguen colapsando), el espacio respecto al buscador se le da
+                // directo con marginTop en vez de depender del gap del flex.
+                ...(isMobile ? {
+                  display: 'block' as const,
+                  ...(isStuck ? { marginTop: '0.35rem' } : {}),
+                } : {}),
+              }}
+            >
+              {isLoading ? '...' : `${data?.total ?? 0} registros`}
+            </span>
           </div>
         </div>
 
-        <div ref={tableWrapRef} style={styles.tableWrap}>
+        <div
+          ref={tableWrapRef}
+          style={{
+            ...styles.tableWrap,
+            // Aprovecha el espacio que queda libre debajo de la paginación en móvil. El espaciado
+            // con la tarjeta de arriba no depende de esto (es el marginBottom de contentCard) —
+            // este maxHeight solo mueve el borde INFERIOR de la lista hacia abajo.
+            ...(isMobile ? { maxHeight: 'calc(100vh - 250px)' } : {}),
+          }}
+        >
           {isLoading && items.length === 0 ? (
             <div style={styles.empty}>Cargando...</div>
           ) : items.length === 0 ? (
@@ -3078,8 +3203,8 @@ export default function CotizacionesPage() {
             <table style={styles.table}>
               <thead>
                 <tr style={styles.thead}>
-                  {['#', 'N° Cotización', 'Fecha', 'Usuario', 'Hospital', 'Médico', 'Cirugía', 'Sede'].map((h, i) => (
-                    <th key={i} style={styles.th}>{h}</th>
+                  {['#', 'N° Cotización', 'Fecha', 'Usuario', 'Hospital', 'Médico', 'Cirugía', 'Sede', 'Total'].map((h, i) => (
+                    <th key={i} style={{ ...styles.th, ...(i === 2 ? { paddingRight: '0.3rem' } : {}), ...(i === 3 ? { paddingLeft: '0.3rem' } : {}) }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -3147,9 +3272,9 @@ export default function CotizacionesPage() {
 const styles: Record<string, React.CSSProperties> = {
   pageWrapper: { padding: '0.05rem 1.5rem 1.5rem' },
   backLink: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem', padding: '0.25rem 0.1rem', border: 'none', background: 'transparent', color: '#6b7280', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, transition: 'color 0.15s ease' },
-  contentCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '16px', padding: '1.25rem', marginBottom: '1.5rem', position: 'sticky' as const, top: '60px', zIndex: 10, boxShadow: '0 0 0 rgba(0,0,0,0)', transition: 'box-shadow 0.2s ease, border-color 0.2s ease' },
+  contentCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '16px', padding: '1.25rem', marginBottom: '1.5rem', position: 'sticky' as const, top: '60px', zIndex: 10, boxShadow: '0 0 0 rgba(0,0,0,0)', transition: 'box-shadow 0.2s ease, border-color 0.2s ease, margin-bottom 0.2s ease' },
   contentCardStuck: { boxShadow: '0 8px 20px rgba(0,0,0,0.08)', border: '1px solid #e5e7eb' },
-  header: { marginBottom: '1.25rem' },
+  header: { display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' },
   title: { fontSize: '1.4rem', fontWeight: 700, color: '#333', margin: 0 },
   toolbar: { display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' as const },
   searchWrap: { position: 'relative' as const, flex: 1, minWidth: '280px' },
@@ -3173,7 +3298,7 @@ const styles: Record<string, React.CSSProperties> = {
   mobileCardFieldsRow: { display: 'flex', gap: '1.25rem', paddingTop: '0.6rem', borderTop: '1px solid #f3f4f0' },
   mobileCardField: { display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', minWidth: 0 },
   mobileCardFieldLabel: { fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
-  mobileCardFieldValue: { fontSize: '0.82rem', fontWeight: 600, color: '#374151' },
+  mobileCardFieldValue: { fontSize: '0.82rem', fontWeight: 600, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   empty: { textAlign: 'center' as const, padding: '3rem', color: '#9ca3af' },
   pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem', marginTop: '1.5rem' },
   pageLabel: { fontSize: '0.875rem', fontWeight: 600, color: '#33342a' },
@@ -3183,6 +3308,8 @@ const styles: Record<string, React.CSSProperties> = {
   modalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '100%', maxWidth: '900px', maxHeight: '90vh', overflow: 'auto' as const, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
   modalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.25rem 1.5rem', backgroundColor: '#f9fafb', borderBottom: '1px solid #eeeee6', borderTopLeftRadius: '16px', borderTopRightRadius: '16px', position: 'sticky' as const, top: 0, zIndex: 1 },
   modalTitle: { fontSize: '1.1rem', fontWeight: 700, color: '#16170f', margin: 0 },
+  modalTitleLabel: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
+  modalTitleIconBadge: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '40px', height: '40px', borderRadius: '12px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#4d7a13', flexShrink: 0 },
   closeBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '34px', height: '34px', border: 'none', backgroundColor: '#f4f4ee', borderRadius: '8px', cursor: 'pointer', color: '#6b6b60' },
   iconMenuBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '34px', height: '34px', border: '1px solid #e5e7eb', borderRadius: '999px', cursor: 'pointer', color: '#33342a', flexShrink: 0, backgroundColor: 'transparent' },
   moreMenu: { position: 'absolute' as const, top: 'calc(100% + 8px)', right: 0, backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: '180px', overflow: 'hidden', zIndex: 200, padding: '0.35rem' },
@@ -3215,7 +3342,7 @@ const styles: Record<string, React.CSSProperties> = {
   formColStack: { display: 'flex', flexDirection: 'column' as const, gap: '0.9rem' },
   formLabel: { fontSize: '0.75rem', fontWeight: 700, color: '#374151', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
   formInput: { padding: '0.75rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', fontSize: '0.875rem', outline: 'none', fontFamily: 'inherit', backgroundColor: '#fff' },
-  medicoTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510', fontSize: '0.8rem', fontWeight: 600, width: 'fit-content' as const },
+  medicoTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 0.9rem', borderRadius: '999px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510', fontSize: '0.8rem', fontWeight: 600, width: 'fit-content' as const },
   medicoDropdown: { position: 'absolute' as const, top: 'calc(100% + 0.35rem)', left: 0, right: 0, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', maxHeight: '220px', overflowY: 'auto' as const, zIndex: 20 },
   medicoDropdownItem: { padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#333', cursor: 'pointer' },
   errorText: { fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 },

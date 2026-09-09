@@ -11,6 +11,7 @@ export interface CotizacionListItem {
   hospital: string | null;
   empresa: string | null;
   sede: string | null;
+  total: number | null;
 }
 
 export interface CotizacionItem {
