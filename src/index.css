@@ -243,6 +243,15 @@ body {
   transform-origin: top right;
 }
 
+@keyframes dropdown-fade-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(-8px) scale(0.97); }
+}
+.dropdown-anim-out {
+  animation: dropdown-fade-out 0.16s ease forwards;
+  transform-origin: top right;
+}
+
 @keyframes compact-header-slide-in {
   from { opacity: 0; transform: translateY(-100%); }
   to { opacity: 1; transform: translateY(0); }
@@ -268,6 +277,15 @@ body {
 
 .mobile-drawer-anim {
   animation: mobile-drawer-slide-in 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes mobile-drawer-slide-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100%); }
+}
+
+.mobile-drawer-anim-out {
+  animation: mobile-drawer-slide-out 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
 }
 
 .login-link-btn {

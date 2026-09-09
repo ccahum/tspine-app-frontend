@@ -73,6 +73,11 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
   const { isMobile } = useResponsiveStyles();
   const [expanded, setExpanded] = useState(false);
   const [openModule, setOpenModule] = useState<string | null>(null);
+  // mobileOpen lo controla el padre (Layout.tsx) — al pasar a false, `if (!mobileOpen) return
+  // null` desmontaba el drawer de golpe, sin dar tiempo a que corriera una animación de salida.
+  // `closing` retiene el drawer montado el tiempo justo para que se vea el slide-out antes de
+  // avisarle al padre que ya puede desmontarlo de verdad.
+  const [closing, setClosing] = useState(false);
   const navigateTo = useNavigateWithLoading();
   const location = useLocation();
 
@@ -96,18 +101,26 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
   // En el drawer de mobile no hay hover, así que siempre se ve "expandido" (con etiquetas).
   const showLabels = isMobile ? true : expanded;
 
+  const closeMobileDrawer = () => {
+    setClosing(true);
+    setTimeout(() => {
+      setClosing(false);
+      onCloseMobile?.();
+    }, 200);
+  };
+
   const handleItemClick = (path: string, hasSubmodules: boolean) => {
     if (hasSubmodules && showLabels) {
       setOpenModule(prev => (prev === path ? null : path));
     } else {
       navigateTo(path);
-      if (isMobile) onCloseMobile?.();
+      if (isMobile) closeMobileDrawer();
     }
   };
 
   const handleSubItemClick = (subPath: string) => {
     navigateTo(subPath);
-    if (isMobile) onCloseMobile?.();
+    if (isMobile) closeMobileDrawer();
   };
 
   const navList = (
@@ -174,14 +187,14 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
   );
 
   if (isMobile) {
-    if (!mobileOpen) return null;
+    if (!mobileOpen && !closing) return null;
     return (
       <>
-        <div className="modal-overlay-anim" style={styles.backdrop} onClick={onCloseMobile} />
-        <aside className="mobile-drawer-anim" style={styles.drawer}>
+        <div className={closing ? 'modal-overlay-closing' : 'modal-overlay-anim'} style={styles.backdrop} onClick={closeMobileDrawer} />
+        <aside className={closing ? 'mobile-drawer-anim-out' : 'mobile-drawer-anim'} style={styles.drawer}>
           <div style={styles.drawerHeader}>
             <span style={styles.drawerTitle}>Menú</span>
-            <button style={styles.drawerCloseBtn} onClick={onCloseMobile}>
+            <button style={styles.drawerCloseBtn} onClick={closeMobileDrawer}>
               <X size={20} />
             </button>
           </div>

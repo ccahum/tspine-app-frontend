@@ -14,6 +14,17 @@ const LOGOUT_REDIRECT_DELAY_MS = 500;
 
 const getInitials = (name: string): string => name.trim().slice(0, 2).toUpperCase();
 
+// Primer nombre + primer apellido, para no desbordar el dropdown con nombres completos largos.
+// Usa las columnas ya separadas en la base (Tercero.primerNombre/primerApellido) cuando existen
+// — partir nombreCompleto por espacios no sirve para eso (con dos nombres de pila, ej. "Christopher
+// Alejandro Cahum Ku", las dos primeras palabras son ambos nombres, no nombre+apellido). Si el
+// usuario no tiene esas columnas cargadas (ej. cuentas creadas a mano sin ese detalle), se cae a
+// partir nombreCompleto como aproximación.
+const getShortName = (usuario: { nombreCompleto?: string; primerNombre?: string | null; primerApellido?: string | null }): string => {
+  if (usuario.primerNombre && usuario.primerApellido) return `${usuario.primerNombre} ${usuario.primerApellido}`;
+  return (usuario.nombreCompleto ?? '').trim().split(/\s+/).slice(0, 2).join(' ');
+};
+
 // Color del punto/tinte según el tipo de notificación — rojo si algo se rechazó, verde si se
 // aprobó, ámbar para lo pendiente/informativo. Los tipos nuevos que no estén aquí caen en gris.
 const NOTIF_TIPO_COLOR: Record<string, string> = {
@@ -34,6 +45,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
   const isDashboard = location.pathname === '/dashboard';
   const usuario = JSON.parse(localStorage.getItem('usuario') ?? '{}');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuClosing, setMenuClosing] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [showLogoutToast, setShowLogoutToast] = useState(false);
   const [showWelcomeToast, setShowWelcomeToast] = useState(false);
@@ -134,6 +146,18 @@ export default function Header({ onMenuClick }: HeaderProps) {
     return `hace ${diffD} d`;
   };
 
+  // Con solo `menuOpen && (...)` el dropdown desaparecía de golpe al cerrarse — deja el tiempo
+  // justo para que corra la animación de salida (dropdown-anim-out, ver index.css) antes de
+  // desmontarlo de verdad.
+  const closeMenu = () => {
+    setMenuClosing(true);
+    setTimeout(() => {
+      setMenuOpen(false);
+      setMenuClosing(false);
+      setConfirmLogout(false);
+    }, 160);
+  };
+
   const confirmarCerrarSesion = () => {
     authService.logout();
     setMenuOpen(false);
@@ -150,16 +174,18 @@ export default function Header({ onMenuClick }: HeaderProps) {
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-        setConfirmLogout(false);
+      // closeMenu() siempre dispara la animación de salida (monta el dropdown con
+      // dropdown-anim-out) — sin este chequeo, cualquier clic en cualquier parte de la app
+      // (con el menú ya cerrado) hacía que el dropdown apareciera y desapareciera de golpe.
+      if (menuOpen && menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        closeMenu();
       }
       if (searchWrapRef.current && !searchWrapRef.current.contains(e.target as Node)) setSearchOpen(false);
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, []);
+  }, [menuOpen]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -230,15 +256,15 @@ export default function Header({ onMenuClick }: HeaderProps) {
             <input
               ref={searchInputRef}
               type="text"
-              placeholder="Buscar programación, remisión o técnico..."
-              style={styles.searchInput}
+              placeholder={isMobile ? 'Buscar...' : 'Buscar programación, remisión o técnico...'}
+              style={{ ...styles.searchInput, paddingRight: isMobile ? '2rem' : '3.25rem' }}
               value={query}
               onChange={e => setQuery(e.target.value)}
               onFocus={() => { if (query.trim().length >= 2) setSearchOpen(true); }}
             />
             {searching ? (
               <Loader size={14} className="spinner" style={{ ...styles.searchKbd, border: 'none', backgroundColor: 'transparent' }} />
-            ) : (
+            ) : !isMobile && (
               <kbd style={styles.searchKbd}>Ctrl K</kbd>
             )}
 
@@ -373,7 +399,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
         </div>
 
         <div style={{ position: 'relative' as const }} ref={menuRef}>
-          <button style={styles.userBtn} onClick={() => setMenuOpen(o => !o)}>
+          <button style={styles.userBtn} onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}>
             <div style={styles.avatar}>{getInitials(usuario.nombreCompleto ?? '')}</div>
             {!isMobile && (
               <div style={styles.userTextCol}>
@@ -386,8 +412,13 @@ export default function Header({ onMenuClick }: HeaderProps) {
             )}
           </button>
 
-          {menuOpen && (
-            <div style={styles.dropdown}>
+          {(menuOpen || menuClosing) && (
+            <div style={styles.dropdown} className={menuClosing ? 'dropdown-anim-out' : 'dropdown-anim'}>
+              <div style={styles.dropdownUserInfo}>
+                <span style={styles.dropdownUserName}>{getShortName(usuario)}</span>
+                <span style={styles.dropdownUserEmail}>{usuario.correo}</span>
+                {usuario.perfilNombre && <span style={styles.dropdownUserRole}>{usuario.perfilNombre}</span>}
+              </div>
               {confirmLogout ? (
                 <div className="dropdown-anim" style={styles.logoutConfirmBox}>
                   <span style={styles.logoutConfirmText}>¿Cerrar sesión?</span>
@@ -422,7 +453,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
       />
       <SuccessToast
         show={showWelcomeToast}
-        message={`¡Bienvenido, ${usuario.nombreCompleto}!`}
+        message={`¡Bienvenido, ${getShortName(usuario)}!`}
         icon={<UserRound size={26} strokeWidth={2.2} />}
         onClose={() => setShowWelcomeToast(false)}
       />
@@ -751,9 +782,34 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #e5e7eb',
     borderRadius: '8px',
     boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-    minWidth: '170px',
+    minWidth: '220px',
     overflow: 'hidden',
     zIndex: 200,
+  },
+  dropdownUserInfo: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '0.15rem',
+    padding: '0.75rem 0.9rem',
+    borderBottom: '1px solid #f3f4f6',
+  },
+  dropdownUserName: {
+    fontSize: '0.85rem',
+    fontWeight: 400,
+    color: '#000',
+  },
+  dropdownUserEmail: {
+    fontSize: '0.78rem',
+    color: '#6b7280',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const,
+  },
+  dropdownUserRole: {
+    fontSize: '0.72rem',
+    fontWeight: 600,
+    color: '#6b8c1f',
+    marginTop: '0.1rem',
   },
   dropdownItem: {
     display: 'flex',
