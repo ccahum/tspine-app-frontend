@@ -492,20 +492,28 @@ function cotizacionPdfFileName(data: CotizacionDetail): string {
   return `Cotizacion-${data.numCotizacion || data.id}.pdf`;
 }
 
-async function generarPdfCotizacion(data: CotizacionDetail) {
+async function generarPdfCotizacion(data: CotizacionDetail, forceDownload = false) {
   const doc = await buildCotizacionPdf(data);
-  doc.save(cotizacionPdfFileName(data));
-}
+  const fileName = cotizacionPdfFileName(data);
 
-// En móvil, window.open() con un blob de PDF es inconsistente entre navegadores — algunos lo
-// tratan como descarga automática (con su propio cuadro de "¿quieres descargarlo?") en vez de
-// mostrarlo. Para tener control real sobre "ver / cerrar / descargar" se genera el blob y se
-// muestra en un modal propio con un <iframe>, en vez de depender de cómo cada navegador decida
-// abrir la pestaña.
-async function generarPdfCotizacionParaVistaPrevia(data: CotizacionDetail): Promise<{ url: string; fileName: string }> {
-  const doc = await buildCotizacionPdf(data);
-  const blob = doc.output('blob');
-  return { url: URL.createObjectURL(blob), fileName: cotizacionPdfFileName(data) };
+  if (forceDownload) {
+    // En móvil, doc.save() (un <a download> con blob "application/pdf") suele terminar abriendo
+    // el visor de PDF integrado del navegador en vez de descargar — cambiar el tipo del blob a uno
+    // genérico, sin visor asociado, hace que el navegador no tenga más opción que descargarlo.
+    const blob = doc.output('blob');
+    const downloadBlob = new Blob([blob], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(downloadBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    return;
+  }
+
+  doc.save(fileName);
 }
 
 // true si de verdad se compartió/abrió WhatsApp, false si el usuario canceló el cuadro nativo de
@@ -2732,7 +2740,6 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [sendingWhatsapp, setSendingWhatsapp] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const [pdfPreview, setPdfPreview] = useState<{ url: string; fileName: string } | null>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const { data, isLoading } = useQuery<CotizacionDetail>({
     queryKey: ['cotizacion', id],
@@ -2750,48 +2757,17 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, [showMoreMenu]);
 
-  // Si se cierra el modal de detalle con la vista previa del PDF todavía abierta, libera el blob
-  // en vez de dejarlo en memoria hasta que el navegador lo recolecte solo. Se usa un ref porque el
-  // cleanup de un efecto con deps:[] solo ve el valor de pdfPreview del primer render.
-  const pdfPreviewRef = useRef(pdfPreview);
-  pdfPreviewRef.current = pdfPreview;
-  useEffect(() => {
-    return () => {
-      if (pdfPreviewRef.current) URL.revokeObjectURL(pdfPreviewRef.current.url);
-    };
-  }, []);
-
   const handleGenerarPdf = async () => {
     if (!data) return;
     setGeneratingPdf(true);
     try {
-      if (isMobile) {
-        setPdfPreview(await generarPdfCotizacionParaVistaPrevia(data));
-      } else {
-        await generarPdfCotizacion(data);
-      }
+      await generarPdfCotizacion(data, isMobile);
     } catch (err) {
       alert('No se pudo generar el PDF. Intenta de nuevo.');
       console.error(err);
     } finally {
       setGeneratingPdf(false);
     }
-  };
-
-  const cerrarPdfPreview = () => {
-    if (!pdfPreview) return;
-    URL.revokeObjectURL(pdfPreview.url);
-    setPdfPreview(null);
-  };
-
-  const descargarPdfPreview = () => {
-    if (!pdfPreview) return;
-    const link = document.createElement('a');
-    link.href = pdfPreview.url;
-    link.download = pdfPreview.fileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
   };
 
   const handleEnviarWhatsapp = async () => {
@@ -3034,25 +3010,6 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
           onSaved={() => onNotify('Consumo actualizado')}
           onDeleted={() => onNotify('Consumo eliminado')}
         />
-      )}
-
-      {pdfPreview && (
-        <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10001 }} onClick={cerrarPdfPreview}>
-          <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '760px' }} onClick={e => e.stopPropagation()}>
-            <div style={styles.modalHeader}>
-              <h2 style={styles.modalTitle}>{pdfPreview.fileName}</h2>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <button className="btn-press header-btn-primary" style={styles.pillBtnPrimary} onClick={descargarPdfPreview}>
-                  <FileDown size={16} /> Descargar
-                </button>
-                <button style={styles.closeBtn} onClick={cerrarPdfPreview} title="Cerrar">
-                  <X size={18} />
-                </button>
-              </div>
-            </div>
-            <iframe src={pdfPreview.url} title={pdfPreview.fileName} style={{ width: '100%', height: '75vh', border: 'none', display: 'block' }} />
-          </div>
-        </div>
       )}
     </div>
   );
