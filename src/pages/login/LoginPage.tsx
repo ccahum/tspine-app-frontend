@@ -94,6 +94,7 @@ export default function LoginPage() {
   const [step, setStep] = useState<Step>('CREDENCIALES');
   const [usuario, setUsuario] = useState(() => localStorage.getItem(REMEMBER_USUARIO_KEY) ?? '');
   const [password, setPassword] = useState('');
+  const [verPassword, setVerPassword] = useState(false);
   const [recordarme, setRecordarme] = useState(() => !!localStorage.getItem(REMEMBER_USUARIO_KEY));
   const [pendingToken, setPendingToken] = useState('');
   const [qrDataUrl, setQrDataUrl] = useState('');
@@ -304,14 +305,24 @@ export default function LoginPage() {
 
               <div style={styles.field}>
                 <label style={styles.label}>Contraseña</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  style={styles.input}
-                  placeholder="••••••••"
-                  required
-                />
+                <div style={styles.passwordWrap}>
+                  <input
+                    type={verPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    style={{ ...styles.input, ...styles.passwordInput }}
+                    placeholder="••••••••"
+                    required
+                  />
+                  <button
+                    type="button"
+                    style={styles.eyeButton}
+                    onClick={() => setVerPassword(v => !v)}
+                    tabIndex={-1}
+                  >
+                    {verPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
 
               <div style={styles.optionsRow}>

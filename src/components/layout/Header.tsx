@@ -453,7 +453,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
       />
       <SuccessToast
         show={showWelcomeToast}
-        message={`¡Bienvenido, ${getShortName(usuario)}!`}
+        message={`¡Hola, ${getShortName(usuario)}!`}
         icon={<UserRound size={26} strokeWidth={2.2} />}
         onClose={() => setShowWelcomeToast(false)}
       />
