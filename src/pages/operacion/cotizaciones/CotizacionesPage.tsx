@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, memo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, memo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
@@ -151,68 +151,43 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-// Ícono de celular: contorno de teléfono redondeado + botón (círculo relleno) en la base.
-// y es la línea base del texto que acompaña al ícono; el ícono se centra verticalmente contra ella.
-function drawPhoneIcon(doc: AutoTableDoc, x: number, y: number, color: [number, number, number]) {
-  const h = 3.6;
-  const w = h * 0.55;
-  const top = y - h + 0.8;
-  doc.setDrawColor(...color);
-  doc.setLineWidth(0.3);
-  doc.roundedRect(x, top, w, h, w * 0.25, w * 0.25, 'S');
-  doc.setFillColor(...color);
-  doc.circle(x + w / 2, top + h - w * 0.32, w * 0.16, 'F');
+// Círculo relleno + glifo blanco adentro, para los badges de contacto de la franja final del PDF.
+// Usa el path SVG real de los íconos "Phone"/"Mail" de lucide-react (los mismos que ya se usan en
+// el resto de la app) en vez de recrearlos a mano con las formas básicas de jsPDF — así el trazo
+// coincide exactamente, no es una aproximación. jsPDF no dibuja SVG directo (necesitaría el plugin
+// svg2pdf), así que se rasteriza a PNG en un <canvas> antes de pasárselo a doc.addImage().
+function svgToImage(svg: string, size = 200): Promise<HTMLImageElement> {
+  return loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`).then(img => {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('No se pudo generar el ícono');
+    ctx.drawImage(img, 0, 0, size, size);
+    return loadImage(canvas.toDataURL('image/png'));
+  });
 }
 
-// Ícono de correo: sobre (rectángulo) con la solapa en "V".
-function drawEmailIcon(doc: AutoTableDoc, x: number, y: number, color: [number, number, number]) {
-  const h = 2.6;
-  const w = h * 1.4;
-  const top = y - h + 0.7;
-  doc.setDrawColor(...color);
-  doc.setLineWidth(0.3);
-  doc.rect(x, top, w, h, 'S');
-  doc.line(x, top, x + w / 2, top + h * 0.62);
-  doc.line(x + w / 2, top + h * 0.62, x + w, top);
-}
+const PHONE_BADGE_SVG = (bgColor: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <circle cx="12" cy="12" r="12" fill="${bgColor}"/>
+  <path d="M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384"
+    fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(4.8,4.8) scale(0.6)"/>
+</svg>`;
 
-// Versiones "badge" (círculo relleno + glifo blanco adentro) para la franja de contacto final —
-// mismo trazo que drawPhoneIcon/drawEmailIcon, pero centradas en (cx, cy) en vez de alineadas a
-// una línea base de texto, y en blanco sobre el color de fondo del círculo.
-function drawPhoneBadge(doc: AutoTableDoc, cx: number, cy: number, radius: number, bgColor: [number, number, number]) {
-  doc.setFillColor(...bgColor);
-  doc.circle(cx, cy, radius, 'F');
-  const h = radius * 1.05;
-  const w = h * 0.55;
-  const top = cy - h / 2;
-  const left = cx - w / 2;
-  doc.setDrawColor(255, 255, 255);
-  doc.setLineWidth(0.35);
-  doc.roundedRect(left, top, w, h, w * 0.25, w * 0.25, 'S');
-  doc.setFillColor(255, 255, 255);
-  doc.circle(cx, top + h - w * 0.32, w * 0.16, 'F');
-}
-
-function drawEmailBadge(doc: AutoTableDoc, cx: number, cy: number, radius: number, bgColor: [number, number, number]) {
-  doc.setFillColor(...bgColor);
-  doc.circle(cx, cy, radius, 'F');
-  const h = radius * 0.85;
-  const w = h * 1.4;
-  const top = cy - h / 2;
-  const left = cx - w / 2;
-  doc.setDrawColor(255, 255, 255);
-  doc.setLineWidth(0.35);
-  doc.rect(left, top, w, h, 'S');
-  doc.line(left, top, left + w / 2, top + h * 0.62);
-  doc.line(left + w / 2, top + h * 0.62, left + w, top);
-}
+const MAIL_BADGE_SVG = (bgColor: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <circle cx="12" cy="12" r="12" fill="${bgColor}"/>
+  <g transform="translate(4.8,4.8) scale(0.6)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7"/>
+    <rect x="2" y="4" width="20" height="16" rx="2"/>
+  </g>
+</svg>`;
 
 // Dibuja "Etiqueta: valor" (etiqueta en negrita) con ajuste de línea; devuelve el Y final.
 // dryRun=true solo mide (para calcular el alto de la caja antes de rellenarla).
-function drawField(doc: AutoTableDoc, label: string, value: string, x: number, maxWidth: number, y: number, dryRun = false): number {
-  const lineHeight = 3.6;
+function drawField(doc: AutoTableDoc, label: string, value: string, x: number, maxWidth: number, y: number, dryRun = false, fontSize = 9): number {
+  const lineHeight = fontSize * 0.4;
   const labelText = `${label}: `;
-  doc.setFontSize(9);
+  doc.setFontSize(fontSize);
   doc.setFont('helvetica', 'bold');
   const labelWidth = doc.getTextWidth(labelText);
   doc.setFont('helvetica', 'normal');
@@ -279,102 +254,107 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   } catch {
     // Si el sello ISO no carga, se omite esa franja final en vez de romper el PDF completo.
   }
+  const isoSize = 16;
+
+  let phoneBadgeImg: HTMLImageElement | null = null;
+  let mailBadgeImg: HTMLImageElement | null = null;
+  try {
+    [phoneBadgeImg, mailBadgeImg] = await Promise.all([
+      svgToImage(PHONE_BADGE_SVG('#252624')),
+      svgToImage(MAIL_BADGE_SVG('#252624')),
+    ]);
+  } catch {
+    // Si por lo que sea no se pueden rasterizar, se omiten (el texto de contacto igual se dibuja).
+  }
 
   // Identidad de la empresa, inmediatamente debajo del logo. Es texto angosto pegado al margen
   // izquierdo, así que a esa altura no pisa la ola decorativa (que ocupa más el lado derecho) —
   // por eso puede ir en HEADER_SAFE_Y (48) y no necesita bajar hasta CONTINUATION_TOP_Y como la
   // tabla. Se repite igual en cada página nueva (ver willDrawPage y el salto manual más abajo).
-  const iconGap = 5;
+  // A la altura de la primera línea (el nombre de la empresa), la ola/franja oscura del membrete
+  // ya alcanza hasta ~x=190.8mm (medido pixel a pixel sobre el PNG real, igual que FOOTER_SAFE_Y)
+  // — bastante antes del margen derecho normal (rightX≈201.9mm). Por eso "Cotización" + el número
+  // se alinean a la derecha en x=186mm en vez de rightX, para no montarse sobre esa franja.
+  const headerRightSafeX = 176;
   const drawCompanyHeader = () => {
     let hy = HEADER_SAFE_Y;
-    doc.setFontSize(11);
+    doc.setFontSize(10.5);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...PDF_DARK);
     doc.text(EMPRESA_INFO.nombre, marginX, hy);
-    hy += 4.8;
-    doc.setFontSize(9);
+
+    const numCotizacionText = data.numCotizacion || data.id;
+    doc.setFontSize(10.5);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...PDF_DARK);
+    const numCotizacionWidth = doc.getTextWidth(numCotizacionText);
+    const numCotizacionStartX = headerRightSafeX - numCotizacionWidth;
+    doc.text(numCotizacionText, headerRightSafeX, hy, { align: 'right' });
+    // Mismo formato que el RFC de la empresa (fontSize 8.5, normal, PDF_GRAY_TEXT).
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...PDF_GRAY_TEXT);
+    doc.text('Cotización', numCotizacionStartX, hy + 4);
+    doc.text(formatDate(data.fecha), numCotizacionStartX, hy + 7.5);
+
+    hy += 3.6;
+    doc.setFontSize(8.5);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(...PDF_GRAY_TEXT);
     doc.text(`${EMPRESA_INFO.rfc}`, marginX, hy);
-    hy += 4.6;
+    hy += 3.5;
     doc.text(EMPRESA_INFO.telefono, marginX, hy);
-    hy += 4.6;
+    hy += 3.5;
     doc.text(EMPRESA_INFO.email, marginX, hy);
     return hy;
   };
 
   let y = drawCompanyHeader() + 12;
 
+  // "Dirigido a" es quien realizó la solicitud de cotización, y la fecha es la de elaboración del
+  // documento — se mencionan aquí en vez de (o además de) como campos sueltos en la cuadrícula.
+  const introText = `Con fundamento en la solicitud de cotización presentada por ${data.dirigidoA ?? '-'}, nos permitimos poner a su consideración los productos y/o servicios detallados en el presente documento, elaborado el ${formatDate(data.fecha)}.`;
   doc.setFontSize(8.5);
-  doc.setFont('helvetica', 'italic');
-  doc.setTextColor(60, 60, 55);
-  doc.text('Atendiendo a la cotización solicitada, le proporcionamos la siguiente información:', marginX, y);
-  y += 3;
-  doc.setDrawColor(...PDF_OLIVE);
-  doc.setLineWidth(0.3);
-  doc.line(marginX, y, rightX, y);
-  y += 6;
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...PDF_GRAY_TEXT);
+  const introLines: string[] = doc.splitTextToSize(introText, rightX - marginX);
+  doc.text(introLines, marginX, y);
+  y += introLines.length * 3.6 + 2;
 
-  // Dos recuadros lado a lado, en la misma fila: "Información General" y "Otros datos". La
-  // cabecera (título) va en una barra verde pegada al cuerpo, como el encabezado de la tabla de
-  // consumos; el cuerpo lista los campos alineados a la izquierda (etiqueta en negrita + valor).
-  const boxGap = 6;
-  const boxWidth = (rightX - marginX - boxGap) / 2;
-  const box1X = marginX;
-  const box2X = marginX + boxWidth + boxGap;
-  const headerH = 5.5;
-  const boxInnerPad = 4;
-  const fieldGap = 0.8;
-
-  doc.setFillColor(...PDF_OLIVE);
-  doc.rect(box1X, y, boxWidth, headerH, 'F');
-  doc.rect(box2X, y, boxWidth, headerH, 'F');
-  doc.setFontSize(9.5);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(255, 255, 255);
-  doc.text('Información General', box1X + boxWidth / 2, y + headerH / 2 + 1.1, { align: 'center' });
-  doc.text('Otros datos', box2X + boxWidth / 2, y + headerH / 2 + 1.1, { align: 'center' });
-  const bodyStartY = y + headerH;
-
-  const infoGeneralFields: [string, string][] = [
-    ['Dirigido a', data.dirigidoA ?? '-'],
+  // Franja única, ahora en una sola línea de 5 campos (texto más chico para que quepan) — sin
+  // barra de color ni bordes de caja, deja más espacio para la tabla de consumos de abajo.
+  // "Dirigido a" y "Fecha" quedaron mencionados en introText, arriba; "N° de Proveedor" se quitó.
+  const gridFields: [string, string][] = [
     ['Cubrimiento', data.cubrimiento ?? '-'],
     ['Cirugía', data.cirugia ?? '-'],
-    ['Fecha', formatDate(data.fecha)],
-  ];
-  const otrosDatosFields: [string, string][] = [
     ['Hospital', data.hospital ?? '-'],
     ['Doctor', data.medico ?? '-'],
     ['Tiempo de entrega', data.tiempoEntrega ?? '-'],
-    ['N° de Proveedor', data.numProveedor ?? '-'],
   ];
+  const gridCols = 5;
+  const gridGap = 4;
+  const gridFontSize = 7.5;
+  const colWidth = (rightX - marginX - gridGap * (gridCols - 1)) / gridCols;
+  const gridRowGap = 1;
 
-  const measureInfoBody = (dryRun: boolean, boxX: number, fields: [string, string][]) => {
-    const contentX = boxX + boxInnerPad;
-    const contentW = boxWidth - boxInnerPad * 2;
-    let rowY = bodyStartY + 4;
-    for (const [label, value] of fields) {
-      rowY = drawField(doc, label, value, contentX, contentW, rowY, dryRun) + fieldGap;
+  let rowY = y + 4;
+  let rowMaxHeight = 0;
+  gridFields.forEach(([label, value], i) => {
+    const col = i % gridCols;
+    const colX = marginX + col * (colWidth + gridGap);
+    const fieldEndY = drawField(doc, label, value, colX, colWidth, rowY, false, gridFontSize);
+    rowMaxHeight = Math.max(rowMaxHeight, fieldEndY - rowY);
+    if (col === gridCols - 1 || i === gridFields.length - 1) {
+      rowY += rowMaxHeight + gridRowGap;
+      rowMaxHeight = 0;
     }
-    return rowY;
-  };
+  });
 
-  const box1BodyEnd = measureInfoBody(true, box1X, infoGeneralFields) - fieldGap + 2.2;
-  const box2BodyEnd = measureInfoBody(true, box2X, otrosDatosFields) - fieldGap + 2.2;
-  const bodyEndY = Math.max(box1BodyEnd, box2BodyEnd);
-
-  doc.setFillColor(...PDF_WHITE);
-  doc.rect(box1X, bodyStartY, boxWidth, bodyEndY - bodyStartY, 'F');
-  doc.rect(box2X, bodyStartY, boxWidth, bodyEndY - bodyStartY, 'F');
-  measureInfoBody(false, box1X, infoGeneralFields);
-  measureInfoBody(false, box2X, otrosDatosFields);
-
+  y = rowY;
   doc.setDrawColor(...PDF_OLIVE_BORDER);
   doc.setLineWidth(0.2);
-  doc.rect(box1X, y, boxWidth, bodyEndY - y, 'S');
-  doc.rect(box2X, y, boxWidth, bodyEndY - y, 'S');
-
-  y = bodyEndY + 8;
+  doc.line(marginX, y, rightX, y);
+  y += 4;
 
   // Tabla de consumos: encabezado sólido en el verde del logo (en vez del carbón anterior), con
   // un borde exterior fino (incluye los laterales) y un filo horizontal entre filas. Todas las
@@ -399,12 +379,12 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
       fillColor: PDF_OLIVE,
       textColor: [255, 255, 255],
       fontStyle: 'bold',
-      fontSize: 9.5,
-      cellPadding: { top: 2.2, right: 3, bottom: 2.2, left: 3 },
+      fontSize: 8.5,
+      cellPadding: { top: 1.6, right: 3, bottom: 1.6, left: 3 },
     },
     styles: {
-      fontSize: 8.5,
-      cellPadding: { top: 1.5, right: 3, bottom: 1.5, left: 3 },
+      fontSize: 7.5,
+      cellPadding: { top: 1, right: 3, bottom: 1, left: 3 },
       textColor: [45, 45, 40],
       fillColor: PDF_WHITE,
       lineColor: PDF_OLIVE_BORDER,
@@ -420,7 +400,10 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     // esto) — usa CONTINUATION_TOP_Y, no HEADER_SAFE_Y, porque acá lo primero que se dibuja es la
     // cabecera sólida de la tabla, que si no se despeja bien de la curva superior del membrete se
     // nota encimada. bottom: reserva el espacio de la ola decorativa de abajo, para que la tabla
-    // salte de página en vez de dibujar filas encima de ella.
+    // salte de página en vez de dibujar filas encima de ella. No se le reserva espacio extra para
+    // el sello ISO 9001 (ver drawIso9001PorPagina) — eso movería doc.lastAutoTable.finalY, y con
+    // eso toda la posición del bloque de la última página (firma, teléfono, correo, sello), que no
+    // debe cambiar pase lo que pase con el sello en las páginas intermedias.
     margin: { left: marginX, right: marginX, top: CONTINUATION_TOP_Y, bottom: pageHeight - FOOTER_SAFE_Y },
     willDrawPage: (hookData: { pageNumber: number; cursor: { y: number } | null }) => {
       if (hookData.pageNumber > 1) { drawFondo(); drawCompanyHeader(); }
@@ -450,7 +433,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     totalsRows.push([`Descuento${data.porcentajeDcto !== null ? ` ${data.porcentajeDcto}%` : ''}`, `-${formatMoney(vrDcto)}`]);
   }
   if (iva > 0) totalsRows.push(['IVA', formatMoney(iva)]);
-  if (retencion > 0) totalsRows.push(['Retención', `-${formatMoney(retencion)}`]);
+  totalsRows.push(['Retención', retencion > 0 ? `-${formatMoney(retencion)}` : formatMoney(retencion)]);
   totalsRows.push(['Total', formatMoney(total)]);
 
   // Estimación conservadora del alto de la tabla de totales (cellPadding 3+3 arriba/abajo + una
@@ -479,7 +462,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     startY: afterItemsY,
     theme: 'plain',
     body: totalsRows,
-    styles: { fontSize: 9, cellPadding: { top: 3, right: 3, bottom: 3, left: 3 }, fillColor: PDF_WHITE, lineColor: PDF_OLIVE_BORDER, lineWidth: { bottom: 0.15 } },
+    styles: { fontSize: 7.5, cellPadding: { top: 1.5, right: 3, bottom: 1.5, left: 3 }, fillColor: PDF_WHITE, lineColor: PDF_OLIVE_BORDER, lineWidth: { bottom: 0.15 } },
     columnStyles: {
       0: { cellWidth: totalsWidth * 0.55, fontStyle: 'bold' },
       1: { cellWidth: totalsWidth * 0.45, halign: 'right' },
@@ -490,7 +473,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
         hookData.cell.styles.fillColor = PDF_OLIVE;
         hookData.cell.styles.textColor = [255, 255, 255];
         hookData.cell.styles.fontStyle = 'bold';
-        hookData.cell.styles.fontSize = 10;
+        hookData.cell.styles.fontSize = 8.5;
         hookData.cell.styles.lineWidth = 0;
       }
     },
@@ -507,14 +490,14 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   // que esté más abajo (nota o totales), sin importar cuánto crezca la tabla de arriba.
   const afterFooterY = Math.max(afterItemsY + notaHeight, doc.lastAutoTable.finalY) + 18;
 
-  // Contacto (correo + celular) a la izquierda, a la misma altura que la firma a la derecha.
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(...PDF_GRAY_TEXT);
-  drawEmailIcon(doc, marginX, afterFooterY - 6, PDF_OLIVE);
-  doc.text(EMPRESA_INFO.email, marginX + iconGap, afterFooterY - 6);
-  drawPhoneIcon(doc, marginX, afterFooterY - 1, PDF_OLIVE);
-  doc.text(EMPRESA_INFO.celular, marginX + iconGap, afterFooterY - 1);
+  // Nombre de quien elaboró la cotización, impreso arriba de la línea de firma (convención
+  // habitual: el nombre va encima, "Firma" queda debajo como leyenda de qué se firma ahí).
+  if (data.usuario) {
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...PDF_DARK);
+    doc.text(data.usuario, rightX - 27.5, afterFooterY - 2, { align: 'center' });
+  }
 
   doc.setDrawColor(...PDF_DARK);
   doc.setLineWidth(0.2);
@@ -527,29 +510,49 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   // Franja final: teléfono a la izquierda y correo a la derecha, cada uno con su ícono en un
   // círculo relleno (color oscuro de la marca, no el verde, para distinguirla del resto del
   // documento) y el sello ISO 9001 centrado entre ambos.
-  const isoSize = 16;
-  const badgeRadius = 4;
+  const badgeRadius = 3.2;
   const isoOffsetDown = 22; // el sello va un poco más abajo que los badges de teléfono/correo
-  // Sin salto de página propio: siempre va pegada a la firma, en la misma hoja, aunque quede
-  // cerca de la ola decorativa — antes, si no cabía antes de FOOTER_SAFE_Y, se mandaba sola a una
-  // página nueva (con el membrete completo repetido), separándola de todo lo demás.
-  const finalRowY = afterFooterY + 24;
+  // Posición FIJA relativa a FOOTER_SAFE_Y (no a afterFooterY/el contenido de arriba) — antes se
+  // calculaba como "afterFooterY + N", así que con notas/totales más largos o más cortos esta fila
+  // se corría de lugar. Ahora queda siempre en el mismo punto de la página, sin importar cuánto
+  // contenido tenga la cotización arriba.
+  const finalRowY = FOOTER_SAFE_Y - 5;
 
-  doc.setFontSize(9);
+  doc.setFontSize(7.5);
   doc.setFont('helvetica', 'normal');
-  doc.setTextColor(...PDF_DARK);
+  doc.setTextColor(...PDF_GRAY_TEXT);
 
-  drawPhoneBadge(doc, marginX + badgeRadius, finalRowY, badgeRadius, PDF_DARK);
+  if (phoneBadgeImg) {
+    doc.addImage(phoneBadgeImg, 'PNG', marginX, finalRowY - badgeRadius, badgeRadius * 2, badgeRadius * 2);
+  }
   doc.text(EMPRESA_INFO.celular, marginX + badgeRadius * 2 + 3, finalRowY + 1.2);
 
   const emailTextWidth = doc.getTextWidth(EMPRESA_INFO.email);
   const emailStartX = rightX - (badgeRadius * 2 + 3 + emailTextWidth);
-  drawEmailBadge(doc, emailStartX + badgeRadius, finalRowY, badgeRadius, PDF_DARK);
+  if (mailBadgeImg) {
+    doc.addImage(mailBadgeImg, 'PNG', emailStartX, finalRowY - badgeRadius, badgeRadius * 2, badgeRadius * 2);
+  }
   doc.text(EMPRESA_INFO.email, emailStartX + badgeRadius * 2 + 3, finalRowY + 1.2);
 
   if (iso9001Img) {
     const isoY = finalRowY + isoOffsetDown;
     doc.addImage(iso9001Img, 'JPEG', pageWidth / 2 - isoSize / 2, isoY - isoSize / 2, isoSize, isoSize);
+  }
+
+  // El sello ISO 9001 también va en las páginas anteriores a la última, pero no se sabe cuál
+  // página es "la última" hasta terminar de dibujar todo el contenido — por eso se agrega al
+  // final, volviendo sobre las páginas ya generadas con setPage() en vez de intentar calcularlo
+  // por adelantado. Se posiciona DENTRO de la zona de la ola (debajo de FOOTER_SAFE_Y), no arriba
+  // — ahí la tabla de consumos nunca dibuja nada, así que nunca puede quedar encimado con
+  // contenido sin importar cuántos ítems tenga esa página.
+  if (iso9001Img) {
+    const totalPages = doc.getNumberOfPages();
+    const isoTopY = FOOTER_SAFE_Y + 10;
+    for (let p = 1; p < totalPages; p++) {
+      doc.setPage(p);
+      doc.addImage(iso9001Img, 'JPEG', pageWidth / 2 - isoSize / 2, isoTopY, isoSize, isoSize);
+    }
+    doc.setPage(totalPages);
   }
 
   return doc;
@@ -2794,6 +2797,7 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
   const navigate = useNavigateWithLoading();
   const queryClient = useQueryClient();
   const [selectedItem, setSelectedItem] = useState<CotizacionItem | null>(null);
+  const [mainTab, setMainTab] = useState<'general' | 'comercial' | 'consumos' | 'totales'>('general');
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
@@ -2804,6 +2808,29 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
     queryKey: ['cotizacion', id],
     queryFn: () => cotizacionesService.getById(id),
   });
+
+  // El modal saltaba de tamaño de golpe al cambiar de pestaña (cada una tiene un alto distinto).
+  // Se mide el contenido de la pestaña activa y se anima ese alto con CSS en vez de dejar que el
+  // navegador haga el reflow instantáneo — el fade del contenido (page-fade-in, ver className más
+  // abajo) hace que el cambio de pestaña también se sienta fluido, no solo el cambio de tamaño.
+  const tabContentRef = useRef<HTMLDivElement>(null);
+  const [tabContentHeight, setTabContentHeight] = useState<number | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (tabContentRef.current) setTabContentHeight(tabContentRef.current.scrollHeight);
+  }, [mainTab, data]);
+  // El formulario de edición suele ser más alto que la vista normal y necesita scroll propio
+  // (modalContent tiene overflow:auto) — si quedabas scrolleado hacia abajo mientras editabas y
+  // le dabas a la X, ese scroll NO se reseteaba solo al volver a la vista (más corta), así que el
+  // encabezado (ícono/ID/botones) quedaba desplazado fuera de vista, dando la impresión de que le
+  // faltaba el margen de arriba.
+  const modalContentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (modalContentRef.current) modalContentRef.current.scrollTop = 0;
+  }, [editing, confirmDelete]);
+  // Se calcula una sola vez acá (en vez de adentro del bloque de la pestaña Totales) porque ahora
+  // también lo necesita la franja de resumen (Total), que vive en la tarjeta de arriba, fuera de
+  // ese bloque.
+  const totales = data ? computeTotales(data.items, data.tieneDcto, data.porcentajeDcto, data.impuestos) : null;
 
   useEffect(() => {
     if (!showMoreMenu) return;
@@ -2852,64 +2879,147 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
     },
   });
 
-  return (
-    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
-      <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
-        <div style={styles.modalHeader}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <span style={styles.modalTitleIconBadge}>
-              <MaterialIcon name="request_quote" size={20} color="#4d7a13" />
-            </span>
-            <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.1rem' }}>
-              <span style={styles.modalTitleLabel}>Cotización</span>
-              <h2 style={styles.modalTitle}>{data?.numCotizacion || data?.id || ''}</h2>
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            {data && !editing && !confirmDelete && (
-              <div style={{ position: 'relative' as const }} ref={moreMenuRef}>
-                <button
-                  className="btn-press"
-                  style={styles.iconMenuBtn}
-                  onClick={() => setShowMoreMenu(o => !o)}
-                >
-                  <MoreHorizontal size={20} />
-                </button>
-                {showMoreMenu && (
-                  <div style={styles.moreMenu}>
-                    <button
-                      style={styles.moreMenuItem}
-                      onClick={() => { setShowMoreMenu(false); setEditing(true); }}
-                      onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
-                      onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-                    >
-                      <Pencil size={15} />
-                      Editar
-                    </button>
-                    <div style={styles.moreMenuDivider} />
-                    <button
-                      style={{ ...styles.moreMenuItem, ...styles.moreMenuItemDanger }}
-                      onClick={() => { setShowMoreMenu(false); setConfirmDelete(true); }}
-                      onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#fdf0ec'; }}
-                      onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-                    >
-                      <Trash2 size={15} />
-                      Eliminar
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-            <button style={styles.closeBtn} onClick={onClose}>
-              <X size={18} />
+  const actionButtons = data && !editing && !confirmDelete && (
+    <>
+      <button
+        className="btn-press header-btn-secondary"
+        style={{ ...styles.pillBtn, ...(isMobile ? { flex: 1, justifyContent: 'center' as const } : {}) }}
+        onClick={handleEnviarWhatsapp}
+        disabled={sendingWhatsapp}
+      >
+        <i className="fa-brands fa-whatsapp" style={{ fontSize: 16, color: '#4d7a13' }} />
+        {sendingWhatsapp ? 'Enviando...' : isMobile ? 'WhatsApp' : 'Enviar por WhatsApp'}
+      </button>
+      <button
+        className="btn-press header-btn-primary"
+        style={{ ...styles.pillBtnPrimary, ...(isMobile ? { flex: 1, justifyContent: 'center' as const } : {}) }}
+        onClick={handleGenerarPdf}
+        disabled={generatingPdf}
+      >
+        <FileDown size={16} /> {generatingPdf ? 'Generando...' : isMobile ? 'PDF' : 'Generar PDF'}
+      </button>
+      <div style={{ position: 'relative' as const }} ref={moreMenuRef}>
+        <button
+          className="btn-press"
+          style={styles.iconMenuBtn}
+          onClick={() => setShowMoreMenu(o => !o)}
+        >
+          <MoreHorizontal size={20} />
+        </button>
+        {showMoreMenu && (
+          <div style={styles.moreMenu}>
+            <button
+              style={styles.moreMenuItem}
+              onClick={() => { setShowMoreMenu(false); setEditing(true); }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+            >
+              <Pencil size={15} />
+              Editar
+            </button>
+            <div style={styles.moreMenuDivider} />
+            <button
+              style={{ ...styles.moreMenuItem, ...styles.moreMenuItemDanger }}
+              onClick={() => { setShowMoreMenu(false); setConfirmDelete(true); }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#fdf0ec'; }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+            >
+              <Trash2 size={15} />
+              Eliminar
             </button>
           </div>
-        </div>
-        <div style={styles.modalBody}>
+        )}
+      </div>
+    </>
+  );
+
+  return (
+    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
+      <div ref={modalContentRef} className="modal-content-anim" style={{ ...styles.modalContent, overflowX: 'hidden' as const }} onClick={e => e.stopPropagation()}>
+        <div style={{ ...styles.modalBody, paddingTop: editing ? '0.75rem' : '1.5rem' }}>
+          <div style={{ ...styles.detailHeaderCard, paddingBottom: editing ? 0 : '1.25rem', borderBottom: editing ? 'none' : '1px solid #eeeee6', marginBottom: editing ? '0.75rem' : '1.5rem' }}>
+            <div style={{ ...styles.detailHeaderTopRow, justifyContent: editing ? ('flex-end' as const) : ('space-between' as const), marginBottom: editing ? 0 : (isMobile ? '0.85rem' : '1.25rem') }}>
+              {!editing && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <span style={styles.modalTitleIconBadge}>
+                    <MaterialIcon name="request_quote" size={20} color="#4d7a13" />
+                  </span>
+                  <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.1rem' }}>
+                    <span style={styles.modalTitleLabel}>Cotización</span>
+                    <h2 style={styles.modalTitle}>{data?.numCotizacion || data?.id || ''}</h2>
+                  </div>
+                </div>
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' as const, justifyContent: 'flex-end' as const }}>
+                {!isMobile && actionButtons}
+                <button style={styles.closeBtn} onClick={() => (editing ? setEditing(false) : onClose())}>
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {isMobile && actionButtons && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.25rem' }}>
+                {actionButtons}
+              </div>
+            )}
+
+            {data && totales && !isLoading && !confirmDelete && !editing && (
+              <>
+                <div style={styles.summaryBar}>
+                  <div style={styles.summaryBarItem}>
+                    <span style={styles.detalleLabel}>Total</span>
+                    <span style={{ ...styles.detalleValue, fontWeight: 700 }}>{formatMoney(totales.total)}</span>
+                  </div>
+                  <div style={styles.summaryBarItem}>
+                    <span style={styles.detalleLabel}>Hospital</span>
+                    <span style={{ ...styles.detalleValue, fontWeight: 700 }}>{data.hospital ?? '-'}</span>
+                  </div>
+                  <div style={styles.summaryBarItem}>
+                    <span style={styles.detalleLabel}>Usuario</span>
+                    <span style={{ ...styles.detalleValue, fontWeight: 700 }}>{data.usuario ?? '-'}</span>
+                  </div>
+                  <div style={styles.summaryBarItem}>
+                    <span style={styles.detalleLabel}>Fecha</span>
+                    <span style={{ ...styles.detalleValue, fontWeight: 700 }}>{formatDate(data.fecha)}</span>
+                  </div>
+                </div>
+
+                <div style={{ ...styles.infoTabBar, marginBottom: 0, borderBottom: 'none', overflowX: 'auto' as const, flexWrap: 'nowrap' as const, WebkitOverflowScrolling: 'touch' as const }}>
+                  <button
+                    style={{ ...styles.infoTabBtn, ...(mainTab === 'general' ? styles.infoTabBtnActive : styles.infoTabBtnInactive) }}
+                    onClick={e => { setMainTab('general'); e.currentTarget.blur(); }}
+                  >
+                    Información General
+                  </button>
+                  <button
+                    style={{ ...styles.infoTabBtn, ...(mainTab === 'comercial' ? styles.infoTabBtnActive : styles.infoTabBtnInactive) }}
+                    onClick={e => { setMainTab('comercial'); e.currentTarget.blur(); }}
+                  >
+                    Datos comerciales
+                  </button>
+                  <button
+                    style={{ ...styles.infoTabBtn, ...(mainTab === 'consumos' ? styles.infoTabBtnActive : styles.infoTabBtnInactive) }}
+                    onClick={e => { setMainTab('consumos'); e.currentTarget.blur(); }}
+                  >
+                    Consumos
+                    <span style={styles.countBadge}>{data.items.length}</span>
+                  </button>
+                  <button
+                    style={{ ...styles.infoTabBtn, ...(mainTab === 'totales' ? styles.infoTabBtnActive : styles.infoTabBtnInactive) }}
+                    onClick={e => { setMainTab('totales'); e.currentTarget.blur(); }}
+                  >
+                    Totales
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
           {isLoading || !data ? (
-            <div style={{ textAlign: 'center' as const, padding: '2rem', color: '#9ca3af' }}>Cargando...</div>
+            <div key="loading" className="page-fade-in" style={{ ...styles.detailBodyCard, textAlign: 'center' as const, color: '#9ca3af' }}>Cargando...</div>
           ) : confirmDelete ? (
-            <div style={styles.confirmBox}>
+            <div key="confirmDelete" className="page-fade-in" style={{ ...styles.detailBodyCard, ...styles.confirmBox }}>
               <span style={{ fontWeight: 600, color: '#16170f' }}>¿Eliminar esta cotización? Esta acción no se puede deshacer.</span>
               <div style={styles.formActions}>
                 <button style={styles.cancelBtn} onClick={() => setConfirmDelete(false)}>Cancelar</button>
@@ -2919,66 +3029,62 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
               </div>
             </div>
           ) : editing ? (
-            <EditCotizacionForm
-              cotizacion={data}
-              onCancel={() => setEditing(false)}
-              onSaved={msg => { setEditing(false); onNotify(msg); }}
-              onNotify={onNotify}
-            />
-          ) : (
-            <>
-              <div style={styles.sectionHeader}>
-                <span style={{ ...styles.sectionTitle, color: '#374151' }}>Información General</span>
-              </div>
-              <div style={styles.infoSectionBox}>
-                <div style={styles.detalleGrid}>
-                  <DetalleItem label="N° Cotización">{data.numCotizacion || data.id}</DetalleItem>
-                  <DetalleItem label="Registrado Por">{data.usuario ?? '-'}</DetalleItem>
-                  <DetalleItem label="Marca de Tiempo">{formatDateTime(data.marcaDeTiempo)}</DetalleItem>
-                  <DetalleItem label="Fecha">{formatDate(data.fecha)}</DetalleItem>
-                  <DetalleItem label="Dirigido a">{data.dirigidoA ?? '-'}</DetalleItem>
-                  <DetalleItem label="Médico">{data.medico ?? '-'}</DetalleItem>
-                  <DetalleItem label="Hospital">{data.hospital ?? '-'}</DetalleItem>
-                  <DetalleItem label="Cirugía">{data.cirugia ?? '-'}</DetalleItem>
-                  <DetalleItem label="Sede">{data.sede ?? '-'}</DetalleItem>
+            <div key="editing" className="page-fade-in" style={styles.detailBodyCard}>
+              <EditCotizacionForm
+                cotizacion={data}
+                onCancel={() => setEditing(false)}
+                onSaved={msg => { setEditing(false); onNotify(msg); }}
+                onNotify={onNotify}
+              />
+            </div>
+          ) : totales && (() => {
+            const { subtotal, vrDcto, totalAntesImpuestos, iva, retencion, total } = totales;
+            return (
+            <div style={{ height: tabContentHeight, overflow: 'hidden', transition: 'height 0.3s ease' }}>
+            <div ref={tabContentRef} key={mainTab} className="page-fade-in" style={styles.detailBodyCard}>
+              {mainTab === 'general' && (
+                <div style={styles.infoSectionBox}>
+                  <div style={styles.detalleGrid}>
+                    <DetalleItem label="N° Cotización">{data.numCotizacion || data.id}</DetalleItem>
+                    <DetalleItem label="Registrado Por">{data.usuario ?? '-'}</DetalleItem>
+                    <DetalleItem label="Marca de Tiempo">{formatDateTime(data.marcaDeTiempo)}</DetalleItem>
+                    <DetalleItem label="Fecha">{formatDate(data.fecha)}</DetalleItem>
+                    <DetalleItem label="Dirigido a">{data.dirigidoA ?? '-'}</DetalleItem>
+                    <DetalleItem label="Médico">{data.medico ?? '-'}</DetalleItem>
+                    <DetalleItem label="Hospital">{data.hospital ?? '-'}</DetalleItem>
+                    <DetalleItem label="Cirugía">{data.cirugia ?? '-'}</DetalleItem>
+                    <DetalleItem label="Sede">{data.sede ?? '-'}</DetalleItem>
+                  </div>
                 </div>
-              </div>
+              )}
 
-              <div style={styles.sectionDivider} />
-
-              <div style={styles.sectionHeader}>
-                <span style={{ ...styles.sectionTitle, color: '#374151' }}>Datos comerciales</span>
-              </div>
-              <div style={styles.infoSectionBox}>
-                <div style={styles.detalleGrid}>
-                  <DetalleItem label="Cubrimiento">{data.cubrimiento ?? '-'}</DetalleItem>
-                  <DetalleItem label="Responsable Económico">{data.responsableEconomico ?? '-'}</DetalleItem>
-                  <DetalleItem label="N° Proveedor">{data.numProveedor ?? '-'}</DetalleItem>
-                  <DetalleItem label="Tarifa">{data.tarifa ?? '-'}</DetalleItem>
-                  <DetalleItem label="Tiempo de Entrega">{data.tiempoEntrega ?? '-'}</DetalleItem>
-                  <DetalleItem label="Empresa">{data.empresa ?? '-'}</DetalleItem>
-                  <DetalleItem label="¿Tiene Descuento?">{data.tieneDcto ? 'Sí' : 'No'}</DetalleItem>
-                  {data.tieneDcto && (
-                    <>
-                      <DetalleItem label="Porcentaje de descuento">{data.porcentajeDcto !== null ? `${data.porcentajeDcto}%` : '-'}</DetalleItem>
-                      <DetalleItem label="Valor de descuento">{formatMoney(data.vrDcto)}</DetalleItem>
-                      <DetalleItem label="V/R Dcto $">{formatMoney(data.vrDctoPesos)}</DetalleItem>
-                    </>
-                  )}
-                  <DetalleItem label="Impuestos">{data.impuestos ?? '-'}</DetalleItem>
-                  <DetalleItem label="Paquete">{data.paquete ?? '-'}</DetalleItem>
-                  <DetalleItem label="Observaciones">{data.observaciones ?? '-'}</DetalleItem>
-                  <DetalleItem label="Nota">{data.nota ?? '-'}</DetalleItem>
+              {mainTab === 'comercial' && (
+                <div style={styles.infoSectionBox}>
+                  <div style={styles.detalleGrid}>
+                    <DetalleItem label="Cubrimiento">{data.cubrimiento ?? '-'}</DetalleItem>
+                    <DetalleItem label="Responsable Económico">{data.responsableEconomico ?? '-'}</DetalleItem>
+                    <DetalleItem label="N° Proveedor">{data.numProveedor ?? '-'}</DetalleItem>
+                    <DetalleItem label="Tarifa">{data.tarifa ?? '-'}</DetalleItem>
+                    <DetalleItem label="Tiempo de Entrega">{data.tiempoEntrega ?? '-'}</DetalleItem>
+                    <DetalleItem label="Empresa">{data.empresa ?? '-'}</DetalleItem>
+                    <DetalleItem label="¿Tiene Descuento?">{data.tieneDcto ? 'Sí' : 'No'}</DetalleItem>
+                    {data.tieneDcto && (
+                      <>
+                        <DetalleItem label="Porcentaje de descuento">{data.porcentajeDcto !== null ? `${data.porcentajeDcto}%` : '-'}</DetalleItem>
+                        <DetalleItem label="Valor de descuento">{formatMoney(data.vrDcto)}</DetalleItem>
+                        <DetalleItem label="V/R Dcto $">{formatMoney(data.vrDctoPesos)}</DetalleItem>
+                      </>
+                    )}
+                    <DetalleItem label="Impuestos">{data.impuestos ?? '-'}</DetalleItem>
+                    <DetalleItem label="Paquete">{data.paquete ?? '-'}</DetalleItem>
+                    <DetalleItem label="Observaciones">{data.observaciones ?? '-'}</DetalleItem>
+                    <DetalleItem label="Nota">{data.nota ?? '-'}</DetalleItem>
+                  </div>
                 </div>
-              </div>
+              )}
 
-              <div style={styles.sectionDivider} />
-
-              <div style={styles.sectionHeader}>
-                <span style={{ ...styles.sectionTitle, color: '#374151' }}>Consumos</span>
-                <span style={styles.countBadge}>{data.items.length}</span>
-              </div>
-
+              {mainTab === 'consumos' && (
+              <>
               {data.items.length > 0 && data.tarifa && (
                 <div style={styles.tarifaHint}>
                   El valor unitario de los consumos es referente a la tarifa <strong style={{ color: '#3f6510' }}>{data.tarifa}</strong>.
@@ -3020,44 +3126,76 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
                   </table>
                 </div>
               )}
-
-              <div style={styles.sectionDivider} />
-
-              <div style={styles.sectionHeader}>
-                <span style={styles.sectionTitle}>Remisión Asociada</span>
-                <span style={styles.countBadge}>{data.remisionesAsociadas.length}</span>
-              </div>
-
-              {data.remisionesAsociadas.length === 0 ? (
-                <div style={styles.emptySection}>No hay artículos</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.5rem' }}>
-                  {data.remisionesAsociadas.map(r => (
-                    <div
-                      key={r.id}
-                      style={styles.remisionRow}
-                      onClick={() => navigate(`/operacion/remisiones/${r.id}`, '/operacion/remisiones/:id')}
-                    >
-                      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: '0.8rem', fontWeight: 700, color: '#6b8c1f' }}>
-                        {r.numRemision || r.id}
-                      </span>
-                      <span style={{ color: '#6b6b60', fontSize: '0.85rem' }}>{r.estado ?? '-'}</span>
-                    </div>
-                  ))}
-                </div>
+              </>
               )}
 
-              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, justifyContent: 'flex-end', gap: '0.6rem', marginTop: '1.5rem' }}>
-                <button className="btn-press header-btn-secondary" style={{ ...styles.pillBtn, ...(isMobile ? { justifyContent: 'center' as const, width: '100%' } : {}) }} onClick={handleEnviarWhatsapp} disabled={sendingWhatsapp}>
-                  <i className="fa-brands fa-whatsapp" style={{ fontSize: 16, color: '#4d7a13' }} />
-                  {sendingWhatsapp ? 'Enviando...' : 'Enviar por WhatsApp'}
-                </button>
-                <button className="btn-press header-btn-primary" style={{ ...styles.pillBtnPrimary, ...(isMobile ? { justifyContent: 'center' as const, width: '100%' } : {}) }} onClick={handleGenerarPdf} disabled={generatingPdf}>
-                  <FileDown size={16} /> {generatingPdf ? 'Generando...' : 'Generar PDF'}
-                </button>
+              {mainTab === 'totales' && (
+              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, gap: '2rem', alignItems: 'flex-start' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={styles.sectionHeader}>
+                    <span style={styles.sectionTitle}>Remisión Asociada</span>
+                    <span style={styles.countBadge}>{data.remisionesAsociadas.length}</span>
+                  </div>
+
+                  {data.remisionesAsociadas.length === 0 ? (
+                    <div style={styles.emptySection}>No hay artículos</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.5rem' }}>
+                      {data.remisionesAsociadas.map(r => (
+                        <div
+                          key={r.id}
+                          style={styles.remisionRow}
+                          onClick={() => navigate(`/operacion/remisiones/${r.id}`, '/operacion/remisiones/:id')}
+                        >
+                          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: '0.8rem', fontWeight: 700, color: '#6b8c1f' }}>
+                            {r.numRemision || r.id}
+                          </span>
+                          <span style={{ color: '#6b6b60', fontSize: '0.85rem' }}>{r.estado ?? '-'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={styles.sectionHeader}>
+                    <span style={{ ...styles.sectionTitle, color: '#374151' }}>Totales</span>
+                  </div>
+                  <div style={styles.totalsSummaryBox}>
+                    <div style={styles.totalsSummaryRow}>
+                      <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Subtotal</span>
+                      <span style={styles.detalleValue}>{formatMoney(subtotal)}</span>
+                    </div>
+                    {data.tieneDcto && (
+                      <div style={styles.totalsSummaryRow}>
+                        <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Descuento{data.porcentajeDcto !== null ? ` (${data.porcentajeDcto}%)` : ''}</span>
+                        <span style={styles.detalleValue}>-{formatMoney(vrDcto)}</span>
+                      </div>
+                    )}
+                    <div style={styles.totalsSummaryRow}>
+                      <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Total antes de Impuestos</span>
+                      <span style={styles.detalleValue}>{formatMoney(totalAntesImpuestos)}</span>
+                    </div>
+                    <div style={styles.totalsSummaryRow}>
+                      <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>IVA</span>
+                      <span style={styles.detalleValue}>{formatMoney(iva)}</span>
+                    </div>
+                    <div style={styles.totalsSummaryRow}>
+                      <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Retención</span>
+                      <span style={styles.detalleValue}>{retencion > 0 ? `-${formatMoney(retencion)}` : formatMoney(retencion)}</span>
+                    </div>
+                    <div style={styles.totalsSummaryTotalRow}>
+                      <span>Total</span>
+                      <span>{formatMoney(total)}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </>
-          )}
+              )}
+            </div>
+            </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -3402,6 +3540,29 @@ const styles: Record<string, React.CSSProperties> = {
   modalBody: { padding: '1.5rem' },
   detalleGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '1.25rem 1.5rem' },
   infoSectionBox: { backgroundColor: '#f9fafb', border: '1px solid #eeeee6', borderRadius: '10px', padding: '1.25rem' },
+  infoTabBar: { display: 'flex', gap: '0.25rem', borderBottom: '1px solid #eeeee6', marginBottom: '1.25rem' },
+  infoTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.65rem 0.25rem', marginRight: '1.25rem', border: 'none', background: 'transparent', fontSize: '0.875rem', fontWeight: 700, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, whiteSpace: 'nowrap' as const, flexShrink: 0 },
+  infoTabBtnActive: { color: '#4d7a13', borderBottomColor: '#4d7a13' },
+  infoTabBtnInactive: { color: '#9ca3af', borderBottomColor: 'transparent' },
+  // Franja de resumen (Total/Hospital/Usuario/Fecha) debajo del encabezado, como en el detalle de
+  // Remisión — etiqueta chica en mayúsculas arriba, valor en negrita abajo, en fila horizontal.
+  summaryBar: { display: 'flex', flexWrap: 'wrap' as const, gap: '1.75rem', backgroundColor: '#f9fafb', border: '1px solid #eeeee6', borderRadius: '10px', padding: '1rem 1.25rem', marginBottom: '1.25rem' },
+  summaryBarItem: { display: 'flex', flexDirection: 'column' as const, gap: '0.3rem', minWidth: 0 },
+  // Sin tarjeta/fondo propio (el modal ya es blanco) — solo una línea divisoria abajo para separar
+  // la identidad+resumen+pestañas del contenido de la pestaña activa.
+  detailHeaderCard: { borderBottom: '1px solid #eeeee6', paddingBottom: '1.25rem', marginBottom: '1.5rem' },
+  detailHeaderTopRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' as const, gap: '1rem', flexWrap: 'wrap' as const, marginBottom: '1.25rem' },
+  detailBodyCard: {},
+  // Formato tipo "recibo": filas etiqueta/valor a los extremos, el Total resaltado al final —
+  // en vez de la cuadrícula de mayúsculas pequeñas que usan las demás secciones, para que se lea
+  // como un resumen financiero en vez de una ficha de datos más.
+  // Sin maxWidth: se estira hasta el borde derecho de su columna, para que quede alineado con el
+  // botón "Generar PDF" (que también llega hasta ese mismo borde, vía justifyContent:'flex-end').
+  totalsSummaryBox: { backgroundColor: '#f9fafb', border: '1px solid #eeeee6', borderRadius: '10px', padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column' as const, gap: '0.65rem' },
+  totalsSummaryRow: { display: 'flex', justifyContent: 'space-between' as const, fontSize: '0.875rem', color: '#4b4b40' },
+  // Mismo estilo que la columna Total de la lista de cotizaciones: texto oliva en negrita, sin
+  // relleno de color — en vez de una barra verde llena.
+  totalsSummaryTotalRow: { display: 'flex', justifyContent: 'space-between' as const, fontSize: '1rem', fontWeight: 700, color: '#3f6510', padding: '0.4rem 0', borderTop: '1px solid #dbe8c2', marginTop: '0.15rem' },
   detalleItem: { display: 'flex', flexDirection: 'column' as const, gap: '0.3rem', minWidth: 0 },
   detalleLabel: { fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
   detalleValue: { fontSize: '0.9375rem', fontWeight: 400, color: '#16170f', lineHeight: 1.4, wordBreak: 'break-word' as const },
