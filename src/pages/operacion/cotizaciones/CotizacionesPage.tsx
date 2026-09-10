@@ -8,6 +8,7 @@ import { Search, X, Plus, Trash2, Pencil, FileDown, MoreHorizontal, Check } from
 // cuando el usuario realmente pide un PDF, en vez de venir incluido desde que se abre Cotizaciones.
 import type jsPDF from 'jspdf';
 import fondoCotizacionUrl from '../../../assets/cotización.png';
+import iso9001Url from '../../../assets/iso9001.jpg';
 import DateRangeFilter from '../../../components/filters/DateRangeFilter';
 import SuccessToast from '../../../components/SuccessToast';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
@@ -175,6 +176,37 @@ function drawEmailIcon(doc: AutoTableDoc, x: number, y: number, color: [number, 
   doc.line(x + w / 2, top + h * 0.62, x + w, top);
 }
 
+// Versiones "badge" (círculo relleno + glifo blanco adentro) para la franja de contacto final —
+// mismo trazo que drawPhoneIcon/drawEmailIcon, pero centradas en (cx, cy) en vez de alineadas a
+// una línea base de texto, y en blanco sobre el color de fondo del círculo.
+function drawPhoneBadge(doc: AutoTableDoc, cx: number, cy: number, radius: number, bgColor: [number, number, number]) {
+  doc.setFillColor(...bgColor);
+  doc.circle(cx, cy, radius, 'F');
+  const h = radius * 1.05;
+  const w = h * 0.55;
+  const top = cy - h / 2;
+  const left = cx - w / 2;
+  doc.setDrawColor(255, 255, 255);
+  doc.setLineWidth(0.35);
+  doc.roundedRect(left, top, w, h, w * 0.25, w * 0.25, 'S');
+  doc.setFillColor(255, 255, 255);
+  doc.circle(cx, top + h - w * 0.32, w * 0.16, 'F');
+}
+
+function drawEmailBadge(doc: AutoTableDoc, cx: number, cy: number, radius: number, bgColor: [number, number, number]) {
+  doc.setFillColor(...bgColor);
+  doc.circle(cx, cy, radius, 'F');
+  const h = radius * 0.85;
+  const w = h * 1.4;
+  const top = cy - h / 2;
+  const left = cx - w / 2;
+  doc.setDrawColor(255, 255, 255);
+  doc.setLineWidth(0.35);
+  doc.rect(left, top, w, h, 'S');
+  doc.line(left, top, left + w / 2, top + h * 0.62);
+  doc.line(left + w / 2, top + h * 0.62, left + w, top);
+}
+
 // Dibuja "Etiqueta: valor" (etiqueta en negrita) con ajuste de línea; devuelve el Y final.
 // dryRun=true solo mide (para calcular el alto de la caja antes de rellenarla).
 function drawField(doc: AutoTableDoc, label: string, value: string, x: number, maxWidth: number, y: number, dryRun = false): number {
@@ -240,6 +272,13 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   const drawFondo = () => {
     if (fondoImg) doc.addImage(fondoImg, 'PNG', 0, 0, pageWidth, pageHeight);
   };
+
+  let iso9001Img: HTMLImageElement | null = null;
+  try {
+    iso9001Img = await loadImage(iso9001Url);
+  } catch {
+    // Si el sello ISO no carga, se omite esa franja final en vez de romper el PDF completo.
+  }
 
   // Identidad de la empresa, inmediatamente debajo del logo. Es texto angosto pegado al margen
   // izquierdo, así que a esa altura no pisa la ola decorativa (que ocupa más el lado derecho) —
@@ -485,6 +524,34 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   doc.setTextColor(...PDF_DARK);
   doc.text('Firma', rightX - 27.5, afterFooterY + 5, { align: 'center' });
 
+  // Franja final: teléfono a la izquierda y correo a la derecha, cada uno con su ícono en un
+  // círculo relleno (color oscuro de la marca, no el verde, para distinguirla del resto del
+  // documento) y el sello ISO 9001 centrado entre ambos.
+  const isoSize = 16;
+  const badgeRadius = 4;
+  const isoOffsetDown = 22; // el sello va un poco más abajo que los badges de teléfono/correo
+  // Sin salto de página propio: siempre va pegada a la firma, en la misma hoja, aunque quede
+  // cerca de la ola decorativa — antes, si no cabía antes de FOOTER_SAFE_Y, se mandaba sola a una
+  // página nueva (con el membrete completo repetido), separándola de todo lo demás.
+  const finalRowY = afterFooterY + 24;
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...PDF_DARK);
+
+  drawPhoneBadge(doc, marginX + badgeRadius, finalRowY, badgeRadius, PDF_DARK);
+  doc.text(EMPRESA_INFO.celular, marginX + badgeRadius * 2 + 3, finalRowY + 1.2);
+
+  const emailTextWidth = doc.getTextWidth(EMPRESA_INFO.email);
+  const emailStartX = rightX - (badgeRadius * 2 + 3 + emailTextWidth);
+  drawEmailBadge(doc, emailStartX + badgeRadius, finalRowY, badgeRadius, PDF_DARK);
+  doc.text(EMPRESA_INFO.email, emailStartX + badgeRadius * 2 + 3, finalRowY + 1.2);
+
+  if (iso9001Img) {
+    const isoY = finalRowY + isoOffsetDown;
+    doc.addImage(iso9001Img, 'JPEG', pageWidth / 2 - isoSize / 2, isoY - isoSize / 2, isoSize, isoSize);
+  }
+
   return doc;
 }
 
@@ -492,24 +559,16 @@ function cotizacionPdfFileName(data: CotizacionDetail): string {
   return `Cotizacion-${data.numCotizacion || data.id}.pdf`;
 }
 
-async function generarPdfCotizacion(data: CotizacionDetail, forceDownload = false) {
+async function generarPdfCotizacion(data: CotizacionDetail, openInViewer = false) {
   const doc = await buildCotizacionPdf(data);
   const fileName = cotizacionPdfFileName(data);
 
-  if (forceDownload) {
-    // En móvil, doc.save() (un <a download> con blob "application/pdf") suele terminar abriendo
-    // el visor de PDF integrado del navegador en vez de descargar — cambiar el tipo del blob a uno
-    // genérico, sin visor asociado, hace que el navegador no tenga más opción que descargarlo.
+  if (openInViewer) {
+    // En móvil abre el PDF en una pestaña nueva (el navegador decide si lo muestra o pregunta si
+    // se quiere descargar) en vez de descargarlo directo y en silencio.
     const blob = doc.output('blob');
-    const downloadBlob = new Blob([blob], { type: 'application/octet-stream' });
-    const url = URL.createObjectURL(downloadBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
     return;
   }
 
