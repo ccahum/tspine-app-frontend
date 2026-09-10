@@ -718,7 +718,7 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, onDone, onSaved }: {
   };
 
   return (
-    <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10001 }} onClick={onDone}>
+    <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10001 }}>
       <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Agregar Consumo</h2>
@@ -879,7 +879,7 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, onAdd, onDone }: { tarifaId?
   };
 
   return (
-    <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10001 }} onClick={onDone}>
+    <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10001 }}>
       <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Agregar Consumo</h2>
@@ -1048,7 +1048,7 @@ function StagedItemDetailModal({ item, tarifaId, onClose, onSave, onDelete }: {
   };
 
   return (
-    <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10001 }} onClick={onClose}>
+    <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10001 }}>
       <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>{item.productoLabel || 'Consumo'}</h2>
@@ -1242,7 +1242,7 @@ function ItemDetailModal({ item, cotizacionId, onClose, onSaved, onDeleted }: {
   };
 
   return (
-    <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10001 }} onClick={onClose}>
+    <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10001 }}>
       <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>{item.descripcion ?? item.referencia ?? 'Consumo'}</h2>
@@ -2369,7 +2369,7 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
   }, [error]);
 
   return (
-    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
+    <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Nueva cotización</h2>
@@ -2934,7 +2934,7 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
   );
 
   return (
-    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
+    <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div ref={modalContentRef} className="modal-content-anim" style={{ ...styles.modalContent, overflowX: 'hidden' as const }} onClick={e => e.stopPropagation()}>
         <div style={{ ...styles.modalBody, paddingTop: editing ? '0.75rem' : '1.5rem' }}>
           <div style={{ ...styles.detailHeaderCard, paddingBottom: editing ? 0 : '1.25rem', borderBottom: editing ? 'none' : '1px solid #eeeee6', marginBottom: editing ? '0.75rem' : '1.5rem' }}>
