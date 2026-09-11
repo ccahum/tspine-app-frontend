@@ -102,6 +102,7 @@ export interface UpdateCotizacionPayload {
   tieneDcto?: boolean;
   porcentajeDcto?: number;
   vrDcto?: number;
+  vrDctoPesos?: number;
   impuestos?: string;
 }
 
@@ -123,6 +124,7 @@ export interface CreateCotizacionPayload {
   nivel?: string;
   tieneDcto?: boolean;
   porcentajeDcto?: number;
+  vrDctoPesos?: number;
   impuestos: string;
 }
 
@@ -200,7 +202,7 @@ export const cotizacionesService = {
   getSedes: (): Promise<SedeOption[]> =>
     api.get('/operacion/cotizaciones/sedes').then(r => r.data),
 
-  getTerceroTarifa: (terceroId: string): Promise<{ tarifaId: string | null; tarifaNombre: string | null }> =>
+  getTerceroTarifa: (terceroId: string): Promise<{ tarifaId: string | null; tarifaNombre: string | null; sedeId: string | null; sedeNombre: string | null }> =>
     api.get(`/operacion/cotizaciones/tercero-tarifa/${terceroId}`).then(r => r.data),
 
   getPaquetes: (): Promise<PaqueteOption[]> =>

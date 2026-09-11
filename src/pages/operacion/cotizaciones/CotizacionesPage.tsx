@@ -110,8 +110,10 @@ const formatMoney = (value: number | null): string => {
   return `${sign}$${Math.abs(value).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
-function computeTotalesFromSubtotal(subtotal: number, tieneDcto: boolean, porcentajeDcto: unknown, impuestos: string | null) {
-  const vrDcto = tieneDcto ? subtotal * (Number(porcentajeDcto) || 0) / 100 : 0;
+// El descuento por porcentaje y por valor fijo se calculan ambos sobre el subtotal original (no
+// uno sobre el resultado del otro) y se suman — si el usuario carga los dos, se descuentan ambos.
+function computeTotalesFromSubtotal(subtotal: number, tieneDcto: boolean, porcentajeDcto: unknown, vrDctoPesos: unknown, impuestos: string | null) {
+  const vrDcto = tieneDcto ? (subtotal * (Number(porcentajeDcto) || 0) / 100) + (Number(vrDctoPesos) || 0) : 0;
   const totalAntesImpuestos = subtotal - vrDcto;
   const iva = (impuestos === 'Iva' || impuestos === 'Todos') ? totalAntesImpuestos * 0.16 : 0;
   const retencion = (impuestos === 'Retención' || impuestos === 'Todos') ? totalAntesImpuestos * 0.106667 : 0;
@@ -119,9 +121,9 @@ function computeTotalesFromSubtotal(subtotal: number, tieneDcto: boolean, porcen
   return { subtotal, vrDcto, totalAntesImpuestos, iva, retencion, total };
 }
 
-function computeTotales(items: CotizacionItem[], tieneDcto: boolean, porcentajeDcto: unknown, impuestos: string | null) {
+function computeTotales(items: CotizacionItem[], tieneDcto: boolean, porcentajeDcto: unknown, vrDctoPesos: unknown, impuestos: string | null) {
   const subtotal = items.reduce((sum, it) => sum + (Number(it.valor) || 0), 0);
-  return computeTotalesFromSubtotal(subtotal, tieneDcto, porcentajeDcto, impuestos);
+  return computeTotalesFromSubtotal(subtotal, tieneDcto, porcentajeDcto, vrDctoPesos, impuestos);
 }
 
 const EMPRESA_INFO = {
@@ -208,7 +210,7 @@ function drawField(doc: AutoTableDoc, label: string, value: string, x: number, m
 }
 
 async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc> {
-  const { subtotal, vrDcto, iva, retencion, total } = computeTotales(data.items, data.tieneDcto, data.porcentajeDcto, data.impuestos);
+  const { subtotal, iva, retencion, total } = computeTotales(data.items, data.tieneDcto, data.porcentajeDcto, data.vrDctoPesos, data.impuestos);
 
   const [{ default: JsPDF }] = await Promise.all([
     import('jspdf'),
@@ -235,8 +237,10 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   // (texto chico, tolera pisar el desvanecido de la curva). Pero en una página 2+, donde lo primero
   // que se dibuja es un bloque sólido (cabecera verde de la tabla, o el título "Nota:"), esa curva
   // superior del membrete sigue activa a esa altura y se nota el encime — recién se despeja del
-  // todo ~27% de la altura de la página (medido igual que FOOTER_SAFE_Y).
-  const CONTINUATION_TOP_Y = pageHeight * 0.27;
+  // todo ~27% de la altura de la página (medido igual que FOOTER_SAFE_Y). Ahora también hay que
+  // dejarle espacio a drawCompanyHeader + drawInfoGrid, que se repiten completos en cada página
+  // nueva — con eso ya se pasa holgado ese 27%, así que ese es el número que manda.
+  const CONTINUATION_TOP_Y = HEADER_SAFE_Y + 40;
   let fondoImg: HTMLImageElement | null = null;
   try {
     fondoImg = await loadImage(fondoCotizacionUrl);
@@ -287,15 +291,14 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     doc.setFontSize(10.5);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...PDF_DARK);
-    const numCotizacionWidth = doc.getTextWidth(numCotizacionText);
-    const numCotizacionStartX = headerRightSafeX - numCotizacionWidth;
-    doc.text(numCotizacionText, headerRightSafeX, hy, { align: 'right' });
+    doc.text(`Cotización: ${numCotizacionText}`, headerRightSafeX, hy, { align: 'right' });
+
     // Mismo formato que el RFC de la empresa (fontSize 8.5, normal, PDF_GRAY_TEXT).
     doc.setFontSize(8.5);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(...PDF_GRAY_TEXT);
-    doc.text('Cotización', numCotizacionStartX, hy + 4);
-    doc.text(formatDate(data.fecha), numCotizacionStartX, hy + 7.5);
+    doc.text(data.hospital ?? '-', headerRightSafeX, hy + 4, { align: 'right' });
+    doc.text(formatDate(data.fecha), headerRightSafeX, hy + 7.5, { align: 'right' });
 
     hy += 3.6;
     doc.setFontSize(8.5);
@@ -307,6 +310,44 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     hy += 3.5;
     doc.text(EMPRESA_INFO.email, marginX, hy);
     return hy;
+  };
+
+  // Franja única de 5 campos (texto chico para que quepan) — sin barra de color ni bordes de caja.
+  // "Dirigido a" y "Fecha" quedan mencionados en introText (solo página 1); "N° de Proveedor" se
+  // quitó. Se repite en cada página nueva (ver willDrawPage y el salto manual más abajo), igual que
+  // drawCompanyHeader.
+  const drawInfoGrid = (startY: number): number => {
+    const gridFields: [string, string][] = [
+      ['Cubrimiento', data.cubrimiento ?? '-'],
+      ['Cirugía', data.cirugia ?? '-'],
+      ['Hospital', data.hospital ?? '-'],
+      ['Doctor', data.medico ?? '-'],
+      ['Tiempo de entrega', data.tiempoEntrega ?? '-'],
+    ];
+    const gridCols = 5;
+    const gridGap = 4;
+    const gridFontSize = 7.5;
+    const colWidth = (rightX - marginX - gridGap * (gridCols - 1)) / gridCols;
+    const gridRowGap = 1;
+
+    let rowY = startY + 4;
+    let rowMaxHeight = 0;
+    gridFields.forEach(([label, value], i) => {
+      const col = i % gridCols;
+      const colX = marginX + col * (colWidth + gridGap);
+      const fieldEndY = drawField(doc, label, value, colX, colWidth, rowY, false, gridFontSize);
+      rowMaxHeight = Math.max(rowMaxHeight, fieldEndY - rowY);
+      if (col === gridCols - 1 || i === gridFields.length - 1) {
+        rowY += rowMaxHeight + gridRowGap;
+        rowMaxHeight = 0;
+      }
+    });
+
+    const endY = rowY;
+    doc.setDrawColor(...PDF_OLIVE_BORDER);
+    doc.setLineWidth(0.2);
+    doc.line(marginX, endY, rightX, endY);
+    return endY + 4;
   };
 
   let y = drawCompanyHeader() + 12;
@@ -321,40 +362,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   doc.text(introLines, marginX, y);
   y += introLines.length * 3.6 + 2;
 
-  // Franja única, ahora en una sola línea de 5 campos (texto más chico para que quepan) — sin
-  // barra de color ni bordes de caja, deja más espacio para la tabla de consumos de abajo.
-  // "Dirigido a" y "Fecha" quedaron mencionados en introText, arriba; "N° de Proveedor" se quitó.
-  const gridFields: [string, string][] = [
-    ['Cubrimiento', data.cubrimiento ?? '-'],
-    ['Cirugía', data.cirugia ?? '-'],
-    ['Hospital', data.hospital ?? '-'],
-    ['Doctor', data.medico ?? '-'],
-    ['Tiempo de entrega', data.tiempoEntrega ?? '-'],
-  ];
-  const gridCols = 5;
-  const gridGap = 4;
-  const gridFontSize = 7.5;
-  const colWidth = (rightX - marginX - gridGap * (gridCols - 1)) / gridCols;
-  const gridRowGap = 1;
-
-  let rowY = y + 4;
-  let rowMaxHeight = 0;
-  gridFields.forEach(([label, value], i) => {
-    const col = i % gridCols;
-    const colX = marginX + col * (colWidth + gridGap);
-    const fieldEndY = drawField(doc, label, value, colX, colWidth, rowY, false, gridFontSize);
-    rowMaxHeight = Math.max(rowMaxHeight, fieldEndY - rowY);
-    if (col === gridCols - 1 || i === gridFields.length - 1) {
-      rowY += rowMaxHeight + gridRowGap;
-      rowMaxHeight = 0;
-    }
-  });
-
-  y = rowY;
-  doc.setDrawColor(...PDF_OLIVE_BORDER);
-  doc.setLineWidth(0.2);
-  doc.line(marginX, y, rightX, y);
-  y += 4;
+  y = drawInfoGrid(y);
 
   // Tabla de consumos: encabezado sólido en el verde del logo (en vez del carbón anterior), con
   // un borde exterior fino (incluye los laterales) y un filo horizontal entre filas. Todas las
@@ -387,14 +395,14 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
       cellPadding: { top: 1, right: 3, bottom: 1, left: 3 },
       textColor: [45, 45, 40],
       fillColor: PDF_WHITE,
-      lineColor: PDF_OLIVE_BORDER,
-      lineWidth: { bottom: 0.15 },
+      lineColor: PDF_OLIVE,
+      lineWidth: { bottom: 0.3, right: 0.3 },
     },
     columnStyles: {
       0: { cellWidth: 14, halign: 'center' },
       1: { cellWidth: 26 },
       3: { cellWidth: 28, halign: 'right' },
-      4: { cellWidth: 28, halign: 'right', fontStyle: 'bold', textColor: PDF_OLIVE },
+      4: { cellWidth: 28, halign: 'right', fontStyle: 'bold', textColor: PDF_DARK },
     },
     // top: dónde arranca la tabla en cada página nueva que se agregue (la primera usa startY, no
     // esto) — usa CONTINUATION_TOP_Y, no HEADER_SAFE_Y, porque acá lo primero que se dibuja es la
@@ -406,12 +414,12 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     // debe cambiar pase lo que pase con el sello en las páginas intermedias.
     margin: { left: marginX, right: marginX, top: CONTINUATION_TOP_Y, bottom: pageHeight - FOOTER_SAFE_Y },
     willDrawPage: (hookData: { pageNumber: number; cursor: { y: number } | null }) => {
-      if (hookData.pageNumber > 1) { drawFondo(); drawCompanyHeader(); }
+      if (hookData.pageNumber > 1) { drawFondo(); drawInfoGrid(drawCompanyHeader() + 6); }
       pageTableStartY = hookData.cursor?.y ?? CONTINUATION_TOP_Y;
     },
     didDrawPage: (hookData: { cursor: { y: number } | null }) => {
       const pageTableEndY = hookData.cursor?.y ?? pageTableStartY;
-      doc.setDrawColor(...PDF_OLIVE_BORDER);
+      doc.setDrawColor(...PDF_OLIVE);
       doc.setLineWidth(0.2);
       doc.rect(marginX, pageTableStartY, rightX - marginX, pageTableEndY - pageTableStartY, 'S');
     },
@@ -423,14 +431,24 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   const notaText = 'La presente cotización fue elaborada de acuerdo a los productos y/o servicios solicitados por el cliente. Los precios establecidos en el presente son en moneda nacional mexicana y no generan obligación o compromiso por parte del receptor, salvo manifestación expresa.\n\nEstos precios perderán vigencia a partir del 5to día hábil después de la expedición del presente documento, agradecemos su preferencia y estamos a sus órdenes para aclarar cualquier duda.';
   doc.setFontSize(7.5);
   doc.setFont('helvetica', 'normal');
-  const notaLines: string[] = doc.splitTextToSize(notaText, notaWidth);
-  const notaHeight = notaLines.length * 3.3 + 5;
+  const notaLineHeight = 3.3;
+  const notaParagraphGap = 3.3;
+  // Justificado por párrafo en vez de en todo el bloque de una: la última línea de cada párrafo
+  // se deja alineada a la izquierda (como en cualquier texto justificado), porque si jsPDF también
+  // la estira a lo ancho completo, las líneas cortas de cierre quedan con espacios enormes entre
+  // palabras.
+  const notaParagraphLines: string[][] = notaText.split('\n\n').map(p => doc.splitTextToSize(p, notaWidth));
+  const notaTotalLines = notaParagraphLines.reduce((sum, lines) => sum + lines.length, 0);
+  const notaHeight = notaTotalLines * notaLineHeight + (notaParagraphLines.length - 1) * notaParagraphGap + 5;
 
   const totalsX = marginX + notaWidth + 12;
   const totalsWidth = rightX - totalsX;
   const totalsRows: [string, string][] = [['Subtotal', formatMoney(subtotal)]];
-  if (data.tieneDcto && vrDcto > 0) {
-    totalsRows.push([`Descuento${data.porcentajeDcto !== null ? ` ${data.porcentajeDcto}%` : ''}`, `-${formatMoney(vrDcto)}`]);
+  if (data.tieneDcto && !!data.porcentajeDcto) {
+    totalsRows.push([`Descuento (${data.porcentajeDcto}%)`, `-${formatMoney(subtotal * (Number(data.porcentajeDcto) || 0) / 100)}`]);
+  }
+  if (data.tieneDcto && !!data.vrDctoPesos) {
+    totalsRows.push(['Descuento (valor)', `-${formatMoney(Number(data.vrDctoPesos) || 0)}`]);
   }
   if (iva > 0) totalsRows.push(['IVA', formatMoney(iva)]);
   totalsRows.push(['Retención', retencion > 0 ? `-${formatMoney(retencion)}` : formatMoney(retencion)]);
@@ -445,8 +463,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   if (afterItemsY + Math.max(notaHeight, estimatedTotalsHeight) + footerBlockReserve > FOOTER_SAFE_Y) {
     doc.addPage();
     drawFondo();
-    drawCompanyHeader();
-    afterItemsY = CONTINUATION_TOP_Y;
+    afterItemsY = drawInfoGrid(drawCompanyHeader() + 6);
   }
 
   doc.setFontSize(9);
@@ -456,16 +473,23 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   doc.setFontSize(7.5);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...PDF_GRAY_TEXT);
-  doc.text(notaLines, marginX, afterItemsY + 5);
+  // jsPDF nunca justifica la última línea del arreglo que recibe una llamada a doc.text() — por
+  // eso hay que pasarle el párrafo completo de una vez (no línea por línea), para que decida solo
+  // cuál es la última línea de cada párrafo y la deje sin estirar.
+  let notaY = afterItemsY + 5;
+  notaParagraphLines.forEach((lines, pIdx) => {
+    doc.text(lines, marginX, notaY, { maxWidth: notaWidth, align: 'justify' });
+    notaY += lines.length * notaLineHeight + (pIdx < notaParagraphLines.length - 1 ? notaParagraphGap : 0);
+  });
 
   doc.autoTable({
     startY: afterItemsY,
     theme: 'plain',
     body: totalsRows,
-    styles: { fontSize: 7.5, cellPadding: { top: 1.5, right: 3, bottom: 1.5, left: 3 }, fillColor: PDF_WHITE, lineColor: PDF_OLIVE_BORDER, lineWidth: { bottom: 0.15 } },
+    styles: { fontSize: 7.5, cellPadding: { top: 0.8, right: 3, bottom: 0.8, left: 3 }, fillColor: PDF_WHITE, lineColor: PDF_OLIVE, lineWidth: { bottom: 0.3, right: 0.3 } },
     columnStyles: {
       0: { cellWidth: totalsWidth * 0.55, fontStyle: 'bold' },
-      1: { cellWidth: totalsWidth * 0.45, halign: 'right' },
+      1: { cellWidth: totalsWidth * 0.45, halign: 'right', fontStyle: 'bold' },
     },
     margin: { left: totalsX, right: marginX },
     didParseCell: (hookData: { row: { index: number }; cell: { styles: Record<string, unknown> } }) => {
@@ -479,8 +503,8 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     },
   });
 
-  // Borde exterior sutil alrededor de la caja de totales (en vez de una cuadrícula pesada por celda)
-  doc.setDrawColor(...PDF_OLIVE_BORDER);
+  // Borde exterior alrededor de la caja de totales.
+  doc.setDrawColor(...PDF_OLIVE);
   doc.setLineWidth(0.2);
   doc.rect(totalsX, afterItemsY, totalsWidth, doc.lastAutoTable.finalY - afterItemsY, 'S');
 
@@ -506,6 +530,14 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...PDF_DARK);
   doc.text('Firma', rightX - 27.5, afterFooterY + 5, { align: 'center' });
+
+  // Fecha y hora en que se generó ESTE pdf (hora local del navegador, no la fecha de la cotización).
+  const now = new Date();
+  const genFecha = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  doc.setFontSize(6.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...PDF_GRAY_TEXT);
+  doc.text(`Fecha de generación del documento: ${genFecha}`, rightX - 27.5, afterFooterY + 9, { align: 'center' });
 
   // Franja final: teléfono a la izquierda y correo a la derecha, cada uno con su ícono en un
   // círculo relleno (color oscuro de la marca, no el verde, para distinguirla del resto del
@@ -555,6 +587,19 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     doc.setPage(totalPages);
   }
 
+  // Paginación en todas las hojas, justo arriba de la ola decorativa (no debajo, como el sello ISO
+  // — ahí el texto gris chico se pierde contra los colores del membrete). A esta altura sigue
+  // siendo zona segura: la tabla de consumos nunca dibuja pasando FOOTER_SAFE_Y.
+  const totalPages = doc.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...PDF_GRAY_TEXT);
+    doc.text(`Página ${p} de ${totalPages}`, marginX, FOOTER_SAFE_Y + 16);
+  }
+  doc.setPage(totalPages);
+
   return doc;
 }
 
@@ -584,7 +629,7 @@ async function generarPdfCotizacion(data: CotizacionDetail, openInViewer = false
 async function enviarCotizacionPorWhatsapp(data: CotizacionDetail): Promise<boolean> {
   const doc = await buildCotizacionPdf(data);
   const fileName = cotizacionPdfFileName(data);
-  const { total } = computeTotales(data.items, data.tieneDcto, data.porcentajeDcto, data.impuestos);
+  const { total } = computeTotales(data.items, data.tieneDcto, data.porcentajeDcto, data.vrDctoPesos, data.impuestos);
   const mensaje = `Cotización ${data.numCotizacion || data.id} — Total: ${formatMoney(total)}`;
 
   const blob: Blob = doc.output('blob');
@@ -663,11 +708,11 @@ const CotizacionCard = memo(({ item, onSelect }: { item: CotizacionListItem; onS
   </div>
 ));
 
-function DetalleItem({ label, children }: { label: string; children: React.ReactNode }) {
+function DetalleItem({ label, children, bold, labelBold = true }: { label: string; children: React.ReactNode; bold?: boolean; labelBold?: boolean }) {
   return (
     <div style={styles.detalleItem}>
-      <span style={styles.detalleLabel}>{label}</span>
-      <span style={styles.detalleValue}>{children}</span>
+      <span style={{ ...styles.detalleLabel, ...(labelBold ? {} : { fontWeight: 500 }) }}>{label}</span>
+      <span style={{ ...styles.detalleValue, ...(bold ? { fontWeight: 600 } : {}) }}>{children}</span>
     </div>
   );
 }
@@ -682,16 +727,22 @@ const recalcValor = (cantidad: string, valorUnitario: string): string => {
   return (Math.round(c * vu * 100) / 100).toString();
 };
 
-function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, onDone, onSaved }: { cotizacionId: string; tarifaId?: string | null; tarifaLabel?: string | null; onDone: () => void; onSaved: () => void }) {
+function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem, onDone, onSaved }: { cotizacionId: string; tarifaId?: string | null; tarifaLabel?: string | null; items: CotizacionItem[]; onSelectItem: (item: CotizacionItem) => void; onDone: () => void; onSaved: () => void }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(emptyItemForm);
   const [productoSearch, setProductoSearch] = useState('');
+  const [productoFocused, setProductoFocused] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const addedListRef = useRef<HTMLDivElement>(null);
+  // El último consumo agregado siempre debe quedar visible al final de la lista.
+  useEffect(() => {
+    if (addedListRef.current) addedListRef.current.scrollTop = addedListRef.current.scrollHeight;
+  }, [items.length]);
 
   const { data: productoResults = [] } = useQuery<ProductoOption[]>({
     queryKey: ['cotizaciones-productos', productoSearch, cotizacionId, tarifaId],
     queryFn: () => cotizacionesService.searchProductos(productoSearch, cotizacionId, tarifaId ?? undefined),
-    enabled: !!productoSearch.trim(),
+    enabled: productoFocused,
   });
 
   const createMutation = useMutation({
@@ -703,8 +754,11 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, onDone, onSaved }: {
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacionId] });
-      onDone();
       onSaved();
+      // No se cierra el modal — se limpia el formulario para poder seguir agregando consumos
+      // seguidos, viendo en la lista de abajo los que ya se guardaron.
+      setForm(emptyItemForm);
+      setProductoSearch('');
     },
   });
 
@@ -734,6 +788,26 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, onDone, onSaved }: {
                 : 'No hay una tarifa seleccionada — ingresa el valor unitario manualmente.'}
             </div>
 
+            {items.length > 0 && (
+              <div style={styles.formGroup}>
+                <label style={styles.formLabel}>Consumos agregados ({items.length})</label>
+                <div ref={addedListRef} style={styles.addedItemsList}>
+                  {items.map(it => (
+                    <div
+                      key={it.id}
+                      className="dropdown-item-hover"
+                      style={{ ...styles.addedItemRow, cursor: 'pointer' }}
+                      onClick={() => onSelectItem(it)}
+                    >
+                      <span style={styles.addedItemQty}>{it.cantidad}×</span>
+                      <span style={styles.addedItemLabel} title={it.descripcion ?? undefined}>{it.descripcion ?? '-'}</span>
+                      <span style={styles.addedItemValue}>{formatMoney(Number(it.valor) || 0)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Producto *</label>
               {form.productoId ? (
@@ -747,9 +821,11 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, onDone, onSaved }: {
                     style={styles.formInput}
                     placeholder="Buscar por clave, nombre o sistema..."
                     value={productoSearch}
-                    onChange={e => setProductoSearch(sanitizeCirugiaDirigido(e.target.value))}
+                    onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setProductoSearch(sanitizeCirugiaDirigido(e.target.value)); }}
+                    onFocus={() => setProductoFocused(true)}
+                    onBlur={() => setTimeout(() => setProductoFocused(false), 150)}
                   />
-                  {productoSearch.trim() && (
+                  {productoFocused && (
                     <div style={styles.medicoDropdown}>
                       {productoResults.length === 0 ? (
                         <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
@@ -757,6 +833,7 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, onDone, onSaved }: {
                         productoResults.map(p => (
                           <div
                             key={p.id}
+                            className="dropdown-item-hover"
                             style={{ ...styles.medicoDropdownItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}
                             onClick={() => {
                               const nuevoValorUnitario = p.precioSugerido !== null ? String(p.precioSugerido) : form.valorUnitario;
@@ -823,13 +900,13 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, onDone, onSaved }: {
 
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Observaciones</label>
-              <input style={styles.formInput} value={form.observaciones} onChange={e => setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) })} />
+              <input style={styles.formInput} value={form.observaciones} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) }); }} />
             </div>
 
             {error && <span style={styles.errorText}>{error}</span>}
 
             <div style={styles.formActions}>
-              <button style={styles.cancelBtn} onClick={onDone}>Cancelar</button>
+              <button style={styles.cancelBtn} onClick={onDone}>{items.length > 0 ? 'Listo' : 'Cancelar'}</button>
               <button style={styles.saveBtn} onClick={handleGuardar} disabled={createMutation.isPending}>
                 {createMutation.isPending ? 'Guardando...' : 'Guardar'}
               </button>
@@ -857,15 +934,21 @@ interface StagedItem {
  * a POST :id/items). Los ítems en memoria se envían al servidor recién cuando se crea la
  * cotización (ver NuevaCotizacionModal). Por eso tampoco se le pasa cotizacionId a
  * searchProductos: sin cotización aún no hay tarifa para sugerir precio, el usuario lo ingresa. */
-function AddStagedItemForm({ tarifaId, tarifaLabel, onAdd, onDone }: { tarifaId?: string; tarifaLabel?: string | null; onAdd: (item: StagedItem) => void; onDone: () => void }) {
+function AddStagedItemForm({ tarifaId, tarifaLabel, items, onSelectItem, onAdd, onDone }: { tarifaId?: string; tarifaLabel?: string | null; items: StagedItem[]; onSelectItem: (item: StagedItem) => void; onAdd: (item: StagedItem) => void; onDone: () => void }) {
   const [form, setForm] = useState(emptyItemForm);
   const [productoSearch, setProductoSearch] = useState('');
+  const [productoFocused, setProductoFocused] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const addedListRef = useRef<HTMLDivElement>(null);
+  // El último consumo agregado siempre debe quedar visible al final de la lista.
+  useEffect(() => {
+    if (addedListRef.current) addedListRef.current.scrollTop = addedListRef.current.scrollHeight;
+  }, [items.length]);
 
   const { data: productoResults = [] } = useQuery<ProductoOption[]>({
     queryKey: ['cotizaciones-productos', productoSearch, tarifaId],
     queryFn: () => cotizacionesService.searchProductos(productoSearch, undefined, tarifaId),
-    enabled: !!productoSearch.trim(),
+    enabled: productoFocused,
   });
 
   const handleAgregar = () => {
@@ -875,7 +958,10 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, onAdd, onDone }: { tarifaId?
     if (!form.valor || Number(form.valor) <= 0) { setError('El valor debe ser mayor a cero.'); return; }
     setError(null);
     onAdd({ ...form, localId: crypto.randomUUID() });
-    onDone();
+    // No se cierra el modal — se limpia el formulario para poder seguir agregando consumos
+    // seguidos, viendo en la lista de abajo los que ya se agregaron.
+    setForm(emptyItemForm);
+    setProductoSearch('');
   };
 
   return (
@@ -895,6 +981,26 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, onAdd, onDone }: { tarifaId?
                 : 'No hay una tarifa seleccionada — ingresa el valor unitario manualmente.'}
             </div>
 
+            {items.length > 0 && (
+              <div style={styles.formGroup}>
+                <label style={styles.formLabel}>Consumos agregados ({items.length})</label>
+                <div ref={addedListRef} style={styles.addedItemsList}>
+                  {items.map(it => (
+                    <div
+                      key={it.localId}
+                      className="dropdown-item-hover"
+                      style={{ ...styles.addedItemRow, cursor: 'pointer' }}
+                      onClick={() => onSelectItem(it)}
+                    >
+                      <span style={styles.addedItemQty}>{it.cantidad}×</span>
+                      <span style={styles.addedItemLabel} title={it.productoLabel}>{it.productoLabel}</span>
+                      <span style={styles.addedItemValue}>{formatMoney(Number(it.valor) || 0)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Producto *</label>
               {form.productoId ? (
@@ -908,9 +1014,11 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, onAdd, onDone }: { tarifaId?
                     style={styles.formInput}
                     placeholder="Buscar por clave, nombre o sistema..."
                     value={productoSearch}
-                    onChange={e => setProductoSearch(sanitizeCirugiaDirigido(e.target.value))}
+                    onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setProductoSearch(sanitizeCirugiaDirigido(e.target.value)); }}
+                    onFocus={() => setProductoFocused(true)}
+                    onBlur={() => setTimeout(() => setProductoFocused(false), 150)}
                   />
-                  {productoSearch.trim() && (
+                  {productoFocused && (
                     <div style={styles.medicoDropdown}>
                       {productoResults.length === 0 ? (
                         <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
@@ -918,6 +1026,7 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, onAdd, onDone }: { tarifaId?
                         productoResults.map(p => (
                           <div
                             key={p.id}
+                            className="dropdown-item-hover"
                             style={{ ...styles.medicoDropdownItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}
                             onClick={() => {
                               const nuevoValorUnitario = p.precioSugerido !== null ? String(p.precioSugerido) : form.valorUnitario;
@@ -984,13 +1093,13 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, onAdd, onDone }: { tarifaId?
 
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Observaciones</label>
-              <input style={styles.formInput} value={form.observaciones} onChange={e => setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) })} />
+              <input style={styles.formInput} value={form.observaciones} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) }); }} />
             </div>
 
             {error && <span style={styles.errorText}>{error}</span>}
 
             <div style={styles.formActions}>
-              <button type="button" style={styles.cancelBtn} onClick={onDone}>Cancelar</button>
+              <button type="button" style={styles.cancelBtn} onClick={onDone}>{items.length > 0 ? 'Listo' : 'Cancelar'}</button>
               <button type="button" style={styles.saveBtn} onClick={handleAgregar}>Agregar</button>
             </div>
           </div>
@@ -1093,7 +1202,7 @@ function StagedItemDetailModal({ item, tarifaId, onClose, onSave, onDelete }: {
                       style={styles.formInput}
                       placeholder="Buscar por clave, nombre o sistema..."
                       value={productoSearch}
-                      onChange={e => setProductoSearch(sanitizeCirugiaDirigido(e.target.value))}
+                      onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setProductoSearch(sanitizeCirugiaDirigido(e.target.value)); }}
                     />
                     {productoSearch.trim() && (
                       <div style={styles.medicoDropdown}>
@@ -1103,7 +1212,8 @@ function StagedItemDetailModal({ item, tarifaId, onClose, onSave, onDelete }: {
                           productoResults.map(p => (
                             <div
                               key={p.id}
-                              style={{ ...styles.medicoDropdownItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}
+                              className="dropdown-item-hover"
+                            style={{ ...styles.medicoDropdownItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}
                               onClick={() => {
                                 const nuevoValorUnitario = p.precioSugerido !== null ? String(p.precioSugerido) : form.valorUnitario;
                                 setForm({
@@ -1147,7 +1257,7 @@ function StagedItemDetailModal({ item, tarifaId, onClose, onSave, onDelete }: {
 
               <div style={styles.formGroup}>
                 <label style={styles.formLabel}>Observaciones</label>
-                <input style={styles.formInput} value={form.observaciones} onChange={e => setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) })} />
+                <input style={styles.formInput} value={form.observaciones} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) }); }} />
               </div>
 
               {error && <span style={styles.errorText}>{error}</span>}
@@ -1289,7 +1399,7 @@ function ItemDetailModal({ item, cotizacionId, onClose, onSaved, onDeleted }: {
                       style={styles.formInput}
                       placeholder="Buscar por clave, nombre o sistema..."
                       value={productoSearch}
-                      onChange={e => setProductoSearch(sanitizeCirugiaDirigido(e.target.value))}
+                      onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setProductoSearch(sanitizeCirugiaDirigido(e.target.value)); }}
                     />
                     {productoSearch.trim() && (
                       <div style={styles.medicoDropdown}>
@@ -1299,7 +1409,8 @@ function ItemDetailModal({ item, cotizacionId, onClose, onSaved, onDeleted }: {
                           productoResults.map(p => (
                             <div
                               key={p.id}
-                              style={{ ...styles.medicoDropdownItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}
+                              className="dropdown-item-hover"
+                            style={{ ...styles.medicoDropdownItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}
                               onClick={() => {
                                 setForm({
                                   ...form,
@@ -1416,10 +1527,11 @@ function TerceroPicker({ label, required, valueId, valueLabel, onSelect, clasifi
   error?: boolean;
 }) {
   const [search, setSearch] = useState('');
+  const [focused, setFocused] = useState(false);
   const { data: results = [] } = useQuery<TerceroOption[]>({
     queryKey: ['cotizaciones-terceros', search, clasificacion],
     queryFn: () => cotizacionesService.searchTerceros(search, clasificacion),
-    enabled: !disabled && !!search.trim(),
+    enabled: !disabled && focused,
   });
 
   return (
@@ -1441,14 +1553,16 @@ function TerceroPicker({ label, required, valueId, valueLabel, onSelect, clasifi
             placeholder={`Buscar ${label.toLowerCase()}...`}
             value={search}
             onChange={e => setSearch(e.target.value)}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setTimeout(() => setFocused(false), 150)}
           />
-          {search.trim() && (
+          {focused && (
             <div style={styles.medicoDropdown}>
               {results.length === 0 ? (
                 <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
               ) : (
                 results.map(t => (
-                  <div key={t.id} style={styles.medicoDropdownItem} onClick={() => { onSelect(t.id, t.nombreCompleto); setSearch(''); }}>
+                  <div key={t.id} className="dropdown-item-hover" style={styles.medicoDropdownItem} onClick={() => { onSelect(t.id, t.nombreCompleto); setSearch(''); }}>
                     {t.nombreCompleto}
                   </div>
                 ))
@@ -1471,10 +1585,11 @@ function TerceroMultiPicker({ label, values, onChange, disabled, disabledHint, i
   clasificacion?: string;
 }) {
   const [search, setSearch] = useState('');
+  const [focused, setFocused] = useState(false);
   const { data: results = [] } = useQuery<TerceroOption[]>({
     queryKey: ['cotizaciones-terceros-multi', search, clasificacion],
     queryFn: () => cotizacionesService.searchTerceros(search, clasificacion),
-    enabled: !disabled && !!search.trim(),
+    enabled: !disabled && focused,
   });
   const availableResults = results.filter(r => !values.includes(r.nombreCompleto));
 
@@ -1502,14 +1617,16 @@ function TerceroMultiPicker({ label, values, onChange, disabled, disabledHint, i
             placeholder="Buscar médico..."
             value={search}
             onChange={e => setSearch(e.target.value)}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setTimeout(() => setFocused(false), 150)}
           />
-          {search.trim() && (
+          {focused && (
             <div style={styles.medicoDropdown}>
               {availableResults.length === 0 ? (
                 <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
               ) : (
                 availableResults.map(t => (
-                  <div key={t.id} style={styles.medicoDropdownItem} onClick={() => { onChange([...values, t.nombreCompleto]); setSearch(''); }}>
+                  <div key={t.id} className="dropdown-item-hover" style={styles.medicoDropdownItem} onClick={() => { onChange([...values, t.nombreCompleto]); setSearch(''); }}>
                     {t.nombreCompleto}
                   </div>
                 ))
@@ -1535,6 +1652,7 @@ function ListPicker({ label, required, options, valueId, valueLabel, onSelect, i
   disabledHint?: string;
 }) {
   const [search, setSearch] = useState('');
+  const [focused, setFocused] = useState(false);
   const filtered = search.trim()
     ? options.filter(o => (o.nombre ?? '').toLowerCase().includes(search.trim().toLowerCase()))
     : options;
@@ -1558,14 +1676,16 @@ function ListPicker({ label, required, options, valueId, valueLabel, onSelect, i
             placeholder={`Buscar ${label.toLowerCase()}...`}
             value={search}
             onChange={e => setSearch(e.target.value)}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setTimeout(() => setFocused(false), 150)}
           />
-          {search.trim() && (
+          {focused && (
             <div style={styles.medicoDropdown}>
               {filtered.length === 0 ? (
                 <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
               ) : (
-                filtered.slice(0, 30).map(o => (
-                  <div key={o.id} style={styles.medicoDropdownItem} onClick={() => { onSelect(o.id, o.nombre ?? ''); setSearch(''); }}>
+                filtered.map(o => (
+                  <div key={o.id} className="dropdown-item-hover" style={styles.medicoDropdownItem} onClick={() => { onSelect(o.id, o.nombre ?? ''); setSearch(''); }}>
                     {o.nombre}
                   </div>
                 ))
@@ -1616,11 +1736,12 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     nivel: cotizacion.nivel || NIVEL_OPTIONS[0],
     tieneDcto: cotizacion.tieneDcto,
     porcentajeDcto: cotizacion.porcentajeDcto !== null ? String(cotizacion.porcentajeDcto) : '',
+    vrDctoPesos: cotizacion.vrDctoPesos !== null ? String(cotizacion.vrDctoPesos) : '',
     impuestos: cotizacion.impuestos ?? '',
   });
   const [error, setError] = useState<{ field: string; message: string } | null>(null);
 
-  const { subtotal, vrDcto, totalAntesImpuestos, iva, retencion, total } = computeTotales(cotizacion.items, form.tieneDcto, form.porcentajeDcto, form.impuestos);
+  const { subtotal, vrDcto, totalAntesImpuestos, iva, retencion, total } = computeTotales(cotizacion.items, form.tieneDcto, form.porcentajeDcto, form.vrDctoPesos, form.impuestos);
 
   const { data: paquetes = [] } = useQuery<PaqueteOption[]>({
     queryKey: ['cotizaciones-paquetes'],
@@ -1661,6 +1782,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
       nivel: form.nivel,
       tieneDcto: form.tieneDcto,
       porcentajeDcto: form.porcentajeDcto ? Number(form.porcentajeDcto) : 0,
+      vrDctoPesos: form.vrDctoPesos ? Number(form.vrDctoPesos) : 0,
       vrDcto,
       impuestos: form.impuestos,
     }),
@@ -1729,7 +1851,14 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     if (!form.sedeId) return { field: 'sede', message: 'Selecciona la sede.' };
     if (form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID && !form.numProveedor.trim()) return { field: 'numProveedor', message: 'Ingresa el N° de proveedor.' };
     if (form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID && !form.tiempoEntrega.trim()) return { field: 'tiempoEntrega', message: 'Ingresa el tiempo de entrega.' };
-    if (form.tieneDcto && !form.porcentajeDcto.trim()) return { field: 'porcentajeDcto', message: 'Ingresa el porcentaje de descuento.' };
+    if (form.tieneDcto && !form.porcentajeDcto.trim() && !form.vrDctoPesos.trim()) return { field: 'porcentajeDcto', message: 'Ingresa el porcentaje y/o el valor del descuento.' };
+    if (form.tieneDcto && form.porcentajeDcto.trim() && (Number(form.porcentajeDcto) < 1 || Number(form.porcentajeDcto) > 100)) return { field: 'porcentajeDcto', message: 'El porcentaje debe estar entre 1 y 100.' };
+    if (form.tieneDcto && form.vrDctoPesos.trim() && Number(form.vrDctoPesos) > subtotal) return { field: 'vrDctoPesos', message: 'El valor de descuento no puede exceder el subtotal.' };
+    if (form.tieneDcto) {
+      const dctoPorcentajeMonto = subtotal * (Number(form.porcentajeDcto) || 0) / 100;
+      const dctoValorMonto = Number(form.vrDctoPesos) || 0;
+      if (dctoPorcentajeMonto + dctoValorMonto > subtotal) return { field: 'vrDctoPesos', message: 'Los descuentos combinados no pueden exceder el subtotal.' };
+    }
     if (!form.impuestos) return { field: 'impuestos', message: 'Selecciona impuestos.' };
     return null;
   };
@@ -1756,6 +1885,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     form.nivel !== (cotizacion.nivel || NIVEL_OPTIONS[0]) ||
     form.tieneDcto !== cotizacion.tieneDcto ||
     form.porcentajeDcto !== (cotizacion.porcentajeDcto !== null ? String(cotizacion.porcentajeDcto) : '') ||
+    form.vrDctoPesos !== (cotizacion.vrDctoPesos !== null ? String(cotizacion.vrDctoPesos) : '') ||
     form.impuestos !== (cotizacion.impuestos ?? '');
 
   const handleGuardar = () => {
@@ -1791,7 +1921,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-dirigidoA">
         <label style={styles.formLabel}>Dirigido a *</label>
-        <input style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} onChange={e => { setForm({ ...form, dirigidoA: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+        <input style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, dirigidoA: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
         {error?.field === 'dirigidoA' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -1810,6 +1940,13 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
             : {};
           setForm({ ...form, hospitalId: id, hospitalLabel: label, ...autoResponsable });
           setError(null);
+          // La sede del hospital seleccionado autocompleta el campo Sede — el usuario la puede
+          // cambiar después si hace falta.
+          if (id) {
+            cotizacionesService.getTerceroTarifa(id).then(info => {
+              if (info.sedeId) setForm(prev => ({ ...prev, sedeId: info.sedeId as string }));
+            });
+          }
         }}
         clasificacion="HOSPITAL"
       />
@@ -1817,7 +1954,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-cirugia">
         <label style={styles.formLabel}>Cirugía *</label>
-        <input style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} onChange={e => { setForm({ ...form, cirugia: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+        <input style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, cirugia: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
         {error?.field === 'cirugia' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -1888,7 +2025,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-numProveedor">
         <label style={styles.formLabel}>N° Proveedor{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
-        <input style={{ ...styles.formInput, ...(error?.field === 'numProveedor' ? styles.inputError : {}) }} value={form.numProveedor} onChange={e => { setForm({ ...form, numProveedor: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+        <input style={{ ...styles.formInput, ...(error?.field === 'numProveedor' ? styles.inputError : {}) }} value={form.numProveedor} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, numProveedor: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
         {error?.field === 'numProveedor' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -1901,13 +2038,13 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-tiempoEntrega">
         <label style={styles.formLabel}>Tiempo de Entrega{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
-        <input style={{ ...styles.formInput, ...(error?.field === 'tiempoEntrega' ? styles.inputError : {}) }} value={form.tiempoEntrega} onChange={e => { setForm({ ...form, tiempoEntrega: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+        <input style={{ ...styles.formInput, ...(error?.field === 'tiempoEntrega' ? styles.inputError : {}) }} value={form.tiempoEntrega} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, tiempoEntrega: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
         {error?.field === 'tiempoEntrega' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
       <div style={styles.formGroup}>
         <label style={styles.formLabel}>Observaciones</label>
-        <input style={styles.formInput} value={form.observaciones} onChange={e => setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) })} />
+        <input style={styles.formInput} value={form.observaciones} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) }); }} />
       </div>
 
       <ListPicker
@@ -2049,6 +2186,8 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
             cotizacionId={cotizacion.id}
             tarifaId={tarifaId}
             tarifaLabel={tarifaLabel}
+            items={cotizacion.items}
+            onSelectItem={setSelectedItem}
             onDone={() => setShowAddItem(false)}
             onSaved={() => {
               setItemsChanged(true);
@@ -2091,12 +2230,43 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
       {form.tieneDcto && (
         <>
           <div style={styles.formGroup} id="cotizacion-edit-field-porcentajeDcto">
-            <label style={styles.formLabel}>Porcentaje de descuento *</label>
-            <input type="number" step="0.01" style={{ ...styles.formInput, ...(error?.field === 'porcentajeDcto' ? styles.inputError : {}) }} value={form.porcentajeDcto} onChange={e => { setForm({ ...form, porcentajeDcto: e.target.value }); setError(null); }} />
+            <label style={styles.formLabel}>Porcentaje de descuento</label>
+            <input type="number" step="0.01" min="1" max="100" style={{ ...styles.formInput, ...(error?.field === 'porcentajeDcto' ? styles.inputError : {}) }} value={form.porcentajeDcto} onChange={e => {
+              const val = e.target.value;
+              if (val !== '' && (Number(val) < 1 || Number(val) > 100)) {
+                setError({ field: 'porcentajeDcto', message: 'El porcentaje debe estar entre 1 y 100.' });
+                return;
+              }
+              if (val !== '') {
+                const nuevoPctMonto = subtotal * Number(val) / 100;
+                const dctoValorMonto = Number(form.vrDctoPesos) || 0;
+                if (nuevoPctMonto + dctoValorMonto > subtotal) {
+                  setError({ field: 'porcentajeDcto', message: 'Los descuentos combinados no pueden exceder el subtotal.' });
+                  return;
+                }
+              }
+              setForm({ ...form, porcentajeDcto: val });
+              setError(null);
+            }} />
             {error?.field === 'porcentajeDcto' && <span style={styles.errorText}>{error.message}</span>}
           </div>
           <div style={styles.formGroup}>
-            <label style={styles.formLabel}>Valor de descuento</label>
+            <label style={styles.formLabel}>Valor de descuento ($)</label>
+            <input type="number" step="0.01" min="0" style={{ ...styles.formInput, ...(error?.field === 'vrDctoPesos' ? styles.inputError : {}) }} value={form.vrDctoPesos} onChange={e => {
+              const val = e.target.value;
+              const dctoPorcentajeMonto = subtotal * (Number(form.porcentajeDcto) || 0) / 100;
+              const maxValor = subtotal - dctoPorcentajeMonto;
+              if (val !== '' && Number(val) > maxValor) {
+                setError({ field: 'vrDctoPesos', message: 'El valor de descuento no puede exceder el subtotal disponible.' });
+                return;
+              }
+              setForm({ ...form, vrDctoPesos: val });
+              setError(null);
+            }} />
+            {error?.field === 'vrDctoPesos' && <span style={styles.errorText}>{error.message}</span>}
+          </div>
+          <div style={styles.formGroup}>
+            <label style={styles.formLabel}>Total descuento</label>
             <input
               style={{ ...styles.formInput, color: '#6b6b60', backgroundColor: '#f4f4ee', cursor: 'not-allowed' }}
               value={formatMoney(vrDcto)}
@@ -2201,6 +2371,7 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
     nivel: '',
     tieneDcto: false,
     porcentajeDcto: '',
+    vrDctoPesos: '',
     impuestos: '',
   });
   const [error, setError] = useState<{ field: string; message: string } | null>(null);
@@ -2210,7 +2381,7 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
   const [confirmAddConsumoConPaquete, setConfirmAddConsumoConPaquete] = useState(false);
 
   const stagedSubtotal = stagedItems.reduce((sum, it) => sum + (Number(it.valor) || 0), 0);
-  const { subtotal, vrDcto, totalAntesImpuestos, iva, retencion, total } = computeTotalesFromSubtotal(stagedSubtotal, form.tieneDcto, form.porcentajeDcto, form.impuestos);
+  const { subtotal, vrDcto, totalAntesImpuestos, iva, retencion, total } = computeTotalesFromSubtotal(stagedSubtotal, form.tieneDcto, form.porcentajeDcto, form.vrDctoPesos, form.impuestos);
 
   const { data: paquetes = [] } = useQuery<PaqueteOption[]>({
     queryKey: ['cotizaciones-paquetes'],
@@ -2323,6 +2494,7 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
         nivel: form.nivel,
         tieneDcto: form.tieneDcto,
         porcentajeDcto: form.tieneDcto && form.porcentajeDcto ? Number(form.porcentajeDcto) : undefined,
+        vrDctoPesos: form.tieneDcto && form.vrDctoPesos ? Number(form.vrDctoPesos) : undefined,
         impuestos: form.impuestos,
       });
       // Los ítems se armaron en memoria (todavía no existía el id de la cotización) — ahora que
@@ -2357,7 +2529,14 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
     if (!form.sedeId) { setError({ field: 'sede', message: 'Selecciona la sede.' }); return; }
     if (form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID && !form.numProveedor.trim()) { setError({ field: 'numProveedor', message: 'Ingresa el N° de proveedor.' }); return; }
     if (form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID && !form.tiempoEntrega.trim()) { setError({ field: 'tiempoEntrega', message: 'Ingresa el tiempo de entrega.' }); return; }
-    if (form.tieneDcto && !form.porcentajeDcto.trim()) { setError({ field: 'porcentajeDcto', message: 'Ingresa el porcentaje de descuento.' }); return; }
+    if (form.tieneDcto && !form.porcentajeDcto.trim() && !form.vrDctoPesos.trim()) { setError({ field: 'porcentajeDcto', message: 'Ingresa el porcentaje y/o el valor del descuento.' }); return; }
+    if (form.tieneDcto && form.porcentajeDcto.trim() && (Number(form.porcentajeDcto) < 1 || Number(form.porcentajeDcto) > 100)) { setError({ field: 'porcentajeDcto', message: 'El porcentaje debe estar entre 1 y 100.' }); return; }
+    if (form.tieneDcto && form.vrDctoPesos.trim() && Number(form.vrDctoPesos) > subtotal) { setError({ field: 'vrDctoPesos', message: 'El valor de descuento no puede exceder el subtotal.' }); return; }
+    if (form.tieneDcto) {
+      const dctoPorcentajeMonto = subtotal * (Number(form.porcentajeDcto) || 0) / 100;
+      const dctoValorMonto = Number(form.vrDctoPesos) || 0;
+      if (dctoPorcentajeMonto + dctoValorMonto > subtotal) { setError({ field: 'vrDctoPesos', message: 'Los descuentos combinados no pueden exceder el subtotal.' }); return; }
+    }
     if (!form.impuestos) { setError({ field: 'impuestos', message: 'Selecciona impuestos.' }); return; }
     setError(null);
     createMutation.mutate();
@@ -2392,7 +2571,7 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-dirigidoA">
               <label style={styles.formLabel}>Dirigido a *</label>
-              <input style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} onChange={e => { setForm({ ...form, dirigidoA: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+              <input style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, dirigidoA: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
               {error?.field === 'dirigidoA' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
@@ -2422,6 +2601,13 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
                   : {};
                 setForm({ ...form, hospitalId: id, hospitalLabel: label, ...autoResponsable });
                 setError(null);
+                // La sede del hospital seleccionado autocompleta el campo Sede — el usuario la
+                // puede cambiar después si hace falta.
+                if (id) {
+                  cotizacionesService.getTerceroTarifa(id).then(info => {
+                    if (info.sedeId) setForm(prev => ({ ...prev, sedeId: info.sedeId as string }));
+                  });
+                }
               }}
               clasificacion="HOSPITAL"
             />
@@ -2434,7 +2620,7 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
                   Selecciona primero el hospital
                 </span>
               ) : (
-                <input style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} onChange={e => { setForm({ ...form, cirugia: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+                <input style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, cirugia: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
               )}
               {error?.field === 'cirugia' && <span style={styles.errorText}>{error.message}</span>}
             </div>
@@ -2517,7 +2703,7 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-numProveedor">
               <label style={styles.formLabel}>N° Proveedor{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
-              <input style={{ ...styles.formInput, ...(error?.field === 'numProveedor' ? styles.inputError : {}) }} value={form.numProveedor} onChange={e => { setForm({ ...form, numProveedor: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+              <input style={{ ...styles.formInput, ...(error?.field === 'numProveedor' ? styles.inputError : {}) }} value={form.numProveedor} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, numProveedor: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
               {error?.field === 'numProveedor' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
@@ -2530,13 +2716,13 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-tiempoEntrega">
               <label style={styles.formLabel}>Tiempo de Entrega{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
-              <input style={{ ...styles.formInput, ...(error?.field === 'tiempoEntrega' ? styles.inputError : {}) }} value={form.tiempoEntrega} onChange={e => { setForm({ ...form, tiempoEntrega: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+              <input style={{ ...styles.formInput, ...(error?.field === 'tiempoEntrega' ? styles.inputError : {}) }} value={form.tiempoEntrega} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, tiempoEntrega: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
               {error?.field === 'tiempoEntrega' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Observaciones</label>
-              <input style={styles.formInput} value={form.observaciones} onChange={e => setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) })} />
+              <input style={styles.formInput} value={form.observaciones} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) }); }} />
             </div>
 
             <ListPicker
@@ -2665,6 +2851,8 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
                 <AddStagedItemForm
                   tarifaId={tarifaId}
                   tarifaLabel={tarifaLabel}
+                  items={stagedItems}
+                  onSelectItem={setSelectedStagedItem}
                   onAdd={item => {
                     setStagedItems(prev => [...prev, item]);
                     if (form.paqueteId) setForm(prev => ({ ...prev, paqueteId: '', paqueteLabel: '', nivel: '' }));
@@ -2710,12 +2898,43 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
             {form.tieneDcto && (
               <>
                 <div style={styles.formGroup} id="cotizacion-create-field-porcentajeDcto">
-                  <label style={styles.formLabel}>Porcentaje de descuento *</label>
-                  <input type="number" step="0.01" style={{ ...styles.formInput, ...(error?.field === 'porcentajeDcto' ? styles.inputError : {}) }} value={form.porcentajeDcto} onChange={e => { setForm({ ...form, porcentajeDcto: e.target.value }); setError(null); }} />
+                  <label style={styles.formLabel}>Porcentaje de descuento</label>
+                  <input type="number" step="0.01" min="1" max="100" style={{ ...styles.formInput, ...(error?.field === 'porcentajeDcto' ? styles.inputError : {}) }} value={form.porcentajeDcto} onChange={e => {
+              const val = e.target.value;
+              if (val !== '' && (Number(val) < 1 || Number(val) > 100)) {
+                setError({ field: 'porcentajeDcto', message: 'El porcentaje debe estar entre 1 y 100.' });
+                return;
+              }
+              if (val !== '') {
+                const nuevoPctMonto = subtotal * Number(val) / 100;
+                const dctoValorMonto = Number(form.vrDctoPesos) || 0;
+                if (nuevoPctMonto + dctoValorMonto > subtotal) {
+                  setError({ field: 'porcentajeDcto', message: 'Los descuentos combinados no pueden exceder el subtotal.' });
+                  return;
+                }
+              }
+              setForm({ ...form, porcentajeDcto: val });
+              setError(null);
+            }} />
                   {error?.field === 'porcentajeDcto' && <span style={styles.errorText}>{error.message}</span>}
                 </div>
                 <div style={styles.formGroup}>
-                  <label style={styles.formLabel}>Valor de descuento</label>
+                  <label style={styles.formLabel}>Valor de descuento ($)</label>
+                  <input type="number" step="0.01" min="0" style={{ ...styles.formInput, ...(error?.field === 'vrDctoPesos' ? styles.inputError : {}) }} value={form.vrDctoPesos} onChange={e => {
+              const val = e.target.value;
+              const dctoPorcentajeMonto = subtotal * (Number(form.porcentajeDcto) || 0) / 100;
+              const maxValor = subtotal - dctoPorcentajeMonto;
+              if (val !== '' && Number(val) > maxValor) {
+                setError({ field: 'vrDctoPesos', message: 'El valor de descuento no puede exceder el subtotal disponible.' });
+                return;
+              }
+              setForm({ ...form, vrDctoPesos: val });
+              setError(null);
+            }} />
+                  {error?.field === 'vrDctoPesos' && <span style={styles.errorText}>{error.message}</span>}
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.formLabel}>Total descuento</label>
                   <input
                     style={{ ...styles.formInput, color: '#6b6b60', backgroundColor: '#f4f4ee', cursor: 'not-allowed' }}
                     value={formatMoney(vrDcto)}
@@ -2830,7 +3049,7 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
   // Se calcula una sola vez acá (en vez de adentro del bloque de la pestaña Totales) porque ahora
   // también lo necesita la franja de resumen (Total), que vive en la tarjeta de arriba, fuera de
   // ese bloque.
-  const totales = data ? computeTotales(data.items, data.tieneDcto, data.porcentajeDcto, data.impuestos) : null;
+  const totales = data ? computeTotales(data.items, data.tieneDcto, data.porcentajeDcto, data.vrDctoPesos, data.impuestos) : null;
 
   useEffect(() => {
     if (!showMoreMenu) return;
@@ -2968,24 +3187,24 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
               <>
                 <div style={styles.summaryBar}>
                   <div style={styles.summaryBarItem}>
-                    <span style={styles.detalleLabel}>Total</span>
-                    <span style={{ ...styles.detalleValue, fontWeight: 700 }}>{formatMoney(totales.total)}</span>
+                    <span style={{ ...styles.detalleLabel, fontWeight: 500 }}>Total</span>
+                    <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{formatMoney(totales.total)}</span>
                   </div>
                   <div style={styles.summaryBarItem}>
-                    <span style={styles.detalleLabel}>Hospital</span>
-                    <span style={{ ...styles.detalleValue, fontWeight: 700 }}>{data.hospital ?? '-'}</span>
+                    <span style={{ ...styles.detalleLabel, fontWeight: 500 }}>Hospital</span>
+                    <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{data.hospital ?? '-'}</span>
                   </div>
                   <div style={styles.summaryBarItem}>
-                    <span style={styles.detalleLabel}>Usuario</span>
-                    <span style={{ ...styles.detalleValue, fontWeight: 700 }}>{data.usuario ?? '-'}</span>
+                    <span style={{ ...styles.detalleLabel, fontWeight: 500 }}>Usuario</span>
+                    <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{data.usuario ?? '-'}</span>
                   </div>
                   <div style={styles.summaryBarItem}>
-                    <span style={styles.detalleLabel}>Fecha</span>
-                    <span style={{ ...styles.detalleValue, fontWeight: 700 }}>{formatDate(data.fecha)}</span>
+                    <span style={{ ...styles.detalleLabel, fontWeight: 500 }}>Fecha</span>
+                    <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{formatDate(data.fecha)}</span>
                   </div>
                 </div>
 
-                <div style={{ ...styles.infoTabBar, marginBottom: 0, borderBottom: 'none', overflowX: 'auto' as const, flexWrap: 'nowrap' as const, WebkitOverflowScrolling: 'touch' as const }}>
+                <div style={{ ...styles.infoTabBar, marginBottom: 0, borderBottom: 'none', overflowX: 'auto' as const, overflowY: 'hidden' as const, flexWrap: 'nowrap' as const, WebkitOverflowScrolling: 'touch' as const, touchAction: 'pan-x' as const }}>
                   <button
                     style={{ ...styles.infoTabBtn, ...(mainTab === 'general' ? styles.infoTabBtnActive : styles.infoTabBtnInactive) }}
                     onClick={e => { setMainTab('general'); e.currentTarget.blur(); }}
@@ -3038,22 +3257,22 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
               />
             </div>
           ) : totales && (() => {
-            const { subtotal, vrDcto, totalAntesImpuestos, iva, retencion, total } = totales;
+            const { subtotal, totalAntesImpuestos, iva, retencion, total } = totales;
             return (
             <div style={{ height: tabContentHeight, overflow: 'hidden', transition: 'height 0.3s ease' }}>
             <div ref={tabContentRef} key={mainTab} className="page-fade-in" style={styles.detailBodyCard}>
               {mainTab === 'general' && (
                 <div style={styles.infoSectionBox}>
                   <div style={styles.detalleGrid}>
-                    <DetalleItem label="N° Cotización">{data.numCotizacion || data.id}</DetalleItem>
-                    <DetalleItem label="Registrado Por">{data.usuario ?? '-'}</DetalleItem>
-                    <DetalleItem label="Marca de Tiempo">{formatDateTime(data.marcaDeTiempo)}</DetalleItem>
-                    <DetalleItem label="Fecha">{formatDate(data.fecha)}</DetalleItem>
-                    <DetalleItem label="Dirigido a">{data.dirigidoA ?? '-'}</DetalleItem>
-                    <DetalleItem label="Médico">{data.medico ?? '-'}</DetalleItem>
-                    <DetalleItem label="Hospital">{data.hospital ?? '-'}</DetalleItem>
-                    <DetalleItem label="Cirugía">{data.cirugia ?? '-'}</DetalleItem>
-                    <DetalleItem label="Sede">{data.sede ?? '-'}</DetalleItem>
+                    <DetalleItem label="N° Cotización" bold labelBold={false}>{data.numCotizacion || data.id}</DetalleItem>
+                    <DetalleItem label="Registrado Por" bold labelBold={false}>{data.usuario ?? '-'}</DetalleItem>
+                    <DetalleItem label="Marca de Tiempo" bold labelBold={false}>{formatDateTime(data.marcaDeTiempo)}</DetalleItem>
+                    <DetalleItem label="Fecha" bold labelBold={false}>{formatDate(data.fecha)}</DetalleItem>
+                    <DetalleItem label="Dirigido a" bold labelBold={false}>{data.dirigidoA ?? '-'}</DetalleItem>
+                    <DetalleItem label="Médico" bold labelBold={false}>{data.medico ?? '-'}</DetalleItem>
+                    <DetalleItem label="Hospital" bold labelBold={false}>{data.hospital ?? '-'}</DetalleItem>
+                    <DetalleItem label="Cirugía" bold labelBold={false}>{data.cirugia ?? '-'}</DetalleItem>
+                    <DetalleItem label="Sede" bold labelBold={false}>{data.sede ?? '-'}</DetalleItem>
                   </div>
                 </div>
               )}
@@ -3061,24 +3280,24 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
               {mainTab === 'comercial' && (
                 <div style={styles.infoSectionBox}>
                   <div style={styles.detalleGrid}>
-                    <DetalleItem label="Cubrimiento">{data.cubrimiento ?? '-'}</DetalleItem>
-                    <DetalleItem label="Responsable Económico">{data.responsableEconomico ?? '-'}</DetalleItem>
-                    <DetalleItem label="N° Proveedor">{data.numProveedor ?? '-'}</DetalleItem>
-                    <DetalleItem label="Tarifa">{data.tarifa ?? '-'}</DetalleItem>
-                    <DetalleItem label="Tiempo de Entrega">{data.tiempoEntrega ?? '-'}</DetalleItem>
-                    <DetalleItem label="Empresa">{data.empresa ?? '-'}</DetalleItem>
-                    <DetalleItem label="¿Tiene Descuento?">{data.tieneDcto ? 'Sí' : 'No'}</DetalleItem>
+                    <DetalleItem label="Cubrimiento" bold labelBold={false}>{data.cubrimiento ?? '-'}</DetalleItem>
+                    <DetalleItem label="Responsable Económico" bold labelBold={false}>{data.responsableEconomico ?? '-'}</DetalleItem>
+                    <DetalleItem label="N° Proveedor" bold labelBold={false}>{data.numProveedor ?? '-'}</DetalleItem>
+                    <DetalleItem label="Tarifa" bold labelBold={false}>{data.tarifa ?? '-'}</DetalleItem>
+                    <DetalleItem label="Tiempo de Entrega" bold labelBold={false}>{data.tiempoEntrega ?? '-'}</DetalleItem>
+                    <DetalleItem label="Empresa" bold labelBold={false}>{data.empresa ?? '-'}</DetalleItem>
+                    <DetalleItem label="¿Tiene Descuento?" bold labelBold={false}>{data.tieneDcto ? 'Sí' : 'No'}</DetalleItem>
                     {data.tieneDcto && (
                       <>
-                        <DetalleItem label="Porcentaje de descuento">{data.porcentajeDcto !== null ? `${data.porcentajeDcto}%` : '-'}</DetalleItem>
-                        <DetalleItem label="Valor de descuento">{formatMoney(data.vrDcto)}</DetalleItem>
-                        <DetalleItem label="V/R Dcto $">{formatMoney(data.vrDctoPesos)}</DetalleItem>
+                        <DetalleItem label="Porcentaje de descuento" bold labelBold={false}>{data.porcentajeDcto !== null ? `${data.porcentajeDcto}%` : '-'}</DetalleItem>
+                        <DetalleItem label="Valor de descuento fijo ($)" bold labelBold={false}>{formatMoney(data.vrDctoPesos)}</DetalleItem>
+                        <DetalleItem label="Total descuento" bold labelBold={false}>{formatMoney(data.vrDcto)}</DetalleItem>
                       </>
                     )}
-                    <DetalleItem label="Impuestos">{data.impuestos ?? '-'}</DetalleItem>
-                    <DetalleItem label="Paquete">{data.paquete ?? '-'}</DetalleItem>
-                    <DetalleItem label="Observaciones">{data.observaciones ?? '-'}</DetalleItem>
-                    <DetalleItem label="Nota">{data.nota ?? '-'}</DetalleItem>
+                    <DetalleItem label="Impuestos" bold labelBold={false}>{data.impuestos ?? '-'}</DetalleItem>
+                    <DetalleItem label="Paquete" bold labelBold={false}>{data.paquete ?? '-'}</DetalleItem>
+                    <DetalleItem label="Observaciones" bold labelBold={false}>{data.observaciones ?? '-'}</DetalleItem>
+                    <DetalleItem label="Nota" labelBold={false}>{data.nota ?? '-'}</DetalleItem>
                   </div>
                 </div>
               )}
@@ -3133,7 +3352,7 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
               <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, gap: '2rem', alignItems: 'flex-start' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={styles.sectionHeader}>
-                    <span style={styles.sectionTitle}>Remisión Asociada</span>
+                    <span style={{ ...styles.sectionTitle, fontWeight: 500 }}>Remisión Asociada</span>
                     <span style={styles.countBadge}>{data.remisionesAsociadas.length}</span>
                   </div>
 
@@ -3159,30 +3378,36 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
 
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={styles.sectionHeader}>
-                    <span style={{ ...styles.sectionTitle, color: '#374151' }}>Totales</span>
+                    <span style={{ ...styles.sectionTitle, color: '#374151', fontWeight: 500 }}>Totales</span>
                   </div>
                   <div style={styles.totalsSummaryBox}>
                     <div style={styles.totalsSummaryRow}>
                       <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Subtotal</span>
-                      <span style={styles.detalleValue}>{formatMoney(subtotal)}</span>
+                      <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{formatMoney(subtotal)}</span>
                     </div>
-                    {data.tieneDcto && (
+                    {data.tieneDcto && !!data.porcentajeDcto && (
                       <div style={styles.totalsSummaryRow}>
-                        <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Descuento{data.porcentajeDcto !== null ? ` (${data.porcentajeDcto}%)` : ''}</span>
-                        <span style={styles.detalleValue}>-{formatMoney(vrDcto)}</span>
+                        <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Descuento ({data.porcentajeDcto}%)</span>
+                        <span style={{ ...styles.detalleValue, fontWeight: 600 }}>-{formatMoney(subtotal * (Number(data.porcentajeDcto) || 0) / 100)}</span>
+                      </div>
+                    )}
+                    {data.tieneDcto && !!data.vrDctoPesos && (
+                      <div style={styles.totalsSummaryRow}>
+                        <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Descuento (valor)</span>
+                        <span style={{ ...styles.detalleValue, fontWeight: 600 }}>-{formatMoney(Number(data.vrDctoPesos) || 0)}</span>
                       </div>
                     )}
                     <div style={styles.totalsSummaryRow}>
                       <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Total antes de Impuestos</span>
-                      <span style={styles.detalleValue}>{formatMoney(totalAntesImpuestos)}</span>
+                      <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{formatMoney(totalAntesImpuestos)}</span>
                     </div>
                     <div style={styles.totalsSummaryRow}>
                       <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>IVA</span>
-                      <span style={styles.detalleValue}>{formatMoney(iva)}</span>
+                      <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{formatMoney(iva)}</span>
                     </div>
                     <div style={styles.totalsSummaryRow}>
                       <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Retención</span>
-                      <span style={styles.detalleValue}>{retencion > 0 ? `-${formatMoney(retencion)}` : formatMoney(retencion)}</span>
+                      <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{retencion > 0 ? `-${formatMoney(retencion)}` : formatMoney(retencion)}</span>
                     </div>
                     <div style={styles.totalsSummaryTotalRow}>
                       <span>Total</span>
@@ -3529,7 +3754,7 @@ const styles: Record<string, React.CSSProperties> = {
   modalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '100%', maxWidth: '900px', maxHeight: '90vh', overflow: 'auto' as const, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
   modalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.25rem 1.5rem', backgroundColor: '#f9fafb', borderBottom: '1px solid #eeeee6', borderTopLeftRadius: '16px', borderTopRightRadius: '16px', position: 'sticky' as const, top: 0, zIndex: 1 },
   modalTitle: { fontSize: '1.1rem', fontWeight: 700, color: '#16170f', margin: 0 },
-  modalTitleLabel: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
+  modalTitleLabel: { fontSize: '0.7rem', fontWeight: 550, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
   modalTitleIconBadge: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '40px', height: '40px', borderRadius: '12px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#4d7a13', flexShrink: 0 },
   closeBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '34px', height: '34px', border: 'none', backgroundColor: '#f4f4ee', borderRadius: '8px', cursor: 'pointer', color: '#6b6b60' },
   iconMenuBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '34px', height: '34px', border: '1px solid #e5e7eb', borderRadius: '999px', cursor: 'pointer', color: '#33342a', flexShrink: 0, backgroundColor: 'transparent' },
@@ -3541,7 +3766,7 @@ const styles: Record<string, React.CSSProperties> = {
   detalleGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '1.25rem 1.5rem' },
   infoSectionBox: { backgroundColor: '#f9fafb', border: '1px solid #eeeee6', borderRadius: '10px', padding: '1.25rem' },
   infoTabBar: { display: 'flex', gap: '0.25rem', borderBottom: '1px solid #eeeee6', marginBottom: '1.25rem' },
-  infoTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.65rem 0.25rem', marginRight: '1.25rem', border: 'none', background: 'transparent', fontSize: '0.875rem', fontWeight: 700, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, whiteSpace: 'nowrap' as const, flexShrink: 0 },
+  infoTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.65rem 0.25rem', marginRight: '1.25rem', border: 'none', background: 'transparent', fontSize: '0.875rem', fontWeight: 550, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, whiteSpace: 'nowrap' as const, flexShrink: 0 },
   infoTabBtnActive: { color: '#4d7a13', borderBottomColor: '#4d7a13' },
   infoTabBtnInactive: { color: '#9ca3af', borderBottomColor: 'transparent' },
   // Franja de resumen (Total/Hospital/Usuario/Fecha) debajo del encabezado, como en el detalle de
@@ -3589,6 +3814,11 @@ const styles: Record<string, React.CSSProperties> = {
   medicoTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 0.9rem', borderRadius: '999px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510', fontSize: '0.8rem', fontWeight: 600, width: 'fit-content' as const },
   medicoDropdown: { position: 'absolute' as const, top: 'calc(100% + 0.35rem)', left: 0, right: 0, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', maxHeight: '220px', overflowY: 'auto' as const, zIndex: 20 },
   medicoDropdownItem: { padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#333', cursor: 'pointer' },
+  addedItemsList: { display: 'flex', flexDirection: 'column' as const, maxHeight: '180px', overflowY: 'auto' as const, border: '1px solid #eeeee6', borderRadius: '8px' },
+  addedItemRow: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.75rem', borderBottom: '1px solid #f4f4ee', fontSize: '0.82rem' },
+  addedItemQty: { color: '#9ca3af', fontWeight: 700, flexShrink: 0 },
+  addedItemLabel: { flex: 1, minWidth: 0, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, whiteSpace: 'nowrap' as const, color: '#33342a' },
+  addedItemValue: { fontWeight: 700, color: '#3f6510', flexShrink: 0 },
   errorText: { fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 },
   inputError: { border: '1.5px solid #dc2626' },
   formActions: { display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' },

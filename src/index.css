@@ -159,6 +159,10 @@ body {
   box-shadow: 0 6px 14px rgba(0, 0, 0, 0.15);
 }
 
+.dropdown-item-hover:hover {
+  background-color: #f4f4ee;
+}
+
 .btn-press:active {
   transform: translateY(0);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
