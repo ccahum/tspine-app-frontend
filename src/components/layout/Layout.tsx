@@ -36,6 +36,13 @@ export default function Layout() {
   const [isNavigating, setIsNavigating] = useState(false);
   const location = useLocation();
 
+  // Sin esto, navegar a una página nueva (ej. entrar al detalle de una programación o remisión)
+  // conserva el scroll de la página anterior — si venías desplazado hacia abajo en el listado, la
+  // vista de detalle abre a mitad de página en vez de mostrar el inicio.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [location.pathname]);
+
   useEffect(() => {
     if (!mobileNavOpen) return;
     // overflow:hidden solo en el body no basta en iOS Safari — el fondo se sigue pudiendo

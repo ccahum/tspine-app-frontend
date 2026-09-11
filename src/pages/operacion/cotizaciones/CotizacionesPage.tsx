@@ -2203,7 +2203,13 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
             cotizacionId={cotizacion.id}
             onClose={() => setSelectedItem(null)}
             onSaved={() => { setItemsChanged(true); onNotify('Consumo actualizado'); }}
-            onDeleted={() => { setItemsChanged(true); onNotify('Consumo eliminado'); }}
+            onDeleted={() => {
+              setItemsChanged(true);
+              onNotify('Consumo eliminado');
+              // Igual que al eliminar desde la fila de la tabla: tocar los consumos de una
+              // cotización con paquete la desvincula del paquete.
+              setForm(prev => (prev.paqueteId ? { ...prev, paqueteId: '', paqueteLabel: '', nivel: '' } : prev));
+            }}
           />
         )}
       </div>
@@ -2871,7 +2877,11 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
                     setStagedItems(prev => prev.map(x => (x.localId === updated.localId ? updated : x)));
                     setSelectedStagedItem(null);
                   }}
-                  onDelete={() => { setStagedItems(prev => prev.filter(x => x.localId !== selectedStagedItem.localId)); onNotify('Consumo eliminado'); }}
+                  onDelete={() => {
+                    setStagedItems(prev => prev.filter(x => x.localId !== selectedStagedItem.localId));
+                    onNotify('Consumo eliminado');
+                    if (form.paqueteId) setForm(prev => ({ ...prev, paqueteId: '', paqueteLabel: '', nivel: '' }));
+                  }}
                 />
               )}
             </div>

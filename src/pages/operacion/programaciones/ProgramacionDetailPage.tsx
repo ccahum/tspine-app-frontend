@@ -1142,7 +1142,7 @@ export default function ProgramacionDetailPage() {
             />
             <button
               className="btn-press header-btn-secondary"
-              style={{ ...styles.btnPill, ...(isMobile ? { order: 4 } : {}) }}
+              style={{ ...styles.btnPill, ...(isMobile ? { order: 2 } : {}) }}
               onClick={() => setShowWhatsappConfirm(true)}
             >
               <i className="fa-brands fa-whatsapp" style={{ fontSize: 16, color: '#4d7a13' }} />
@@ -1155,83 +1155,87 @@ export default function ProgramacionDetailPage() {
               style={{ display: 'none' }}
               onChange={handleGmailFileSelected}
             />
-            <button
-              className="btn-press header-btn-secondary"
-              style={{
-                ...styles.btnPill,
-                position: 'relative' as const,
-                overflow: 'hidden' as const,
-                ...(isMobile ? { order: 1 } : {}),
-                ...(gmailSending ? { pointerEvents: 'none' as const } : {}),
-              }}
-              onClick={() => setShowGmailConfirm(true)}
-              disabled={gmailSending}
-            >
-              {gmailSending && (
-                <span
-                  style={{
-                    position: 'absolute' as const,
-                    inset: 0,
-                    width: `${gmailProgress}%`,
-                    backgroundColor: '#e9f2d8',
-                    transition: 'width 0.15s ease',
-                    zIndex: 0,
-                  }}
-                />
-              )}
-              <span style={{ position: 'relative' as const, zIndex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <SiGmail size={14} color="#8a8a80" />
-                {gmailSending ? 'Enviando...' : 'Enviar por Gmail'}
-              </span>
-            </button>
-
-            <span style={{ ...styles.headerDivider, ...(isMobile ? { order: 2 } : {}) }} />
-
-            <div style={{ position: 'relative' as const, ...(isMobile ? { order: 3 } : {}) }} ref={agregarMenuRef}>
+            {/* Gmail + divisor + Agregar van agrupados en un mismo contenedor flex para que, al
+                envolver en móvil, siempre queden juntos en la misma línea (nunca "Agregar" solo,
+                separado de "Enviar por Gmail"). */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', ...(isMobile ? { order: 1 } : {}) }}>
               <button
-                className="btn-press header-btn-primary"
-                style={styles.btnPillPrimary}
-                onClick={() => { setShowAgregarMenu(o => !o); setShowMoreMenu(false); }}
+                className="btn-press header-btn-secondary"
+                style={{
+                  ...styles.btnPill,
+                  position: 'relative' as const,
+                  overflow: 'hidden' as const,
+                  ...(gmailSending ? { pointerEvents: 'none' as const } : {}),
+                }}
+                onClick={() => setShowGmailConfirm(true)}
+                disabled={gmailSending}
               >
-                Agregar
-                <MaterialIcon name="expand_more" size={18} style={{ transform: showAgregarMenu ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
+                {gmailSending && (
+                  <span
+                    style={{
+                      position: 'absolute' as const,
+                      inset: 0,
+                      width: `${gmailProgress}%`,
+                      backgroundColor: '#e9f2d8',
+                      transition: 'width 0.15s ease',
+                      zIndex: 0,
+                    }}
+                  />
+                )}
+                <span style={{ position: 'relative' as const, zIndex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <SiGmail size={14} color="#8a8a80" />
+                  {gmailSending ? 'Enviando...' : 'Enviar por Gmail'}
+                </span>
               </button>
-              {showAgregarMenu && (
-                <div style={styles.dropdown}>
-                  <button
-                    style={{ ...styles.dropdownItem, ...(!puedeAgregarRemision ? styles.dropdownItemDisabled : {}) }}
-                    onClick={() => { setShowAgregarMenu(false); openRemisionModal(); }}
-                    disabled={!puedeAgregarRemision}
-                    title={!puedeAgregarRemision ? 'Necesitas al menos una requisición para poder agregar una remisión.' : undefined}
-                    onMouseEnter={e => { if (puedeAgregarRemision) e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
-                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-                  >
-                    <MaterialIcon name="description" size={17} />
-                    Agregar Remisión
-                  </button>
-                  <button
-                    style={styles.dropdownItem}
-                    onClick={() => { setShowAgregarMenu(false); openTecnicoSugeridoModal(); }}
-                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
-                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-                  >
-                    <MaterialIcon name="engineering" size={17} />
-                    Agregar Técnico Sugerido
-                  </button>
-                  <button
-                    style={styles.dropdownItem}
-                    onClick={() => { setShowAgregarMenu(false); openRequisicionModal(); }}
-                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
-                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-                  >
-                    <MaterialIcon name="inventory_2" size={17} />
-                    Agregar Requisición
-                  </button>
-                </div>
-              )}
+
+              <span style={styles.headerDivider} />
+
+              <div style={{ position: 'relative' as const }} ref={agregarMenuRef}>
+                <button
+                  className="btn-press header-btn-primary"
+                  style={styles.btnPillPrimary}
+                  onClick={() => { setShowAgregarMenu(o => !o); setShowMoreMenu(false); }}
+                >
+                  Agregar
+                  <MaterialIcon name="expand_more" size={18} style={{ transform: showAgregarMenu ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
+                </button>
+                {showAgregarMenu && (
+                  <div style={styles.dropdown}>
+                    <button
+                      style={{ ...styles.dropdownItem, ...(!puedeAgregarRemision ? styles.dropdownItemDisabled : {}) }}
+                      onClick={() => { setShowAgregarMenu(false); openRemisionModal(); }}
+                      disabled={!puedeAgregarRemision}
+                      title={!puedeAgregarRemision ? 'Necesitas al menos una requisición para poder agregar una remisión.' : undefined}
+                      onMouseEnter={e => { if (puedeAgregarRemision) e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
+                      onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                    >
+                      <MaterialIcon name="description" size={17} />
+                      Agregar Remisión
+                    </button>
+                    <button
+                      style={styles.dropdownItem}
+                      onClick={() => { setShowAgregarMenu(false); openTecnicoSugeridoModal(); }}
+                      onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
+                      onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                    >
+                      <MaterialIcon name="engineering" size={17} />
+                      Agregar Técnico Sugerido
+                    </button>
+                    <button
+                      style={styles.dropdownItem}
+                      onClick={() => { setShowAgregarMenu(false); openRequisicionModal(); }}
+                      onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
+                      onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                    >
+                      <MaterialIcon name="inventory_2" size={17} />
+                      Agregar Requisición
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div style={{ position: 'relative' as const, ...(isMobile ? { order: 5 } : {}) }} ref={moreMenuRef}>
+            <div style={{ position: 'relative' as const, ...(isMobile ? { order: 3 } : {}) }} ref={moreMenuRef}>
               <button
                 className="btn-press header-btn-secondary"
                 style={styles.iconMenuBtn}
@@ -1335,7 +1339,7 @@ export default function ProgramacionDetailPage() {
           </div>
         </div>
 
-        <div style={{ ...styles.mainTabBar, ...(isMobile ? { overflowX: 'auto' as const, WebkitOverflowScrolling: 'touch' as const } : {}) }}>
+        <div style={{ ...styles.mainTabBar, ...(isMobile ? { overflowX: 'auto' as const, overflowY: 'hidden' as const, WebkitOverflowScrolling: 'touch' as const, touchAction: 'pan-x' as const } : {}) }}>
           {mainTabItems.map(({ key, label, count }) => {
             const active = mainTab === key;
             return (
@@ -1356,7 +1360,7 @@ export default function ProgramacionDetailPage() {
 
         {mainTab === 'resumen' && (
         <>
-        <div style={{ ...styles.desgloseSection, gridTemplateColumns: isMobile ? '1fr' : '1.2fr 1fr' }}>
+        <div style={{ ...styles.desgloseSection, gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : 'minmax(0, 1.2fr) minmax(0, 1fr)' }}>
           <div style={styles.financialCard}>
             <h3 style={styles.cardTitle}>Desglose Financiero</h3>
 
@@ -1530,8 +1534,8 @@ export default function ProgramacionDetailPage() {
 
         {/* ── Requisiciones + Notas de Crédito ──────────────────────── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginBottom: '2rem' }}>
-        <div style={{ display: 'flex', gap: '1.5rem' }}>
-          <div style={{ flex: 1 }}>
+        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, gap: '1.5rem' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div style={styles.remisionesTitleRow}>
               <h2 style={styles.sectionTitle}>Requisiciones</h2>
               <span style={styles.badge}>{requisiciones.length}</span>
@@ -1573,7 +1577,7 @@ export default function ProgramacionDetailPage() {
           </div>
 
           {/* ── Notas de Crédito ───────────────────────────────────── */}
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div style={styles.remisionesTitleRow}>
               <h2 style={styles.sectionTitle}>Notas de Crédito</h2>
               <span style={styles.badge}>{notasCredito.length}</span>
@@ -1619,8 +1623,8 @@ export default function ProgramacionDetailPage() {
         </div>
 
         {/* ── Documentos + Técnicos Sugeridos ───────────────────────── */}
-        <div style={{ display: 'flex', gap: '1.5rem' }}>
-          <div style={{ flex: 1 }}>
+        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, gap: '1.5rem' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div style={styles.remisionesTitleRow}>
               <h2 style={styles.sectionTitle}>Documentos</h2>
               <span style={styles.badge}>{documentos.length}</span>
@@ -1665,7 +1669,7 @@ export default function ProgramacionDetailPage() {
             </button>
           </div>
 
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div style={styles.remisionesTitleRow}>
               <h2 style={styles.sectionTitle}>Técnicos Sugeridos</h2>
               <span style={styles.badge}>{tecnicosSugeridos.length}</span>
