@@ -710,27 +710,20 @@ function cotizacionPdfFileName(data: CotizacionDetail): string {
   return `Cotizacion-${data.numCotizacion || data.id}.pdf`;
 }
 
-async function generarPdfCotizacion(data: CotizacionDetail) {
+async function generarPdfCotizacion(data: CotizacionDetail, preOpenedTab?: Window | null) {
   const doc = await buildCotizacionPdf(data);
   const fileName = cotizacionPdfFileName(data);
 
-  // En móvil, el atributo download de doc.save() no siempre se respeta para PDFs — el navegador
-  // prioriza su visor interno y lo abre en vez de descargarlo. La API de compartir del sistema
-  // (misma que ya se usa para WhatsApp) sí abre la hoja nativa, que trae "Guardar en Archivos"/
-  // Descargas entre sus opciones. En desktop (sin soporte) cae al doc.save() de siempre.
-  const nav = navigator as Navigator & { canShare?: (data?: ShareData) => boolean; share?: (data: ShareData) => Promise<void> };
-  if (nav.canShare && nav.share) {
-    const blob: Blob = doc.output('blob');
-    const file = new File([blob], fileName, { type: 'application/pdf' });
-    if (nav.canShare({ files: [file] })) {
-      try {
-        await nav.share({ files: [file], title: fileName });
-        return;
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') return; // el usuario canceló el cuadro nativo
-        // si falla por otro motivo, se sigue con el respaldo de abajo
-      }
-    }
+  // Se abre en una pestaña del navegador (para verlo) Y se descarga automáticamente (doc.save())
+  // al mismo tiempo — preOpenedTab se abre en blanco ANTES de este await (ver handleGenerarPdf),
+  // ya que si se llamara a window.open() recién aquí, el navegador móvil ya no lo asociaría al
+  // toque original del usuario y lo bloquearía en silencio.
+  const blob = doc.output('blob');
+  const url = URL.createObjectURL(blob);
+  if (preOpenedTab) {
+    preOpenedTab.location.href = url;
+  } else {
+    window.open(url, '_blank');
   }
 
   doc.save(fileName);
@@ -3376,9 +3369,14 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
   const handleGenerarPdf = async () => {
     if (!data) return;
     setGeneratingPdf(true);
+    // Se abre la pestaña en blanco YA, dentro del mismo clic — buildCotizacionPdf tarda un rato
+    // cargando imágenes con await, y si se llama a window.open() recién al terminar, el navegador
+    // ya no lo asocia al toque del usuario y lo bloquea en silencio.
+    const preOpenedTab = window.open('', '_blank');
     try {
-      await generarPdfCotizacion(data);
+      await generarPdfCotizacion(data, preOpenedTab);
     } catch (err) {
+      if (preOpenedTab) preOpenedTab.close();
       alert('No se pudo generar el PDF. Intenta de nuevo.');
       console.error(err);
     } finally {
