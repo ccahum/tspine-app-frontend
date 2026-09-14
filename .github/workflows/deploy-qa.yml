@@ -1,0 +1,22 @@
+name: Deploy to QA
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy frontend via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd /opt/luminar-tspine-qa/frontend
+            git pull
+            docker run --rm -v /opt/luminar-tspine-qa/frontend:/app -w /app node:20-alpine sh -c "npm ci && npm run build"
