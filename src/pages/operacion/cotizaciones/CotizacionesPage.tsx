@@ -8,6 +8,8 @@ import { Search, X, Plus, Trash2, Pencil, FileDown, MoreHorizontal, Check } from
 // cuando el usuario realmente pide un PDF, en vez de venir incluido desde que se abre Cotizaciones.
 import type jsPDF from 'jspdf';
 import fondoCotizacionUrl from '../../../assets/cotización.png';
+import fondoCotizacionCabcariUrl from '../../../assets/cotización-cabcari.png';
+import fondoCotizacionNeurotecUrl from '../../../assets/cotización-neurotec.png';
 import iso9001Url from '../../../assets/iso9001.jpg';
 import DateRangeFilter from '../../../components/filters/DateRangeFilter';
 import SuccessToast from '../../../components/SuccessToast';
@@ -134,6 +136,32 @@ const EMPRESA_INFO = {
   email: 'administracion@tecnologiaspine.com',
 };
 
+const EMPRESA_INFO_CABCARI = {
+  nombre: 'Cabcari S.A. de C.V.',
+  rfc: 'CAB240624NJ3',
+  celular: '999 389 6604',
+  telefono: '999 666 3454',
+  email: 'cabcari.mid@outlook.com',
+};
+
+const EMPRESA_INFO_NEUROTEC = {
+  nombre: 'Guillermo Alfredo Gualdrón Bateca',
+  rfc: 'GUBG8710068W1',
+  celular: '999 666 3454',
+  telefono: '999 386 7505',
+  email: 'administracion@tecnologiaspine.com',
+};
+
+/** El membrete/logo y los datos fiscales del PDF dependen de la Empresa elegida en la cotización
+ * — se detecta por el nombre (Tercero libre, sin un id fijo) en vez de un id. */
+function isCabcari(empresaNombre: string | null): boolean {
+  return (empresaNombre ?? '').toLowerCase().includes('cabcari');
+}
+
+function isNeurotec(empresaNombre: string | null): boolean {
+  return (empresaNombre ?? '').toLowerCase().includes('gualdrón bateca');
+}
+
 // Colores tomados directamente del logo de Tecnología Spine (muestreados pixel a pixel del PNG:
 // carbón de "Tecnología" = rgb(37,38,36), verde de "Spine" = rgb(106,124,9) — son los dos colores
 // dominantes reales del archivo, no una estimación visual). PDF_OLIVE_BORDER es el mismo verde
@@ -211,6 +239,16 @@ function drawField(doc: AutoTableDoc, label: string, value: string, x: number, m
 
 async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc> {
   const { subtotal, iva, retencion, total } = computeTotales(data.items, data.tieneDcto, data.porcentajeDcto, data.vrDctoPesos, data.impuestos);
+  const empresaEsCabcari = isCabcari(data.empresa);
+  const empresaEsNeurotec = isNeurotec(data.empresa);
+  // Cabcari y Neurotec comparten el mismo formato "alterno" (sin ISO 9001, sin franja de
+  // teléfono/correo, encabezado centrado sin fecha, sin línea arriba de la tabla) — solo cambian
+  // la plantilla, los datos fiscales y el color de acento de cada uno.
+  const usaFormatoAlterno = empresaEsCabcari || empresaEsNeurotec;
+  const empresaInfo = empresaEsCabcari ? EMPRESA_INFO_CABCARI : empresaEsNeurotec ? EMPRESA_INFO_NEUROTEC : EMPRESA_INFO;
+  const fondoUrl = empresaEsCabcari ? fondoCotizacionCabcariUrl : empresaEsNeurotec ? fondoCotizacionNeurotecUrl : fondoCotizacionUrl;
+  // Color de acento de las tablas (encabezado, líneas, fila de Total).
+  const tableAccentColor: [number, number, number] = empresaEsCabcari ? [11, 43, 91] : empresaEsNeurotec ? [0, 83, 122] : PDF_OLIVE;
 
   const [{ default: JsPDF }] = await Promise.all([
     import('jspdf'),
@@ -228,7 +266,9 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   // en la imagen), a página completa. Se vuelve a dibujar en cada página nueva (ver drawFondo más
   // abajo), tanto si la agrega automáticamente la tabla de consumos como si se agrega a mano antes
   // de Nota/Totales/Firma — antes esas páginas nuevas quedaban en blanco, sin membrete.
-  const HEADER_SAFE_Y = 48;
+  // El logo de Cabcari es más alto que el de Tecnología Spine, así que su contenido de texto
+  // (nombre, RFC, celular, etc.) necesita arrancar más abajo para no montarse sobre el logo.
+  const HEADER_SAFE_Y = usaFormatoAlterno ? 60 : 48;
   // La ola decorativa del membrete arranca ~82% de la altura de la imagen (medido pixel a pixel
   // con pngjs sobre el PNG real) — nada de contenido debe dibujarse por debajo de esta línea o
   // queda encimado con la ola.
@@ -243,7 +283,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   const CONTINUATION_TOP_Y = HEADER_SAFE_Y + 40;
   let fondoImg: HTMLImageElement | null = null;
   try {
-    fondoImg = await loadImage(fondoCotizacionUrl);
+    fondoImg = await loadImage(fondoUrl);
     doc.addImage(fondoImg, 'PNG', 0, 0, pageWidth, pageHeight);
   } catch {
     // Si el membrete no carga (ej. bloqueado por el navegador), se continúa sin él.
@@ -285,31 +325,47 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     doc.setFontSize(10.5);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...PDF_DARK);
-    doc.text(EMPRESA_INFO.nombre, marginX, hy);
+    doc.text(empresaInfo.nombre, marginX, hy);
 
     const numCotizacionText = data.numCotizacion || data.id;
-    doc.setFontSize(10.5);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...PDF_DARK);
-    doc.text(`Cotización: ${numCotizacionText}`, headerRightSafeX, hy, { align: 'right' });
+    if (usaFormatoAlterno) {
+      // Centrado y más abajo que la línea del nombre de la empresa, sin fecha.
+      const centerX = pageWidth / 2;
+      doc.setFontSize(10.5);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...PDF_DARK);
+      doc.text(`Cotización: ${numCotizacionText}`, centerX, hy + 16, { align: 'center' });
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...PDF_GRAY_TEXT);
+      doc.text(data.hospital ?? '-', centerX, hy + 20, { align: 'center' });
+    } else {
+      doc.setFontSize(10.5);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...PDF_DARK);
+      doc.text(`Cotización: ${numCotizacionText}`, headerRightSafeX, hy, { align: 'right' });
 
-    // Mismo formato que el RFC de la empresa (fontSize 8.5, normal, PDF_GRAY_TEXT).
-    doc.setFontSize(8.5);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(...PDF_GRAY_TEXT);
-    doc.text(data.hospital ?? '-', headerRightSafeX, hy + 4, { align: 'right' });
-    doc.text(formatDate(data.fecha), headerRightSafeX, hy + 7.5, { align: 'right' });
+      // Mismo formato que el RFC de la empresa (fontSize 8.5, normal, PDF_GRAY_TEXT).
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...PDF_GRAY_TEXT);
+      doc.text(data.hospital ?? '-', headerRightSafeX, hy + 4, { align: 'right' });
+      doc.text(formatDate(data.fecha), headerRightSafeX, hy + 7.5, { align: 'right' });
+    }
 
     hy += 3.6;
     doc.setFontSize(8.5);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(...PDF_GRAY_TEXT);
-    doc.text(`${EMPRESA_INFO.rfc}`, marginX, hy);
+    doc.text(`${empresaInfo.rfc}`, marginX, hy);
     hy += 3.5;
-    doc.text(EMPRESA_INFO.telefono, marginX, hy);
+    doc.text(empresaInfo.telefono, marginX, hy);
     hy += 3.5;
-    doc.text(EMPRESA_INFO.email, marginX, hy);
-    return hy;
+    doc.text(empresaInfo.email, marginX, hy);
+    // Para Cabcari, "Cotización"/Hospital quedan más abajo que esta columna izquierda (RFC/tel/
+    // correo) — el texto que sigue (introText) debe arrancar debajo de lo que sea más bajo de los
+    // dos, o se encima con el hospital.
+    return usaFormatoAlterno ? Math.max(hy, HEADER_SAFE_Y + 20) : hy;
   };
 
   // Franja única de 5 campos (texto chico para que quepan) — sin barra de color ni bordes de caja.
@@ -344,9 +400,11 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     });
 
     const endY = rowY;
-    doc.setDrawColor(...PDF_OLIVE_BORDER);
-    doc.setLineWidth(0.2);
-    doc.line(marginX, endY, rightX, endY);
+    if (!usaFormatoAlterno) {
+      doc.setDrawColor(...PDF_OLIVE_BORDER);
+      doc.setLineWidth(0.2);
+      doc.line(marginX, endY, rightX, endY);
+    }
     return endY + 4;
   };
 
@@ -384,7 +442,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     ]),
     theme: 'plain',
     headStyles: {
-      fillColor: PDF_OLIVE,
+      fillColor: tableAccentColor,
       textColor: [255, 255, 255],
       fontStyle: 'bold',
       fontSize: 8.5,
@@ -395,7 +453,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
       cellPadding: { top: 1, right: 3, bottom: 1, left: 3 },
       textColor: [45, 45, 40],
       fillColor: PDF_WHITE,
-      lineColor: PDF_OLIVE,
+      lineColor: tableAccentColor,
       lineWidth: { bottom: 0.3, right: 0.3 },
     },
     columnStyles: {
@@ -419,7 +477,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     },
     didDrawPage: (hookData: { cursor: { y: number } | null }) => {
       const pageTableEndY = hookData.cursor?.y ?? pageTableStartY;
-      doc.setDrawColor(...PDF_OLIVE);
+      doc.setDrawColor(...tableAccentColor);
       doc.setLineWidth(0.2);
       doc.rect(marginX, pageTableStartY, rightX - marginX, pageTableEndY - pageTableStartY, 'S');
     },
@@ -486,7 +544,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     startY: afterItemsY,
     theme: 'plain',
     body: totalsRows,
-    styles: { fontSize: 7.5, cellPadding: { top: 0.8, right: 3, bottom: 0.8, left: 3 }, fillColor: PDF_WHITE, lineColor: PDF_OLIVE, lineWidth: { bottom: 0.3, right: 0.3 } },
+    styles: { fontSize: 7.5, cellPadding: { top: 0.8, right: 3, bottom: 0.8, left: 3 }, fillColor: PDF_WHITE, lineColor: tableAccentColor, lineWidth: { bottom: 0.3, right: 0.3 } },
     columnStyles: {
       0: { cellWidth: totalsWidth * 0.55, fontStyle: 'bold' },
       1: { cellWidth: totalsWidth * 0.45, halign: 'right', fontStyle: 'bold' },
@@ -494,7 +552,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     margin: { left: totalsX, right: marginX },
     didParseCell: (hookData: { row: { index: number }; cell: { styles: Record<string, unknown> } }) => {
       if (hookData.row.index === totalsRows.length - 1) {
-        hookData.cell.styles.fillColor = PDF_OLIVE;
+        hookData.cell.styles.fillColor = tableAccentColor;
         hookData.cell.styles.textColor = [255, 255, 255];
         hookData.cell.styles.fontStyle = 'bold';
         hookData.cell.styles.fontSize = 8.5;
@@ -504,7 +562,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   });
 
   // Borde exterior alrededor de la caja de totales.
-  doc.setDrawColor(...PDF_OLIVE);
+  doc.setDrawColor(...tableAccentColor);
   doc.setLineWidth(0.2);
   doc.rect(totalsX, afterItemsY, totalsWidth, doc.lastAutoTable.finalY - afterItemsY, 'S');
 
@@ -550,41 +608,45 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   // contenido tenga la cotización arriba.
   const finalRowY = FOOTER_SAFE_Y - 5;
 
-  doc.setFontSize(7.5);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(...PDF_GRAY_TEXT);
+  // Cabcari y Neurotec no llevan franja de teléfono/correo con íconos ni el sello ISO 9001 (esa
+  // certificación es de Tecnología Spine).
+  if (!usaFormatoAlterno) {
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...PDF_GRAY_TEXT);
 
-  if (phoneBadgeImg) {
-    doc.addImage(phoneBadgeImg, 'PNG', marginX, finalRowY - badgeRadius, badgeRadius * 2, badgeRadius * 2);
-  }
-  doc.text(EMPRESA_INFO.celular, marginX + badgeRadius * 2 + 3, finalRowY + 1.2);
-
-  const emailTextWidth = doc.getTextWidth(EMPRESA_INFO.email);
-  const emailStartX = rightX - (badgeRadius * 2 + 3 + emailTextWidth);
-  if (mailBadgeImg) {
-    doc.addImage(mailBadgeImg, 'PNG', emailStartX, finalRowY - badgeRadius, badgeRadius * 2, badgeRadius * 2);
-  }
-  doc.text(EMPRESA_INFO.email, emailStartX + badgeRadius * 2 + 3, finalRowY + 1.2);
-
-  if (iso9001Img) {
-    const isoY = finalRowY + isoOffsetDown;
-    doc.addImage(iso9001Img, 'JPEG', pageWidth / 2 - isoSize / 2, isoY - isoSize / 2, isoSize, isoSize);
-  }
-
-  // El sello ISO 9001 también va en las páginas anteriores a la última, pero no se sabe cuál
-  // página es "la última" hasta terminar de dibujar todo el contenido — por eso se agrega al
-  // final, volviendo sobre las páginas ya generadas con setPage() en vez de intentar calcularlo
-  // por adelantado. Se posiciona DENTRO de la zona de la ola (debajo de FOOTER_SAFE_Y), no arriba
-  // — ahí la tabla de consumos nunca dibuja nada, así que nunca puede quedar encimado con
-  // contenido sin importar cuántos ítems tenga esa página.
-  if (iso9001Img) {
-    const totalPages = doc.getNumberOfPages();
-    const isoTopY = FOOTER_SAFE_Y + 10;
-    for (let p = 1; p < totalPages; p++) {
-      doc.setPage(p);
-      doc.addImage(iso9001Img, 'JPEG', pageWidth / 2 - isoSize / 2, isoTopY, isoSize, isoSize);
+    if (phoneBadgeImg) {
+      doc.addImage(phoneBadgeImg, 'PNG', marginX, finalRowY - badgeRadius, badgeRadius * 2, badgeRadius * 2);
     }
-    doc.setPage(totalPages);
+    doc.text(empresaInfo.celular, marginX + badgeRadius * 2 + 3, finalRowY + 1.2);
+
+    const emailTextWidth = doc.getTextWidth(empresaInfo.email);
+    const emailStartX = rightX - (badgeRadius * 2 + 3 + emailTextWidth);
+    if (mailBadgeImg) {
+      doc.addImage(mailBadgeImg, 'PNG', emailStartX, finalRowY - badgeRadius, badgeRadius * 2, badgeRadius * 2);
+    }
+    doc.text(empresaInfo.email, emailStartX + badgeRadius * 2 + 3, finalRowY + 1.2);
+
+    if (iso9001Img) {
+      const isoY = finalRowY + isoOffsetDown;
+      doc.addImage(iso9001Img, 'JPEG', pageWidth / 2 - isoSize / 2, isoY - isoSize / 2, isoSize, isoSize);
+    }
+
+    // El sello ISO 9001 también va en las páginas anteriores a la última, pero no se sabe cuál
+    // página es "la última" hasta terminar de dibujar todo el contenido — por eso se agrega al
+    // final, volviendo sobre las páginas ya generadas con setPage() en vez de intentar calcularlo
+    // por adelantado. Se posiciona DENTRO de la zona de la ola (debajo de FOOTER_SAFE_Y), no arriba
+    // — ahí la tabla de consumos nunca dibuja nada, así que nunca puede quedar encimado con
+    // contenido sin importar cuántos ítems tenga esa página.
+    if (iso9001Img) {
+      const totalPages = doc.getNumberOfPages();
+      const isoTopY = FOOTER_SAFE_Y + 10;
+      for (let p = 1; p < totalPages; p++) {
+        doc.setPage(p);
+        doc.addImage(iso9001Img, 'JPEG', pageWidth / 2 - isoSize / 2, isoTopY, isoSize, isoSize);
+      }
+      doc.setPage(totalPages);
+    }
   }
 
   // Paginación en todas las hojas, justo arriba de la ola decorativa (no debajo, como el sello ISO
@@ -596,7 +658,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     doc.setFontSize(7);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(...PDF_GRAY_TEXT);
-    doc.text(`Página ${p} de ${totalPages}`, marginX, FOOTER_SAFE_Y + 16);
+    doc.text(`Página ${p} de ${totalPages}`, pageWidth / 2, FOOTER_SAFE_Y + 48, { align: 'center' });
   }
   doc.setPage(totalPages);
 

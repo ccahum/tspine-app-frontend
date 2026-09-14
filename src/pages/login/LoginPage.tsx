@@ -533,13 +533,16 @@ export default function LoginPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
-    height: '100vh',
+    // 100vh en móvil incluye el espacio detrás de la barra de direcciones del navegador, dejando
+    // el contenedor más alto que lo que realmente se ve — eso es lo que permitía hacer scroll en
+    // una pantalla que debería caber completa. 100dvh sí refleja el viewport visible real.
+    height: '100dvh',
     backgroundColor: '#eeeee7',
   },
   card: {
     backgroundColor: '#fff',
     width: '100%',
-    height: '100vh',
+    height: '100dvh',
     display: 'flex',
     overflow: 'hidden' as const,
   },
