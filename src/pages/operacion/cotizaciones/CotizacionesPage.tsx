@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, memo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { Search, X, Plus, Trash2, Pencil, FileDown, MoreHorizontal, Check } from 'lucide-react';
+import { Search, X, Plus, Trash2, Pencil, FileDown, MoreHorizontal, Check, PenTool } from 'lucide-react';
 // jsPDF (+ jspdf-autotable, html2canvas, dompurify) pesa ~380kB/124kB gzip — es más de lo que
 // pesa toda esta página. Se carga con import() dinámico dentro de buildCotizacionPdf, solo
 // cuando el usuario realmente pide un PDF, en vez de venir incluido desde que se abre Cotizaciones.
@@ -311,6 +311,15 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     // Si por lo que sea no se pueden rasterizar, se omiten (el texto de contacto igual se dibuja).
   }
 
+  let firmaImg: HTMLImageElement | null = null;
+  if (data.firma) {
+    try {
+      firmaImg = await loadImage(data.firma);
+    } catch {
+      // Si la firma guardada no carga, se deja la línea en blanco como si no se hubiera firmado.
+    }
+  }
+
   // Identidad de la empresa, inmediatamente debajo del logo. Es texto angosto pegado al margen
   // izquierdo, así que a esa altura no pisa la ola decorativa (que ocupa más el lado derecho) —
   // por eso puede ir en HEADER_SAFE_Y (48) y no necesita bajar hasta CONTINUATION_TOP_Y como la
@@ -579,6 +588,18 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(...PDF_DARK);
     doc.text(data.usuario, rightX - 27.5, afterFooterY - 2, { align: 'center' });
+  }
+
+  // Firma dibujada por el usuario, si la hay — va arriba del nombre impreso, en el espacio libre
+  // encima de la línea (sin invadirla ni al nombre, que quedan justo donde estaban).
+  if (firmaImg) {
+    const maxW = 50;
+    const maxH = 14;
+    const scale = Math.min(maxW / firmaImg.naturalWidth, maxH / firmaImg.naturalHeight);
+    const w = firmaImg.naturalWidth * scale;
+    const h = firmaImg.naturalHeight * scale;
+    const bottomY = afterFooterY - 5;
+    doc.addImage(firmaImg, 'PNG', rightX - 27.5 - w / 2, bottomY - h, w, h);
   }
 
   doc.setDrawColor(...PDF_DARK);
@@ -1163,6 +1184,117 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, items, onSelectItem, onAdd, 
             <div style={styles.formActions}>
               <button type="button" style={styles.cancelBtn} onClick={onDone}>{items.length > 0 ? 'Listo' : 'Cancelar'}</button>
               <button type="button" style={styles.saveBtn} onClick={handleAgregar}>Agregar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Modal para dibujar una firma a mano (mouse o dedo) sobre un canvas y guardarla como PNG en
+ * base64 — se reutiliza tanto al crear una cotización (¿firmar ahora?) como después desde el
+ * detalle ("Firmar"/"Editar firma" en el menú •••). */
+function SignaturePadModal({ onClose, onSave, saving }: {
+  onClose: () => void;
+  onSave: (dataUrl: string) => void;
+  saving?: boolean;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isEmpty, setIsEmpty] = useState(true);
+  const drawingRef = useRef(false);
+  const lastPointRef = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    // El canvas se dibuja a la resolución real del dispositivo (devicePixelRatio), si no la firma
+    // sale borrosa/pixelada en pantallas de alta densidad (la mayoría de celulares).
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext('2d');
+    if (ctx) ctx.scale(dpr, dpr);
+  }, []);
+
+  const getPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drawingRef.current = true;
+    lastPointRef.current = getPos(e);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!drawingRef.current) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    const last = lastPointRef.current;
+    if (!canvas || !ctx || !last) return;
+    const pos = getPos(e);
+    ctx.strokeStyle = '#16170f';
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(last.x, last.y);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+    lastPointRef.current = pos;
+    setIsEmpty(false);
+  };
+
+  const handlePointerUp = () => {
+    drawingRef.current = false;
+    lastPointRef.current = null;
+  };
+
+  const handleClear = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setIsEmpty(true);
+  };
+
+  const handleSave = () => {
+    const canvas = canvasRef.current;
+    if (!canvas || isEmpty) return;
+    onSave(canvas.toDataURL('image/png'));
+  };
+
+  return (
+    <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10002 }} onClick={onClose}>
+      <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '520px' }} onClick={e => e.stopPropagation()}>
+        <div style={styles.modalHeader}>
+          <h2 style={styles.modalTitle}>Firmar cotización</h2>
+          <button style={styles.closeBtn} onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+        <div style={styles.modalBody}>
+          <p style={{ fontSize: '0.85rem', color: '#6b6b60', marginTop: 0, marginBottom: '0.75rem' }}>
+            Dibuja tu firma en el recuadro de abajo.
+          </p>
+          <canvas
+            ref={canvasRef}
+            style={{ width: '100%', height: '220px', border: '1px solid #e5e7eb', borderRadius: '10px', touchAction: 'none' as const, cursor: 'crosshair', backgroundColor: '#fff', display: 'block' }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerLeave={handlePointerUp}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
+            <button type="button" style={styles.cancelBtn} onClick={handleClear} disabled={isEmpty}>Borrar</button>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button type="button" style={styles.cancelBtn} onClick={onClose}>Cancelar</button>
+              <button type="button" style={styles.saveBtn} onClick={handleSave} disabled={isEmpty || saving}>
+                {saving ? 'Guardando...' : 'Guardar firma'}
+              </button>
             </div>
           </div>
         </div>
@@ -2412,9 +2544,8 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
   );
 }
 
-function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
+function NuevaCotizacionModal({ onClose, onNotify }: {
   onClose: () => void;
-  onCreated: (message: string) => void;
   onNotify: (message: string, variant?: 'check' | 'info') => void;
 }) {
   const queryClient = useQueryClient();
@@ -2447,6 +2578,12 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
   const [showAddItem, setShowAddItem] = useState(false);
   const [selectedStagedItem, setSelectedStagedItem] = useState<StagedItem | null>(null);
   const [confirmAddConsumoConPaquete, setConfirmAddConsumoConPaquete] = useState(false);
+  // Tras crear la cotización, se ofrece firmarla antes de cerrar el modal — createdId/createdMsg
+  // guardan lo necesario para ese paso intermedio (firmar o cerrar directo).
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const [createdMsg, setCreatedMsg] = useState<string | null>(null);
+  const [showSignaturePad, setShowSignaturePad] = useState(false);
+  const [signing, setSigning] = useState(false);
 
   const stagedSubtotal = stagedItems.reduce((sum, it) => sum + (Number(it.valor) || 0), 0);
   const { subtotal, vrDcto, totalAntesImpuestos, iva, retencion, total } = computeTotalesFromSubtotal(stagedSubtotal, form.tieneDcto, form.porcentajeDcto, form.vrDctoPesos, form.impuestos);
@@ -2582,7 +2719,11 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
     },
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ['cotizaciones'] });
-      onCreated(`Cotización ${created.numCotizacion || created.id} creada`);
+      // El toast de éxito sale de inmediato (onNotify no cierra el modal) — el modal se queda
+      // abierto un momento más para preguntar si quiere firmarla antes de cerrar (ver createdId).
+      onNotify(`Cotización ${created.numCotizacion || created.id} creada`);
+      setCreatedId(created.id);
+      setCreatedMsg(`Cotización ${created.numCotizacion || created.id} creada`);
     },
   });
 
@@ -2615,9 +2756,52 @@ function NuevaCotizacionModal({ onClose, onCreated, onNotify }: {
     document.getElementById(`cotizacion-create-field-${error.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [error]);
 
+  if (createdId && createdMsg) {
+    const handleSaveFirma = async (dataUrl: string) => {
+      setSigning(true);
+      try {
+        await cotizacionesService.setFirma(createdId, dataUrl);
+        onClose();
+      } catch {
+        onNotify('No se pudo guardar la firma. Intenta de nuevo.', 'info');
+      } finally {
+        setSigning(false);
+      }
+    };
+
+    return (
+      <div className="modal-overlay-anim" style={styles.modalOverlay}>
+        <div key="cotizacion-creada" className="modal-content-anim page-fade-in" style={{ ...styles.modalContent, maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
+          <div style={{ ...styles.modalHeader, justifyContent: 'center' as const }}>
+            <h2 style={{ ...styles.modalTitle, textAlign: 'center' as const }}>¡Cotización creada!</h2>
+          </div>
+          <div style={{ ...styles.modalBody, textAlign: 'center' as const }}>
+            <p style={{ color: '#6b6b60', marginTop: 0 }}>¿Deseas firmarla ahora?</p>
+            <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.6rem', marginTop: '1.25rem' }}>
+              <button
+                type="button"
+                className="btn-press header-btn-primary"
+                style={{ ...styles.pillBtnPrimary, justifyContent: 'center' as const }}
+                onClick={() => setShowSignaturePad(true)}
+              >
+                Firmar ahora
+              </button>
+              <button type="button" className="btn-press" style={styles.cancelBtn} onClick={onClose}>
+                Omitir
+              </button>
+            </div>
+          </div>
+        </div>
+        {showSignaturePad && (
+          <SignaturePadModal onClose={() => setShowSignaturePad(false)} onSave={handleSaveFirma} saving={signing} />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="modal-overlay-anim" style={styles.modalOverlay}>
-      <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
+      <div key="nueva-cotizacion-form" className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Nueva cotización</h2>
           <button style={styles.closeBtn} onClick={onClose}>
@@ -3094,10 +3278,20 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [sendingWhatsapp, setSendingWhatsapp] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [showSignaturePad, setShowSignaturePad] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const { data, isLoading } = useQuery<CotizacionDetail>({
     queryKey: ['cotizacion', id],
     queryFn: () => cotizacionesService.getById(id),
+  });
+
+  const setFirmaMutation = useMutation({
+    mutationFn: (firma: string) => cotizacionesService.setFirma(id, firma),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cotizacion', id] });
+      setShowSignaturePad(false);
+      onNotify('Firma guardada');
+    },
   });
 
   // El modal saltaba de tamaño de golpe al cambiar de pestaña (cada una tiene un alto distinto).
@@ -3208,6 +3402,15 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
               <Pencil size={15} />
               Editar
             </button>
+            <button
+              style={styles.moreMenuItem}
+              onClick={() => { setShowMoreMenu(false); setShowSignaturePad(true); }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+            >
+              <PenTool size={15} />
+              {data?.firma ? 'Editar firma' : 'Firmar'}
+            </button>
             <div style={styles.moreMenuDivider} />
             <button
               style={{ ...styles.moreMenuItem, ...styles.moreMenuItemDanger }}
@@ -3260,7 +3463,7 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
                 <div style={styles.summaryBar}>
                   <div style={styles.summaryBarItem}>
                     <span style={{ ...styles.detalleLabel, fontWeight: 500 }}>Total</span>
-                    <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{formatMoney(totales.total)}</span>
+                    <span style={{ ...styles.detalleValue, fontWeight: 600, color: '#3f6510' }}>{formatMoney(totales.total)}</span>
                   </div>
                   <div style={styles.summaryBarItem}>
                     <span style={{ ...styles.detalleLabel, fontWeight: 500 }}>Hospital</span>
@@ -3370,6 +3573,11 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
                     <DetalleItem label="Paquete" bold labelBold={false}>{data.paquete ?? '-'}</DetalleItem>
                     <DetalleItem label="Observaciones" bold labelBold={false}>{data.observaciones ?? '-'}</DetalleItem>
                     <DetalleItem label="Nota" labelBold={false}>{data.nota ?? '-'}</DetalleItem>
+                    <DetalleItem label="Firma" labelBold={false}>
+                      {data.firma ? (
+                        <img src={data.firma} alt="Firma" style={{ width: '160px', height: '70px', objectFit: 'contain' as const, border: '1px solid #e5e7eb', borderRadius: '6px', backgroundColor: '#fff', display: 'block' }} />
+                      ) : '-'}
+                    </DetalleItem>
                   </div>
                 </div>
               )}
@@ -3503,6 +3711,14 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
           onClose={() => setSelectedItem(null)}
           onSaved={() => onNotify('Consumo actualizado')}
           onDeleted={() => onNotify('Consumo eliminado')}
+        />
+      )}
+
+      {showSignaturePad && (
+        <SignaturePadModal
+          onClose={() => setShowSignaturePad(false)}
+          onSave={firma => setFirmaMutation.mutate(firma)}
+          saving={setFirmaMutation.isPending}
         />
       )}
     </div>
@@ -3767,7 +3983,6 @@ export default function CotizacionesPage() {
       {showCreateModal && (
         <NuevaCotizacionModal
           onClose={() => setShowCreateModal(false)}
-          onCreated={msg => { setShowCreateModal(false); setToastMessage(msg); setToastVariant('check'); }}
           onNotify={(msg, variant) => { setToastMessage(msg); setToastVariant(variant ?? 'check'); }}
         />
       )}

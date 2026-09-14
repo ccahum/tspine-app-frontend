@@ -59,6 +59,7 @@ export interface CotizacionDetail extends CotizacionListItem {
   paquete: string | null;
   contadorPaquetes: number | null;
   nivel: string | null;
+  firma: string | null;
   items: CotizacionItem[];
   remisionesAsociadas: RemisionAsociada[];
 }
@@ -219,6 +220,9 @@ export const cotizacionesService = {
 
   recalcularPrecios: (id: string, tarifaId: string): Promise<{ actualizados: number; omitidos: number }> =>
     api.patch(`/operacion/cotizaciones/${id}/recalcular-precios`, { tarifaId }).then(r => r.data),
+
+  setFirma: (id: string, firma: string): Promise<CotizacionDetail> =>
+    api.patch(`/operacion/cotizaciones/${id}/firma`, { firma }).then(r => r.data),
 
   deleteCotizacion: (id: string) =>
     api.delete(`/operacion/cotizaciones/${id}`).then(r => r.data),
