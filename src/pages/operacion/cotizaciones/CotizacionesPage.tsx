@@ -690,28 +690,9 @@ function cotizacionPdfFileName(data: CotizacionDetail): string {
   return `Cotizacion-${data.numCotizacion || data.id}.pdf`;
 }
 
-async function generarPdfCotizacion(data: CotizacionDetail, openInViewer = false, preOpenedTab?: Window | null) {
+async function generarPdfCotizacion(data: CotizacionDetail) {
   const doc = await buildCotizacionPdf(data);
-  const fileName = cotizacionPdfFileName(data);
-
-  if (openInViewer) {
-    // En móvil abre el PDF en una pestaña nueva (el navegador decide si lo muestra o pregunta si
-    // se quiere descargar) en vez de descargarlo directo y en silencio. buildCotizacionPdf carga
-    // varias imágenes con await (plantilla, ISO, íconos, firma) antes de llegar aquí — si recién
-    // en este punto se llama a window.open(), el navegador móvil ya no lo asocia al toque original
-    // del usuario y lo bloquea en silencio. Por eso el caller abre la pestaña en blanco ANTES de
-    // este await (ver handleGenerarPdf) y acá solo se le asigna la URL final.
-    const blob = doc.output('blob');
-    const url = URL.createObjectURL(blob);
-    if (preOpenedTab) {
-      preOpenedTab.location.href = url;
-    } else {
-      window.open(url, '_blank');
-    }
-    return;
-  }
-
-  doc.save(fileName);
+  doc.save(cotizacionPdfFileName(data));
 }
 
 // true si de verdad se compartió/abrió WhatsApp, false si el usuario canceló el cuadro nativo de
@@ -3339,14 +3320,9 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
   const handleGenerarPdf = async () => {
     if (!data) return;
     setGeneratingPdf(true);
-    // Se abre la pestaña en blanco YA, dentro del mismo clic — buildCotizacionPdf tarda un rato
-    // cargando imágenes con await, y si se llama a window.open() recién al terminar, el navegador
-    // móvil ya no lo asocia al toque del usuario y lo bloquea en silencio.
-    const preOpenedTab = isMobile ? window.open('', '_blank') : null;
     try {
-      await generarPdfCotizacion(data, isMobile, preOpenedTab);
+      await generarPdfCotizacion(data);
     } catch (err) {
-      if (preOpenedTab) preOpenedTab.close();
       alert('No se pudo generar el PDF. Intenta de nuevo.');
       console.error(err);
     } finally {
