@@ -10,6 +10,7 @@ import type jsPDF from 'jspdf';
 import fondoCotizacionUrl from '../../../assets/cotización.png';
 import fondoCotizacionCabcariUrl from '../../../assets/cotización-cabcari.png';
 import fondoCotizacionNeurotecUrl from '../../../assets/cotización-neurotec.png';
+import fondoCotizacionVermedUrl from '../../../assets/cotización-vermed.png';
 import iso9001Url from '../../../assets/iso9001.jpg';
 import DateRangeFilter from '../../../components/filters/DateRangeFilter';
 import SuccessToast from '../../../components/SuccessToast';
@@ -152,6 +153,14 @@ const EMPRESA_INFO_NEUROTEC = {
   email: 'administracion@tecnologiaspine.com',
 };
 
+const EMPRESA_INFO_VERMED = {
+  nombre: 'Stephanie De Jesús Alba López',
+  rfc: 'AALS881025QT4',
+  celular: '9993896604',
+  telefono: '9993896604',
+  email: 'vermedinfo@gmail.com',
+};
+
 /** El membrete/logo y los datos fiscales del PDF dependen de la Empresa elegida en la cotización
  * — se detecta por el nombre (Tercero libre, sin un id fijo) en vez de un id. */
 function isCabcari(empresaNombre: string | null): boolean {
@@ -160,6 +169,10 @@ function isCabcari(empresaNombre: string | null): boolean {
 
 function isNeurotec(empresaNombre: string | null): boolean {
   return (empresaNombre ?? '').toLowerCase().includes('gualdrón bateca');
+}
+
+function isVermed(empresaNombre: string | null): boolean {
+  return (empresaNombre ?? '').toLowerCase().includes('alba lópez');
 }
 
 // Colores tomados directamente del logo de Tecnología Spine (muestreados pixel a pixel del PNG:
@@ -241,14 +254,15 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   const { subtotal, iva, retencion, total } = computeTotales(data.items, data.tieneDcto, data.porcentajeDcto, data.vrDctoPesos, data.impuestos);
   const empresaEsCabcari = isCabcari(data.empresa);
   const empresaEsNeurotec = isNeurotec(data.empresa);
-  // Cabcari y Neurotec comparten el mismo formato "alterno" (sin ISO 9001, sin franja de
+  const empresaEsVermed = isVermed(data.empresa);
+  // Cabcari, Neurotec y Vermed comparten el mismo formato "alterno" (sin ISO 9001, sin franja de
   // teléfono/correo, encabezado centrado sin fecha, sin línea arriba de la tabla) — solo cambian
   // la plantilla, los datos fiscales y el color de acento de cada uno.
-  const usaFormatoAlterno = empresaEsCabcari || empresaEsNeurotec;
-  const empresaInfo = empresaEsCabcari ? EMPRESA_INFO_CABCARI : empresaEsNeurotec ? EMPRESA_INFO_NEUROTEC : EMPRESA_INFO;
-  const fondoUrl = empresaEsCabcari ? fondoCotizacionCabcariUrl : empresaEsNeurotec ? fondoCotizacionNeurotecUrl : fondoCotizacionUrl;
+  const usaFormatoAlterno = empresaEsCabcari || empresaEsNeurotec || empresaEsVermed;
+  const empresaInfo = empresaEsCabcari ? EMPRESA_INFO_CABCARI : empresaEsNeurotec ? EMPRESA_INFO_NEUROTEC : empresaEsVermed ? EMPRESA_INFO_VERMED : EMPRESA_INFO;
+  const fondoUrl = empresaEsCabcari ? fondoCotizacionCabcariUrl : empresaEsNeurotec ? fondoCotizacionNeurotecUrl : empresaEsVermed ? fondoCotizacionVermedUrl : fondoCotizacionUrl;
   // Color de acento de las tablas (encabezado, líneas, fila de Total).
-  const tableAccentColor: [number, number, number] = empresaEsCabcari ? [11, 43, 91] : empresaEsNeurotec ? [0, 83, 122] : PDF_OLIVE;
+  const tableAccentColor: [number, number, number] = empresaEsCabcari ? [11, 43, 91] : empresaEsNeurotec ? [0, 83, 122] : empresaEsVermed ? [29, 84, 50] : PDF_OLIVE;
 
   const [{ default: JsPDF }] = await Promise.all([
     import('jspdf'),
@@ -266,9 +280,10 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   // en la imagen), a página completa. Se vuelve a dibujar en cada página nueva (ver drawFondo más
   // abajo), tanto si la agrega automáticamente la tabla de consumos como si se agrega a mano antes
   // de Nota/Totales/Firma — antes esas páginas nuevas quedaban en blanco, sin membrete.
-  // El logo de Cabcari es más alto que el de Tecnología Spine, así que su contenido de texto
-  // (nombre, RFC, celular, etc.) necesita arrancar más abajo para no montarse sobre el logo.
-  const HEADER_SAFE_Y = usaFormatoAlterno ? 60 : 48;
+  // El logo de Cabcari/Neurotec es más alto que el de Tecnología Spine, así que su contenido de
+  // texto (nombre, RFC, celular, etc.) necesita arrancar más abajo para no montarse sobre el logo.
+  // Vermed usa un valor propio, más arriba que los otros dos alternos.
+  const HEADER_SAFE_Y = empresaEsVermed ? 46 : usaFormatoAlterno ? 60 : 48;
   // La ola decorativa del membrete arranca ~82% de la altura de la imagen (medido pixel a pixel
   // con pngjs sobre el PNG real) — nada de contenido debe dibujarse por debajo de esta línea o
   // queda encimado con la ola.
@@ -329,12 +344,17 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   // — bastante antes del margen derecho normal (rightX≈201.9mm). Por eso "Cotización" + el número
   // se alinean a la derecha en x=186mm en vez de rightX, para no montarse sobre esa franja.
   const headerRightSafeX = 176;
+  // El logo de Vermed va del lado derecho de la hoja (al revés que los demás formatos, que lo
+  // tienen a la izquierda) — el bloque de nombre/RFC/teléfono/correo se alinea a la derecha para
+  // no montarse encima.
+  const companyInfoX = empresaEsVermed ? rightX : marginX;
+  const companyInfoAlign = empresaEsVermed ? ({ align: 'right' as const }) : undefined;
   const drawCompanyHeader = () => {
     let hy = HEADER_SAFE_Y;
     doc.setFontSize(10.5);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...PDF_DARK);
-    doc.text(empresaInfo.nombre, marginX, hy);
+    doc.text(empresaInfo.nombre, companyInfoX, hy, companyInfoAlign);
 
     const numCotizacionText = data.numCotizacion || data.id;
     if (usaFormatoAlterno) {
@@ -366,11 +386,11 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     doc.setFontSize(8.5);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(...PDF_GRAY_TEXT);
-    doc.text(`${empresaInfo.rfc}`, marginX, hy);
+    doc.text(`${empresaInfo.rfc}`, companyInfoX, hy, companyInfoAlign);
     hy += 3.5;
-    doc.text(empresaInfo.telefono, marginX, hy);
+    doc.text(empresaInfo.telefono, companyInfoX, hy, companyInfoAlign);
     hy += 3.5;
-    doc.text(empresaInfo.email, marginX, hy);
+    doc.text(empresaInfo.email, companyInfoX, hy, companyInfoAlign);
     // Para Cabcari, "Cotización"/Hospital quedan más abajo que esta columna izquierda (RFC/tel/
     // correo) — el texto que sigue (introText) debe arrancar debajo de lo que sea más bajo de los
     // dos, o se encima con el hospital.
@@ -1210,6 +1230,7 @@ function SignaturePadModal({ onClose, onSave, saving }: {
   onSave: (dataUrl: string) => void;
   saving?: boolean;
 }) {
+  const { isMobile } = useResponsiveStyles();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isEmpty, setIsEmpty] = useState(true);
   const drawingRef = useRef(false);
@@ -1298,15 +1319,27 @@ function SignaturePadModal({ onClose, onSave, saving }: {
             onPointerUp={handlePointerUp}
             onPointerLeave={handlePointerUp}
           />
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
-            <button type="button" style={styles.cancelBtn} onClick={handleClear} disabled={isEmpty}>Borrar</button>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button type="button" style={styles.cancelBtn} onClick={onClose}>Cancelar</button>
-              <button type="button" style={styles.saveBtn} onClick={handleSave} disabled={isEmpty || saving}>
+          {isMobile ? (
+            <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.6rem', marginTop: '1rem' }}>
+              <button type="button" className="btn-press" style={{ ...styles.saveBtn, width: '100%' }} onClick={handleSave} disabled={isEmpty || saving}>
                 {saving ? 'Guardando...' : 'Guardar firma'}
               </button>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button type="button" className="btn-press" style={{ ...styles.cancelBtn, flex: 1 }} onClick={handleClear} disabled={isEmpty}>Borrar</button>
+                <button type="button" className="btn-press" style={{ ...styles.cancelBtn, flex: 1 }} onClick={onClose}>Cancelar</button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
+              <button type="button" className="btn-press" style={styles.cancelBtn} onClick={handleClear} disabled={isEmpty}>Borrar</button>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button type="button" className="btn-press" style={styles.cancelBtn} onClick={onClose}>Cancelar</button>
+                <button type="button" className="btn-press" style={styles.saveBtn} onClick={handleSave} disabled={isEmpty || saving}>
+                  {saving ? 'Guardando...' : 'Guardar firma'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -2739,6 +2772,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
   const handleGuardar = () => {
     if (!form.fecha) { setError({ field: 'fecha', message: 'Selecciona la fecha.' }); return; }
+    if (form.fecha < toLocalDateString(new Date())) { setError({ field: 'fecha', message: 'No se puede crear una cotización con fecha pasada.' }); return; }
     if (!form.dirigidoA.trim()) { setError({ field: 'dirigidoA', message: 'Ingresa a quién va dirigida.' }); return; }
     if (!form.hospitalId) { setError({ field: 'hospital', message: 'Selecciona el hospital.' }); return; }
     if (!form.cirugia.trim()) { setError({ field: 'cirugia', message: 'Ingresa la cirugía.' }); return; }
@@ -2771,6 +2805,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
       setSigning(true);
       try {
         await cotizacionesService.setFirma(createdId, dataUrl);
+        onNotify('Firma guardada');
         onClose();
       } catch {
         onNotify('No se pudo guardar la firma. Intenta de nuevo.', 'info');
@@ -2827,7 +2862,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-fecha">
               <label style={styles.formLabel}>Fecha *</label>
-              <input type="date" style={{ ...styles.formInput, ...(error?.field === 'fecha' ? styles.inputError : {}) }} value={form.fecha} onChange={e => { setForm({ ...form, fecha: e.target.value }); setError(null); }} />
+              <input type="date" min={toLocalDateString(new Date())} style={{ ...styles.formInput, ...(error?.field === 'fecha' ? styles.inputError : {}) }} value={form.fecha} onChange={e => { setForm({ ...form, fecha: e.target.value }); setError(null); }} />
               {error?.field === 'fecha' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
@@ -4100,7 +4135,11 @@ const styles: Record<string, React.CSSProperties> = {
   tarifaHint: { padding: '0.65rem 0.9rem', backgroundColor: '#f4f4ee', borderRadius: '10px', fontSize: '0.82rem', color: '#6b6b60', lineHeight: 1.4, marginBottom: '0.9rem' },
   productoSistemaTag: { fontSize: '0.7rem', fontWeight: 600, color: '#9ca3af', whiteSpace: 'nowrap' as const, flexShrink: 0 },
   productoClaveTag: { color: '#3f6510' },
-  consumosTableWrap: { overflow: 'auto' as const, maxHeight: '320px', borderRadius: '10px', border: '1px solid #eeeee6' },
+  // overscrollBehavior:'contain' evita que el gesto de scroll "se escape" hacia el modal que la
+  // contiene cuando llegas al límite de la tabla — sin esto, en móvil arrastrar dentro de la tabla
+  // podía terminar moviendo el modal completo, dando la sensación de que la tabla "se mueve a
+  // donde uno quiera" en vez de solo desplazarse dentro de su propio recuadro.
+  consumosTableWrap: { overflow: 'auto' as const, maxHeight: '320px', borderRadius: '10px', border: '1px solid #eeeee6', WebkitOverflowScrolling: 'touch' as const, overscrollBehavior: 'contain' as const, touchAction: 'pan-x pan-y' as const },
   consumosTable: { width: '100%', borderCollapse: 'collapse' as const, fontSize: '0.72rem' },
   consumosTh: { padding: '0.45rem 0.6rem', textAlign: 'left' as const, fontWeight: 700, color: '#9ca3af', fontSize: '0.6rem', textTransform: 'uppercase' as const, letterSpacing: '0.03em', backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' as const, position: 'sticky' as const, top: 0 },
   consumosTd: { padding: '0.45rem 0.6rem', borderBottom: '1px solid #f3f4f0', color: '#33342a', whiteSpace: 'nowrap' as const },

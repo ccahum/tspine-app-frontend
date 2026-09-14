@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Home,
   Wrench,
@@ -24,11 +24,18 @@ import {
   Route,
   Contact,
   X,
+  LogOut,
 } from 'lucide-react';
 import { esSuperAdmin } from '../../lib/auth.utils';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 import { useNavigateWithLoading } from '../../hooks/useNavigateWithLoading';
 import { prefetchRoute } from '../../routeImports';
+import { authService } from '../../services/auth.service';
+import SuccessToast from '../SuccessToast';
+
+// Mismo delay que el logout del Header (ver Header.tsx) — deja tiempo a que se vea el desvanecido
+// de la app antes de saltar a /login, para que no se sienta como un corte brusco.
+const LOGOUT_REDIRECT_DELAY_MS = 500;
 
 const operacionSubmodules = [
   { icon: Calendar, label: 'Programación', path: '/operacion/programaciones' },
@@ -78,8 +85,22 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
   // `closing` retiene el drawer montado el tiempo justo para que se vea el slide-out antes de
   // avisarle al padre que ya puede desmontarlo de verdad.
   const [closing, setClosing] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [showLogoutToast, setShowLogoutToast] = useState(false);
   const navigateTo = useNavigateWithLoading();
+  const navigate = useNavigate();
   const location = useLocation();
+
+  const confirmarCerrarSesion = () => {
+    authService.logout();
+    setConfirmLogout(false);
+    setShowLogoutToast(true);
+    document.getElementById('root')?.classList.add('app-fade-out');
+    setTimeout(() => {
+      document.getElementById('root')?.classList.remove('app-fade-out');
+      navigate('/login');
+    }, LOGOUT_REDIRECT_DELAY_MS);
+  };
 
   // Administración solo se ofrece a superadmins — el backend ya la rechaza para los demás, pero
   // ni siquiera debería aparecer en el menú.
@@ -103,6 +124,7 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
 
   const closeMobileDrawer = () => {
     setClosing(true);
+    setConfirmLogout(false);
     setTimeout(() => {
       setClosing(false);
       onCloseMobile?.();
@@ -183,6 +205,28 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
           </div>
         );
       })}
+
+      <div style={styles.logoutDivider} />
+      {confirmLogout ? (
+        <div style={styles.logoutConfirmBox}>
+          <span style={styles.logoutConfirmText}>¿Cerrar sesión?</span>
+          <div style={styles.logoutConfirmActions}>
+            <button style={styles.logoutCancelBtn} onClick={() => setConfirmLogout(false)}>Cancelar</button>
+            <button style={styles.logoutConfirmBtn} onClick={confirmarCerrarSesion}>Sí, cerrar</button>
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={() => setConfirmLogout(true)}
+          style={{ ...styles.item, color: '#f4a29a' }}
+          title={!showLabels ? 'Cerrar sesión' : ''}
+          onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(220,38,38,0.18)'; }}
+          onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+        >
+          <LogOut size={20} style={{ flexShrink: 0 }} />
+          {showLabels && <span style={styles.label}>Cerrar sesión</span>}
+        </button>
+      )}
     </>
   );
 
@@ -200,18 +244,38 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
           </div>
           <div style={styles.drawerBody}>{navList}</div>
         </aside>
+        <SuccessToast
+          show={showLogoutToast}
+          message="Cerrando sesión..."
+          color="#dc2626"
+          textColor="#dc2626"
+          icon={<LogOut size={24} strokeWidth={2.2} />}
+          onClose={() => setShowLogoutToast(false)}
+          duration={LOGOUT_REDIRECT_DELAY_MS}
+        />
       </>
     );
   }
 
   return (
-    <aside
-      style={{ ...styles.sidebar, width: expanded ? '220px' : '60px' }}
-      onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => { setExpanded(false); setOpenModule(deriveOpenModule(location.pathname)); }}
-    >
-      {navList}
-    </aside>
+    <>
+      <aside
+        style={{ ...styles.sidebar, width: expanded ? '220px' : '60px' }}
+        onMouseEnter={() => setExpanded(true)}
+        onMouseLeave={() => { setExpanded(false); setOpenModule(deriveOpenModule(location.pathname)); setConfirmLogout(false); }}
+      >
+        {navList}
+      </aside>
+      <SuccessToast
+        show={showLogoutToast}
+        message="Cerrando sesión..."
+        color="#dc2626"
+        textColor="#dc2626"
+        icon={<LogOut size={24} strokeWidth={2.2} />}
+        onClose={() => setShowLogoutToast(false)}
+        duration={LOGOUT_REDIRECT_DELAY_MS}
+      />
+    </>
   );
 }
 
@@ -300,6 +364,50 @@ const styles: Record<string, React.CSSProperties> = {
   label: {
     fontSize: '0.875rem',
     fontWeight: 500,
+  },
+  logoutDivider: {
+    height: '1px',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    margin: '0.5rem 12px',
+  },
+  logoutConfirmBox: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '0.6rem',
+    margin: '0 8px 4px',
+    padding: '0.75rem',
+    backgroundColor: 'rgba(220,38,38,0.12)',
+    borderRadius: '12px',
+  },
+  logoutConfirmText: {
+    fontSize: '0.8rem',
+    fontWeight: 600,
+    color: '#fff',
+  },
+  logoutConfirmActions: {
+    display: 'flex',
+    justifyContent: 'flex-end' as const,
+    gap: '0.5rem',
+  },
+  logoutCancelBtn: {
+    padding: '0.35rem 0.65rem',
+    border: '1px solid rgba(255,255,255,0.25)',
+    borderRadius: '6px',
+    backgroundColor: 'transparent',
+    color: '#ccc',
+    fontSize: '0.75rem',
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
+  logoutConfirmBtn: {
+    padding: '0.35rem 0.65rem',
+    border: 'none',
+    borderRadius: '6px',
+    backgroundColor: '#dc2626',
+    color: '#fff',
+    fontSize: '0.75rem',
+    fontWeight: 600,
+    cursor: 'pointer',
   },
   submoduleList: {
     display: 'flex',
