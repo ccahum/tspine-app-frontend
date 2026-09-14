@@ -692,7 +692,28 @@ function cotizacionPdfFileName(data: CotizacionDetail): string {
 
 async function generarPdfCotizacion(data: CotizacionDetail) {
   const doc = await buildCotizacionPdf(data);
-  doc.save(cotizacionPdfFileName(data));
+  const fileName = cotizacionPdfFileName(data);
+
+  // En móvil, el atributo download de doc.save() no siempre se respeta para PDFs — el navegador
+  // prioriza su visor interno y lo abre en vez de descargarlo. La API de compartir del sistema
+  // (misma que ya se usa para WhatsApp) sí abre la hoja nativa, que trae "Guardar en Archivos"/
+  // Descargas entre sus opciones. En desktop (sin soporte) cae al doc.save() de siempre.
+  const nav = navigator as Navigator & { canShare?: (data?: ShareData) => boolean; share?: (data: ShareData) => Promise<void> };
+  if (nav.canShare && nav.share) {
+    const blob: Blob = doc.output('blob');
+    const file = new File([blob], fileName, { type: 'application/pdf' });
+    if (nav.canShare({ files: [file] })) {
+      try {
+        await nav.share({ files: [file], title: fileName });
+        return;
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return; // el usuario canceló el cuadro nativo
+        // si falla por otro motivo, se sigue con el respaldo de abajo
+      }
+    }
+  }
+
+  doc.save(fileName);
 }
 
 // true si de verdad se compartió/abrió WhatsApp, false si el usuario canceló el cuadro nativo de
