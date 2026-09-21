@@ -269,7 +269,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
               ref={searchInputRef}
               type="text"
               placeholder={isMobile ? 'Buscar...' : 'Buscar programación, remisión o técnico...'}
-              style={{ ...styles.searchInput, paddingRight: isMobile ? '2rem' : '3.25rem' }}
+              style={{ ...styles.searchInput, paddingRight: isMobile ? '2rem' : '3.25rem', ...(isMobile ? { fontSize: '16px' } : {}) }}
               value={query}
               onChange={e => setQuery(e.target.value)}
               onFocus={() => { if (query.trim().length >= 2) setSearchOpen(true); }}
@@ -281,7 +281,14 @@ export default function Header({ onMenuClick }: HeaderProps) {
             )}
 
             {showDropdown && (
-              <div style={styles.searchDropdown}>
+              <div
+                style={{
+                  ...styles.searchDropdown,
+                  ...(isMobile
+                    ? { position: 'fixed' as const, top: '68px', left: '0.75rem', right: '0.75rem', width: 'auto' }
+                    : {}),
+                }}
+              >
                 {!searching && !hasResults && (
                   <div style={styles.searchEmpty}>Sin resultados para "{query.trim()}"</div>
                 )}
@@ -365,7 +372,15 @@ export default function Header({ onMenuClick }: HeaderProps) {
           </button>
 
           {notifOpen && (
-            <div className="dropdown-anim" style={{ ...styles.notifDropdown, width: isMobile ? 'calc(100vw - 1.5rem)' : '360px', right: isMobile ? '-0.5rem' : 0 }}>
+            <div
+              className="dropdown-anim"
+              style={{
+                ...styles.notifDropdown,
+                ...(isMobile
+                  ? { position: 'fixed' as const, top: '68px', left: '0.75rem', right: '0.75rem', width: 'auto' }
+                  : { right: 0 }),
+              }}
+            >
               <div style={styles.notifDropdownHeader}>
                 <span style={styles.notifDropdownTitle}>Notificaciones</span>
                 {!!notifications?.some(n => !n.leida) && (

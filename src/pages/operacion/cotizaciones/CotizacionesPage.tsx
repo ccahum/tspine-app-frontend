@@ -20,6 +20,7 @@ import { toLocalDateString } from '../../../lib/date.utils';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import { authService } from '../../../services/auth.service';
+import FirmaModal from '../../../components/layout/FirmaModal';
 import {
   cotizacionesService,
   type CotizacionListItem,
@@ -98,6 +99,9 @@ const sanitizeNumeric = (value: string): string => {
   const [entero, ...resto] = cleaned.split('.');
   return resto.length > 0 ? `${entero}.${resto.join('')}` : entero;
 };
+
+/** Solo dígitos, sin punto decimal — para N° de Proveedor (es un identificador, no un valor). */
+const sanitizeDigitsOnly = (value: string): string => value.replace(/[^0-9]/g, '');
 
 const formatDate = (dateString: string | null): string => {
   if (!dateString) return '-';
@@ -708,19 +712,43 @@ function cotizacionPdfFileName(data: CotizacionDetail): string {
   return `Cotizacion-${data.numCotizacion || data.id}.pdf`;
 }
 
-async function generarPdfCotizacion(data: CotizacionDetail) {
+async function generarPdfCotizacion(data: CotizacionDetail, isMobile: boolean) {
   const doc = await buildCotizacionPdf(data);
   const fileName = cotizacionPdfFileName(data);
-  // Solo se descarga — que se abra o no una pestaña con el PDF queda a criterio de la
-  // configuración de cada navegador (ej. "abrir siempre archivos de este tipo" tras descargar),
-  // no algo que la app deba forzar por su cuenta.
+
+  // En móvil (sobre todo iOS Safari) doc.save() no descarga nada: el navegador solo ABRE el PDF
+  // en su visor, porque el atributo download del <a> que usa jsPDF por debajo no se respeta ahí.
+  // El share sheet nativo sí ofrece "Guardar en Archivos"/"Guardar en el dispositivo".
+  if (isMobile) {
+    const nav = navigator as Navigator & { canShare?: (data?: ShareData) => boolean; share?: (data: ShareData) => Promise<void> };
+    if (nav.canShare && nav.share) {
+      const blob: Blob = doc.output('blob');
+      const file = new File([blob], fileName, { type: 'application/pdf' });
+      if (nav.canShare({ files: [file] })) {
+        try {
+          await nav.share({ files: [file], title: fileName });
+          return;
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') return;
+          // Si falla por otro motivo, se sigue con el respaldo de abajo.
+        }
+      }
+    }
+  }
+
+  // Desktop (o móvil sin soporte de Web Share): descarga directa — queda a criterio de la
+  // configuración de cada navegador que se abra o no una pestaña con el PDF tras descargarlo.
   doc.save(fileName);
 }
 
-// true si de verdad se compartió/abrió WhatsApp, false si el usuario canceló el cuadro nativo de
-// compartir — el llamador usa esto para no mostrar un mensaje de éxito cuando en realidad no pasó
-// nada.
-async function enviarCotizacionPorWhatsapp(data: CotizacionDetail): Promise<boolean> {
+// 'compartido': el usuario de verdad completó el share sheet nativo con el PDF adjunto — ahí sí
+// se puede avisar "enviado". 'respaldo': el navegador no soporta compartir archivos (típico en
+// escritorio) y solo se descargó el PDF + se abrió WhatsApp con el texto — falta que el usuario
+// adjunte el archivo a mano, así que NO se debe avisar como si ya se hubiera enviado.
+// 'cancelado': el usuario cerró el cuadro nativo de compartir sin elegir nada.
+type ResultadoEnvioWhatsapp = 'compartido' | 'respaldo' | 'cancelado';
+
+async function enviarCotizacionPorWhatsapp(data: CotizacionDetail): Promise<ResultadoEnvioWhatsapp> {
   const doc = await buildCotizacionPdf(data);
   const fileName = cotizacionPdfFileName(data);
   const { total } = computeTotales(data.items, data.tieneDcto, data.porcentajeDcto, data.vrDctoPesos, data.impuestos);
@@ -734,9 +762,9 @@ async function enviarCotizacionPorWhatsapp(data: CotizacionDetail): Promise<bool
     if (nav.canShare({ files: [file] })) {
       try {
         await nav.share({ files: [file], title: fileName, text: mensaje });
-        return true;
+        return 'compartido';
       } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') return false;
+        if (err instanceof Error && err.name === 'AbortError') return 'cancelado';
         // Si falla por otro motivo, se sigue con el flujo de respaldo abajo.
       }
     }
@@ -746,7 +774,7 @@ async function enviarCotizacionPorWhatsapp(data: CotizacionDetail): Promise<bool
   // Se descarga el PDF y se abre WhatsApp con el mensaje, para que el usuario adjunte el PDF manualmente.
   doc.save(fileName);
   window.open(`https://wa.me/?text=${encodeURIComponent(mensaje)}`, '_blank');
-  return true;
+  return 'respaldo';
 }
 
 const CotizacionRow = memo(({ item, index, onSelect }: { item: CotizacionListItem; index: number; onSelect: (id: string) => void }) => (
@@ -2293,7 +2321,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-numProveedor">
         <label style={styles.formLabel}>N° Proveedor{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
-        <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'numProveedor' ? styles.inputError : {}) }} value={form.numProveedor} sanitize={sanitizeCirugiaDirigido} onChange={numProveedor => { setForm({ ...form, numProveedor }); setError(null); }} />
+        <SanitizedInput inputMode="numeric" style={{ ...styles.formInput, ...(error?.field === 'numProveedor' ? styles.inputError : {}) }} value={form.numProveedor} sanitize={sanitizeDigitsOnly} onChange={numProveedor => { setForm({ ...form, numProveedor }); setError(null); }} />
         {error?.field === 'numProveedor' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -2999,7 +3027,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-numProveedor">
               <label style={styles.formLabel}>N° Proveedor{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
-              <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'numProveedor' ? styles.inputError : {}) }} value={form.numProveedor} sanitize={sanitizeCirugiaDirigido} onChange={numProveedor => { setForm({ ...form, numProveedor }); setError(null); }} />
+              <SanitizedInput inputMode="numeric" style={{ ...styles.formInput, ...(error?.field === 'numProveedor' ? styles.inputError : {}) }} value={form.numProveedor} sanitize={sanitizeDigitsOnly} onChange={numProveedor => { setForm({ ...form, numProveedor }); setError(null); }} />
               {error?.field === 'numProveedor' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
@@ -3346,11 +3374,17 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
   const [sendingWhatsapp, setSendingWhatsapp] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showSignaturePad, setShowSignaturePad] = useState(false);
+  const [showFirmaSetup, setShowFirmaSetup] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const { data, isLoading } = useQuery<CotizacionDetail>({
     queryKey: ['cotizacion', id],
     queryFn: () => cotizacionesService.getById(id),
   });
+  const { data: firmaGuardadaData } = useQuery({
+    queryKey: ['mi-firma'],
+    queryFn: () => authService.obtenerFirma(),
+  });
+  const firmaGuardada = firmaGuardadaData?.firma ?? null;
 
   const setFirmaMutation = useMutation({
     mutationFn: (firma: string) => cotizacionesService.setFirma(id, firma),
@@ -3399,7 +3433,7 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
     if (!data) return;
     setGeneratingPdf(true);
     try {
-      await generarPdfCotizacion(data);
+      await generarPdfCotizacion(data, isMobile);
     } catch (err) {
       alert('No se pudo generar el PDF. Intenta de nuevo.');
       console.error(err);
@@ -3412,8 +3446,11 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
     if (!data) return;
     setSendingWhatsapp(true);
     try {
-      const enviado = await enviarCotizacionPorWhatsapp(data);
-      if (enviado) onNotify('Cotización enviada por WhatsApp');
+      const resultado = await enviarCotizacionPorWhatsapp(data);
+      // En escritorio no se avisa nunca: incluso cuando el navegador sí soporta compartir
+      // archivos (algunas versiones de Windows lo hacen), ahí se abre la app de WhatsApp
+      // Desktop y el usuario todavía tiene que confirmar el envío ahí — no es un hecho consumado.
+      if (resultado === 'compartido' && isMobile) onNotify('Cotización enviada por WhatsApp');
     } catch (err) {
       alert('No se pudo enviar por WhatsApp. Intenta de nuevo.');
       console.error(err);
@@ -3472,7 +3509,11 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
             {!data?.firma && (
               <button
                 style={styles.moreMenuItem}
-                onClick={() => { setShowMoreMenu(false); setShowSignaturePad(true); }}
+                onClick={() => {
+                  setShowMoreMenu(false);
+                  if (firmaGuardada) setFirmaMutation.mutate(firmaGuardada);
+                  else setShowFirmaSetup(true);
+                }}
                 onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
                 onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
               >
@@ -3499,23 +3540,30 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
   return (
     <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div ref={modalContentRef} className="modal-content-anim" style={{ ...styles.modalContent, overflowX: 'hidden' as const }} onClick={e => e.stopPropagation()}>
+        {editing && (
+          <div style={{ ...styles.modalHeader, justifyContent: 'flex-start' as const, gap: '0.75rem' }}>
+            <button style={styles.closeBtn} onClick={() => setEditing(false)}>
+              <X size={18} />
+            </button>
+            <h2 style={styles.modalTitle}>Editar cotización</h2>
+          </div>
+        )}
         <div style={{ ...styles.modalBody, paddingTop: editing ? '0.75rem' : '1.5rem' }}>
-          <div style={{ ...styles.detailHeaderCard, paddingBottom: editing ? 0 : '1.25rem', borderBottom: editing ? 'none' : '1px solid #eeeee6', marginBottom: editing ? '0.75rem' : '1.5rem' }}>
-            <div style={{ ...styles.detailHeaderTopRow, justifyContent: editing ? ('flex-end' as const) : ('space-between' as const), marginBottom: editing ? 0 : (isMobile ? '0.85rem' : '1.25rem') }}>
-              {!editing && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <span style={styles.modalTitleIconBadge}>
-                    <MaterialIcon name="request_quote" size={20} color="#4d7a13" />
-                  </span>
-                  <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.1rem' }}>
-                    <span style={styles.modalTitleLabel}>Cotización</span>
-                    <h2 style={styles.modalTitle}>{data?.numCotizacion || data?.id || ''}</h2>
-                  </div>
+          {!editing && (
+          <div style={{ ...styles.detailHeaderCard, paddingBottom: '1.25rem', borderBottom: '1px solid #eeeee6', marginBottom: '1.5rem' }}>
+            <div style={{ ...styles.detailHeaderTopRow, justifyContent: 'space-between' as const, marginBottom: isMobile ? '0.85rem' : '1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <span style={styles.modalTitleIconBadge}>
+                  <MaterialIcon name="request_quote" size={20} color="#4d7a13" />
+                </span>
+                <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.1rem' }}>
+                  <span style={styles.modalTitleLabel}>Cotización</span>
+                  <h2 style={styles.modalTitle}>{data?.numCotizacion || data?.id || ''}</h2>
                 </div>
-              )}
+              </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' as const, justifyContent: 'flex-end' as const }}>
                 {!isMobile && actionButtons}
-                <button style={styles.closeBtn} onClick={() => (editing ? setEditing(false) : onClose())}>
+                <button style={styles.closeBtn} onClick={onClose}>
                   <X size={18} />
                 </button>
               </div>
@@ -3527,7 +3575,7 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
               </div>
             )}
 
-            {data && totales && !isLoading && !confirmDelete && !editing && (
+            {data && totales && !isLoading && !confirmDelete && (
               <>
                 <div style={styles.summaryBar}>
                   <div style={styles.summaryBarItem}>
@@ -3578,6 +3626,7 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
               </>
             )}
           </div>
+          )}
 
           {isLoading || !data ? (
             <div key="loading" className="page-fade-in" style={{ ...styles.detailBodyCard, textAlign: 'center' as const, color: '#9ca3af' }}>Cargando...</div>
@@ -3826,6 +3875,18 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
           onClose={() => setShowSignaturePad(false)}
           onSave={firma => setFirmaMutation.mutate(firma)}
           saving={setFirmaMutation.isPending}
+        />
+      )}
+
+      {showFirmaSetup && (
+        <FirmaModal
+          onDone={async guardada => {
+            setShowFirmaSetup(false);
+            if (!guardada) return;
+            queryClient.invalidateQueries({ queryKey: ['mi-firma'] });
+            const { firma: nuevaFirma } = await authService.obtenerFirma();
+            if (nuevaFirma) setFirmaMutation.mutate(nuevaFirma);
+          }}
         />
       )}
     </div>
@@ -4119,7 +4180,10 @@ const styles: Record<string, React.CSSProperties> = {
   pageBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.5rem 1rem', backgroundColor: '#e9f2d8', color: '#3f6510', border: '1px solid #dbe8c2', borderRadius: '10px', cursor: 'pointer', fontWeight: 600, fontSize: '0.84375rem' },
   pageBtnDisabled: { backgroundColor: '#f4f4ee', borderColor: '#eeeee6', color: '#c7c7ba', cursor: 'not-allowed' as const },
   modalOverlay: { position: 'fixed' as const, top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: '2rem' },
-  modalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '100%', maxWidth: '900px', maxHeight: '90vh', overflow: 'auto' as const, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
+  // dvh (no vh): en móvil, al enfocar un campo y abrirse el teclado, 90vh sigue midiendo el alto
+  // "completo" de antes del teclado — el modal se veía empujarse/crecer más allá de lo visible.
+  // dvh sí refleja el viewport visible real en cada momento (mismo ajuste que Layout.tsx).
+  modalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '100%', maxWidth: '900px', maxHeight: '90dvh', overflow: 'auto' as const, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
   modalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.25rem 1.5rem', backgroundColor: '#f9fafb', borderBottom: '1px solid #eeeee6', borderTopLeftRadius: '16px', borderTopRightRadius: '16px', position: 'sticky' as const, top: 0, zIndex: 1 },
   modalTitle: { fontSize: '1.1rem', fontWeight: 700, color: '#16170f', margin: 0 },
   modalTitleLabel: { fontSize: '0.7rem', fontWeight: 550, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
