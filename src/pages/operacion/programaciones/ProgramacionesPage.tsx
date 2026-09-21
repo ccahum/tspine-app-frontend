@@ -591,7 +591,7 @@ export default function ProgramacionesPage() {
         <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowNewModal(false)}>
           <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.modalHeader}>
-              <h2 style={styles.modalTitle}>Nueva Programación</h2>
+              <h2 style={styles.modalTitle}>Nueva programación</h2>
               <button style={styles.closeBtn} onClick={() => setShowNewModal(false)}>
                 <X size={20} />
               </button>
@@ -880,9 +880,9 @@ export default function ProgramacionesPage() {
               </div>
 
               <div style={styles.formGroup} id="programacion-new-field-consumo">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: isMobile ? 'flex-start' : 'center', justifyContent: 'space-between', flexDirection: isMobile ? 'column' as const : 'row' as const, gap: isMobile ? '0.5rem' : 0 }}>
                   <label style={styles.label}>Consumo *</label>
-                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' as const, width: isMobile ? '100%' : 'auto' }}>
                     {newCotizaciones.length > 0 && (
                       <button
                         type="button"

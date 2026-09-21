@@ -222,6 +222,11 @@ export default function ProgramacionDetailPage() {
   // Toast simple para el respaldo de "sin PDF" — ahí sí se puede abrir la pestaña de forma
   // directa (no hay diálogo de archivo de por medio que rompa el permiso del navegador).
   const [whatsappCopiedMessage, setWhatsappCopiedMessage] = useState<string | null>(null);
+  // Confirmado con el error real del navegador (NotAllowedError: "Must be handling a user
+  // gesture to perform a share request"): el diálogo nativo de "elegir archivo" SIEMPRE le quita
+  // a Chrome el gesto de usuario que navigator.share() exige — no es opcional evitarlo, así que
+  // se pide un clic más, ya sin diálogo nativo de por medio, justo antes de llamar a share().
+  const [pendingWhatsappShare, setPendingWhatsappShare] = useState<{ file: File; mensaje: string } | null>(null);
   const gmailFileInputRef = useRef<HTMLInputElement>(null);
   const [showGmailConfirm, setShowGmailConfirm] = useState(false);
   const [gmailSending, setGmailSending] = useState(false);
@@ -333,16 +338,27 @@ export default function ProgramacionDetailPage() {
   };
 
   const handleWhatsappFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const picked = e.target.files?.[0];
     e.target.value = ''; // permite volver a elegir el mismo archivo y que onChange dispare de nuevo
-    if (!file || !programacion) return;
+    if (!picked || !programacion) return;
 
     const mensaje = buildWhatsappMessage(programacion, true);
+    const file = new File([picked], picked.name, { type: 'application/pdf' });
+
+    // En escritorio, el diálogo nativo de "elegir archivo" que se acaba de cerrar le quita a
+    // Chrome el gesto de usuario que share() exige (confirmado con el error real del navegador:
+    // NotAllowedError, "Must be handling a user gesture") — hace falta pedir un clic más, ya sin
+    // diálogo nativo de por medio. En móvil el selector nativo sí preserva el gesto, así que ahí
+    // se sigue intentando compartir de inmediato, sin ese paso extra.
+    if (!isMobile) {
+      setPendingWhatsappShare({ file, mensaje });
+      return;
+    }
 
     const nav = navigator as Navigator & { canShare?: (data?: ShareData) => boolean; share?: (data: ShareData) => Promise<void> };
     if (nav.canShare && nav.share && nav.canShare({ files: [file] })) {
       try {
-        await nav.share({ files: [file], text: mensaje, title: file.name });
+        await nav.share({ files: [file], title: file.name, text: mensaje });
         return;
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') return;
@@ -350,12 +366,35 @@ export default function ProgramacionDetailPage() {
       }
     }
 
-    // Respaldo: el navegador no soporta compartir archivos directamente (común en escritorio).
-    // Un link wa.me sin número de destinatario tampoco sirve acá (se queda en una pantalla
-    // genérica sin avanzar, que es justo el bug reportado) — en vez de eso se copia el mensaje y
-    // se deja un botón real a WhatsApp Web (nunca window.open programático: el bloqueador de
-    // pop-ups lo descarta de forma inconsistente justo después de cerrarse el diálogo de
-    // archivo; un clic genuino en un <a> nunca lo bloquea).
+    // Respaldo: el navegador no soporta compartir archivos directamente.
+    try {
+      await navigator.clipboard.writeText(mensaje);
+    } catch {
+      // Sin permiso de portapapeles — el modal de abajo igual deja abrir WhatsApp Web.
+    }
+    setWhatsappLink('https://web.whatsapp.com/');
+  };
+
+  // Clic de confirmación en escritorio (ver pendingWhatsappShare): es el gesto de usuario fresco
+  // (sin diálogo nativo de por medio) que navigator.share() exige — sin este paso, share()
+  // siempre falla con NotAllowedError.
+  const handleConfirmarWhatsappConArchivo = async () => {
+    if (!pendingWhatsappShare) return;
+    const { file, mensaje } = pendingWhatsappShare;
+    setPendingWhatsappShare(null);
+
+    const nav = navigator as Navigator & { canShare?: (data?: ShareData) => boolean; share?: (data: ShareData) => Promise<void> };
+    if (nav.canShare && nav.share && nav.canShare({ files: [file] })) {
+      try {
+        await nav.share({ files: [file], title: file.name, text: mensaje });
+        return;
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return;
+        // Si falla por otro motivo, se sigue con el respaldo abajo.
+      }
+    }
+
+    // Respaldo: el navegador no soporta compartir archivos directamente.
     try {
       await navigator.clipboard.writeText(mensaje);
     } catch {
@@ -1704,35 +1743,57 @@ export default function ProgramacionDetailPage() {
               <div style={styles.emptyState}>No hay cotizaciones vinculadas</div>
             ) : (
               <div style={styles.remList}>
-                <div style={{ ...styles.cotizacionRow, ...styles.colHeader }}>
-                  <span style={styles.colHeaderText}>Folio</span>
-                  <span style={styles.colHeaderText}>Fecha</span>
-                  <span style={styles.colHeaderText}>Cirugía</span>
-                  <span style={{ ...styles.colHeaderText, textAlign: 'right' as const }}>Total</span>
-                </div>
-                {programacion.cotizaciones.map((c, i) => (
-                  <div
-                    key={c.id}
-                    style={{ ...styles.cotizacionRow, ...(i > 0 ? styles.remRowBorder : {}), cursor: 'pointer' }}
-                    onClick={() => setSelectedCotizacionId(c.id)}
-                    onMouseEnter={e => {
-                      e.currentTarget.style.backgroundColor = '#f3f4f6';
-                      // Precarga el chunk de Cotizaciones al pasar el mouse, para que ya esté
-                      // descargado cuando de verdad haga clic (mismo criterio que el prefetch de
-                      // useNavigateWithLoading) — así el modal no tarda en aparecer al abrir.
-                      import('../cotizaciones/CotizacionesPage');
-                    }}
-                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; }}
-                  >
-                    <span style={{ ...styles.requisicionCellText, fontWeight: 700, color: '#4d7a13' }}>
-                      <FileText size={13} style={{ marginRight: '0.3rem', verticalAlign: 'text-bottom' }} />
-                      {c.numCotizacion ?? c.id}
-                    </span>
-                    <span style={styles.requisicionCellText}>{formatDate(c.fecha)}</span>
-                    <span style={styles.requisicionCellText}>{c.cirugia || '-'}</span>
-                    <span style={{ ...styles.requisicionCellText, textAlign: 'right' as const, fontWeight: 600, color: '#333' }}>{formatMoney(c.total)}</span>
+                {!isMobile && (
+                  <div style={{ ...styles.cotizacionRow, ...styles.colHeader }}>
+                    <span style={styles.colHeaderText}>Folio</span>
+                    <span style={styles.colHeaderText}>Fecha</span>
+                    <span style={styles.colHeaderText}>Cirugía</span>
+                    <span style={{ ...styles.colHeaderText, textAlign: 'right' as const }}>Total</span>
                   </div>
-                ))}
+                )}
+                <div style={styles.tabScrollBody}>
+                  {programacion.cotizaciones.map((c, i) => (
+                    <div
+                      key={c.id}
+                      style={{ ...(isMobile ? styles.cotizacionCardMobile : styles.cotizacionRow), ...(i > 0 ? styles.remRowBorder : {}), cursor: 'pointer' }}
+                      onClick={() => setSelectedCotizacionId(c.id)}
+                      onMouseEnter={e => {
+                        e.currentTarget.style.backgroundColor = '#f3f4f6';
+                        // Precarga el chunk de Cotizaciones al pasar el mouse, para que ya esté
+                        // descargado cuando de verdad haga clic (mismo criterio que el prefetch de
+                        // useNavigateWithLoading) — así el modal no tarda en aparecer al abrir.
+                        import('../cotizaciones/CotizacionesPage');
+                      }}
+                      onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; }}
+                    >
+                      {isMobile ? (
+                        <>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#4d7a13', display: 'flex', alignItems: 'center', gap: '0.3rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+                              <FileText size={13} style={{ flexShrink: 0 }} />
+                              {c.numCotizacion ?? c.id}
+                            </span>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#333', flexShrink: 0 }}>{formatMoney(c.total)}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', marginTop: '0.3rem' }}>
+                            <span style={{ fontSize: '0.78rem', color: '#6b6b60', flexShrink: 0 }}>{formatDate(c.fecha)}</span>
+                            <span style={{ fontSize: '0.78rem', color: '#6b6b60', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{c.cirugia || '-'}</span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <span style={{ ...styles.requisicionCellText, fontWeight: 700, color: '#4d7a13' }}>
+                            <FileText size={13} style={{ marginRight: '0.3rem', verticalAlign: 'text-bottom' }} />
+                            {c.numCotizacion ?? c.id}
+                          </span>
+                          <span style={styles.requisicionCellText}>{formatDate(c.fecha)}</span>
+                          <span style={styles.requisicionCellText}>{c.cirugia || '-'}</span>
+                          <span style={{ ...styles.requisicionCellText, textAlign: 'right' as const, fontWeight: 600, color: '#333' }}>{formatMoney(c.total)}</span>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -3869,6 +3930,28 @@ export default function ProgramacionDetailPage() {
       <SuccessToast show={showEditSuccess} message="Programación editada" onClose={() => setShowEditSuccess(false)} />
       <SuccessToast show={showRemisionSuccess} message={`Remisión ${remisionCreatedId ?? ''} creada`} onClose={() => setShowRemisionSuccess(false)} />
       <SuccessToast show={showRequisicionSuccess} message={`Requisición ${requisicionCreatedId ?? ''} creada`} onClose={() => setShowRequisicionSuccess(false)} />
+      {pendingWhatsappShare && (
+        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setPendingWhatsappShare(null)}>
+          <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
+            <div style={styles.editModalHeader}>
+              <h2 style={styles.modalTitle}>Enviar por WhatsApp</h2>
+            </div>
+            <div style={styles.confirmBody}>
+              <p style={styles.confirmIntro}>
+                Archivo listo: <strong>{pendingWhatsappShare.file.name}</strong>. Dale clic para abrir WhatsApp con el mensaje y el PDF adjuntos.
+              </p>
+            </div>
+            <div style={styles.editModalFooter}>
+              <button style={styles.cancelBtn} onClick={() => setPendingWhatsappShare(null)}>
+                Cancelar
+              </button>
+              <button className="btn-press" style={styles.saveBtn} onClick={handleConfirmarWhatsappConArchivo}>
+                Compartir por WhatsApp
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {whatsappLink && (
         <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setWhatsappLink(null)}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
@@ -3980,10 +4063,10 @@ export default function ProgramacionDetailPage() {
                   />
                   {tecnicoSugeridoFocused && (
                     <div style={styles.medicoDropdown}>
-                      {tecnicoComisionistaResults.filter(t => !tecnicoSugeridoSeleccionados.some(x => x.id === t.id)).length === 0 ? (
+                      {tecnicoComisionistaResults.filter(t => !tecnicoSugeridoSeleccionados.some(x => x.id === t.id) && !tecnicosSugeridos.some(x => x.tecnicoId === t.id)).length === 0 ? (
                         <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
                       ) : (
-                        tecnicoComisionistaResults.filter(t => !tecnicoSugeridoSeleccionados.some(x => x.id === t.id)).map(t => (
+                        tecnicoComisionistaResults.filter(t => !tecnicoSugeridoSeleccionados.some(x => x.id === t.id) && !tecnicosSugeridos.some(x => x.tecnicoId === t.id)).map(t => (
                           <div
                             key={t.id}
                             style={styles.medicoDropdownItem}
@@ -4157,6 +4240,10 @@ const styles: Record<string, React.CSSProperties> = {
   requisicionRow: { display: 'grid', gridTemplateColumns: '110px 145px 1fr 90px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '620px' },
   notaCreditoRow: { display: 'grid', gridTemplateColumns: '140px 130px 1fr 130px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '680px' },
   cotizacionRow: { display: 'grid', gridTemplateColumns: '160px 110px minmax(0, 1fr) 130px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff' },
+  // En móvil, las 4 columnas de cotizacionRow (160+110+130px fijos) no caben en pantalla y
+  // forzaban scroll horizontal, que se veía apretado y cortado (folio/cirugía a medias). En vez
+  // de eso, tarjeta apilada en 2 líneas: folio+total arriba, fecha+cirugía abajo.
+  cotizacionCardMobile: { display: 'flex', flexDirection: 'column' as const, padding: '0.65rem 1rem', backgroundColor: '#fff' },
   gastoRow: { display: 'grid', gridTemplateColumns: '110px 100px 1fr 180px 110px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '780px' },
   fuenteRow: { display: 'grid', gridTemplateColumns: '140px 120px 1fr 150px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '680px' },
   documentoRow: { display: 'grid', gridTemplateColumns: '100px 1fr 1fr 150px 180px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '900px' },
