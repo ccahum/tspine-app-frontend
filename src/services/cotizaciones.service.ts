@@ -208,6 +208,9 @@ export const cotizacionesService = {
   createItem: (cotizacionId: string, payload: CreateDetCotizaPayload) =>
     api.post(`/operacion/cotizaciones/${cotizacionId}/items`, payload).then(r => r.data),
 
+  createItemsBulk: (cotizacionId: string, items: CreateDetCotizaPayload[]) =>
+    api.post(`/operacion/cotizaciones/${cotizacionId}/items/bulk`, { items }).then(r => r.data),
+
   updateItem: (itemId: string, payload: UpdateDetCotizaPayload) =>
     api.patch(`/operacion/cotizaciones/items/${itemId}`, payload).then(r => r.data),
 

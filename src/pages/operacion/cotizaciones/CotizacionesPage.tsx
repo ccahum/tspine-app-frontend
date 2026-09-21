@@ -2815,18 +2815,18 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
         vrDctoPesos: form.tieneDcto && form.vrDctoPesos ? Number(form.vrDctoPesos) : undefined,
         impuestos: form.impuestos,
       });
-      // Los ítems se armaron en memoria (todavía no existía el id de la cotización) — ahora que
-      // ya se creó, se registran uno por uno EN ORDEN (no en paralelo): el listado del detalle se
-      // ordena por marcaDeTiempo, así que si se mandaran todos a la vez con Promise.all, el orden
-      // de llegada al servidor no estaría garantizado y podrían quedar desordenados respecto al
-      // orden en que se agregaron en el formulario.
-      for (const it of stagedItems) {
-        await cotizacionesService.createItem(created.id, {
+      // Los ítems se armaron en memoria (todavía no existía el id de la cotización) — ahora que ya
+      // se creó, se registran todos de una vez en un solo request (createItemsBulk conserva el
+      // orden en que llegan en el arreglo). Antes se creaban uno por uno en serie para no perder
+      // el orden, pero cada request disparaba varias consultas en el backend — con varios consumos
+      // (ej. los que vienen de un paquete) se sentía lento.
+      if (stagedItems.length > 0) {
+        await cotizacionesService.createItemsBulk(created.id, stagedItems.map(it => ({
           productoId: it.productoId,
           cantidad: Number(it.cantidad),
           valorUnitario: Number(it.valorUnitario),
           observaciones: it.observaciones || undefined,
-        });
+        })));
       }
       if (quiereFirmar && firmaGuardada) {
         await cotizacionesService.setFirma(created.id, firmaGuardada);
@@ -3054,7 +3054,16 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
               options={paquetes}
               valueId={form.paqueteId}
               valueLabel={form.paqueteLabel}
-              onSelect={(id, label) => setForm({ ...form, paqueteId: id, paqueteLabel: label, nivel: id ? (form.nivel || NIVEL_OPTIONS[0]) : '' })}
+              onSelect={(id, label) => {
+                setForm(prev => ({ ...prev, paqueteId: id, paqueteLabel: label, nivel: id ? (prev.nivel || NIVEL_OPTIONS[0]) : '' }));
+                // Mientras hay un paquete seleccionado, los consumos SIEMPRE vienen de él (no se
+                // pueden mezclar con consumos manuales — agregar uno a mano ya desvincula el
+                // paquete antes, ver confirmAddConsumoConPaquete). Al deseleccionarlo con la X, esos
+                // consumos quedan sin sentido por su cuenta: si no se limpian, el campo Paquete se
+                // queda bloqueado ("no puedes agregar un paquete mientras haya consumos") sin forma
+                // de deshacer el error salvo borrarlos uno por uno a mano.
+                if (!id) setStagedItems([]);
+              }}
               disabled={!tarifaId || (!form.paqueteId && stagedItems.length > 0)}
               disabledHint={!tarifaId ? 'Selecciona primero una tarifa' : 'No puedes agregar un paquete mientras haya consumos agregados'}
             />
