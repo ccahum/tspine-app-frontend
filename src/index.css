@@ -27,6 +27,17 @@ button:focus-visible {
   outline: none;
 }
 
+/* :hover real de CSS en vez de backgroundColor puesto a mano en onMouseEnter/onMouseLeave — ese
+   patrón se puede quedar "pegado" si el botón aparece justo debajo del cursor tras una navegación
+   (ej. el de Cerrar sesión, apenas redirige el login) sin que el mouse se mueva: el navegador
+   dispara mouseenter pero nunca mouseleave. :hover en CSS nunca se puede quedar pegado, porque
+   siempre refleja la posición real del cursor. */
+/* !important porque el botón trae backgroundColor: 'transparent' en línea (para el estado normal)
+   — un estilo en línea siempre le gana a una regla externa a menos que esta use !important. */
+.sidebar-logout-btn:hover {
+  background-color: rgba(220, 38, 38, 0.18) !important;
+}
+
 button, input, select, textarea {
   font-family: inherit;
 }
@@ -163,6 +174,18 @@ body {
   background-color: #f4f4ee;
 }
 
+/* Días/meses/años del DatePicker y presets del filtro de fecha (Hoy, Esta semana, etc.) — al
+   pasar el mouse se ven resaltados como preview antes del clic, con el mismo verde suave que ya
+   se usa para marcar "hoy" (no el verde sólido del día realmente seleccionado, que se sentía muy
+   fuerte para un simple hover). :not(:disabled) evita el efecto en los días fuera de rango
+   (min/max). !important porque estos botones traen su propio backgroundColor/color en línea
+   (style=...) — un estilo inline siempre le gana a una regla de hoja de estilos, incluso :hover,
+   así que sin !important esta regla nunca se llegaba a ver. */
+.datepicker-cell-hover:hover:not(:disabled) {
+  background-color: #e9f2d8 !important;
+  color: #3f6510 !important;
+}
+
 .btn-press:active {
   transform: translateY(0);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
@@ -196,9 +219,25 @@ body {
   pointer-events: none;
 }
 
+/* Entrada del modal de configurar firma (ver FirmaSetupModal) — un poco más lenta y con leve
+   escala/desplazamiento (no solo opacidad) para que se sienta fluida, ya que este modal aparece
+   solo, sin que el usuario lo haya pedido con un clic. */
+@keyframes firma-setup-content-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.firma-setup-content-anim {
+  animation: firma-setup-content-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Sin transform: cualquier "transform" en este wrapper (incluso animándolo, incluso terminando
+   en translateY(0)) convierte a este div en el contenedor de sus descendientes position:fixed
+   (ej. el pageWrapper de OperacionPage/CotizacionesPage) en vez del viewport, recortando esas
+   páginas mientras dura la animación. */
 @keyframes page-content-fade-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .page-fade-in {
@@ -272,6 +311,18 @@ body {
 
 .compact-header-slide-out {
   animation: compact-header-slide-out 0.12s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+/* Botón "Volver" + ícono/título de módulo combinados (ver HeaderBackReveal.tsx): el bloque
+   ícono+título nace tapando la flecha y, al pasar el cursor por el contenedor, se corre a la
+   derecha revelando la flecha debajo. El hover vive en CSS (no en estado de React) para que la
+   animación no dependa de re-renders y no parpadee con el movimiento del mouse. */
+.header-back-content {
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateX(0);
+}
+.header-back-reveal:hover .header-back-content {
+  transform: translateX(44px);
 }
 
 @keyframes mobile-drawer-slide-in {

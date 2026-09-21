@@ -15,6 +15,7 @@ export interface Usuario {
   perfilNombre: string;
   reglas: string;
   sedeId: string | null;
+  tieneFirma: boolean;
 }
 
 export interface LoginResponse {
@@ -61,6 +62,15 @@ export const authService = {
   me: async (): Promise<Usuario> => {
     const res = await api.get<Usuario>('/auth/me');
     return res.data;
+  },
+
+  obtenerFirma: async (): Promise<{ firma: string | null }> => {
+    const res = await api.get<{ firma: string | null }>('/auth/firma');
+    return res.data;
+  },
+
+  guardarFirma: async (firma: string): Promise<void> => {
+    await api.post('/auth/firma', { firma });
   },
 
   olvidePassword: async (usuario: string): Promise<void> => {

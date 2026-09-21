@@ -12,7 +12,6 @@ export const routeImports: Record<string, () => Promise<unknown>> = {
   '/operacion/precios-especiales': () => import('./pages/operacion/precios-especiales/PreciosEspecialesPage'),
   '/operacion/cotizaciones': () => import('./pages/operacion/cotizaciones/CotizacionesPage'),
   '/operacion/autorizacion-consumos': () => import('./pages/operacion/autorizacion-consumos/AutorizacionConsumosPage'),
-  '/operacion/solicitud-programacion': () => import('./pages/operacion/solicitud-programacion/SolicitudProgramacionPage'),
   '/administracion': () => import('./pages/administracion/AdministracionPage'),
   '/administracion/usuarios': () => import('./pages/administracion/usuarios/UsuariosAdminPage'),
   '/administracion/terceros': () => import('./pages/administracion/terceros/TercerosAdminPage'),

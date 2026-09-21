@@ -18,7 +18,6 @@ import {
   CalendarDays,
   Tag,
   Tags,
-  CalendarPlus,
   Users,
   Car,
   Route,
@@ -45,7 +44,6 @@ const operacionSubmodules = [
   { icon: CalendarDays, label: 'Calendario de programación', path: '/operacion/calendario' },
   { icon: Tag, label: 'Listas de precio', path: '/operacion/listas-precio' },
   { icon: Tags, label: 'Precios especiales', path: '/operacion/precios-especiales' },
-  { icon: CalendarPlus, label: 'Solicitud de programación', path: '/operacion/solicitud-programacion' },
 ];
 
 const administracionSubmodules = [
@@ -217,11 +215,10 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
         </div>
       ) : (
         <button
+          className="sidebar-logout-btn"
           onClick={() => setConfirmLogout(true)}
-          style={{ ...styles.item, color: '#f4a29a' }}
+          style={{ ...styles.item, backgroundColor: 'transparent', color: '#f4a29a' }}
           title={!showLabels ? 'Cerrar sesión' : ''}
-          onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(220,38,38,0.18)'; }}
-          onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
         >
           <LogOut size={20} style={{ flexShrink: 0 }} />
           {showLabels && <span style={styles.label}>Cerrar sesión</span>}

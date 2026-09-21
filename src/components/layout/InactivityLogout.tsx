@@ -27,6 +27,7 @@ export default function InactivityLogout() {
   const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastResetRef = useRef(0);
+  const lastActivityRef = useRef(Date.now());
 
   useEffect(() => {
     const doLogout = () => {
@@ -56,6 +57,7 @@ export default function InactivityLogout() {
     };
 
     const resetTimers = () => {
+      lastActivityRef.current = Date.now();
       if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
       if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
       setSecondsLeft(null);
@@ -75,8 +77,26 @@ export default function InactivityLogout() {
 
     ACTIVITY_EVENTS.forEach(evt => window.addEventListener(evt, handleActivity, { passive: true }));
 
+    // En móvil, el navegador suspende/limita los setTimeout mientras la pestaña está en segundo
+    // plano (pantalla bloqueada, cambio a otra app) — el aviso o el cierre programado nunca llegan
+    // a dispararse a tiempo. Al volver a primer plano (visibilitychange), si ya pasó el tiempo de
+    // inactividad real (con reloj de pared, no con el temporizador que se quedó pausado) se cierra
+    // la sesión de inmediato en vez de dejar que un touchstart posterior reinicie el conteo como si
+    // no hubiera pasado nada.
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      const elapsed = Date.now() - lastActivityRef.current;
+      if (elapsed >= INACTIVITY_LIMIT_MS) {
+        doLogout();
+      } else {
+        resetTimers();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
     return () => {
       ACTIVITY_EVENTS.forEach(evt => window.removeEventListener(evt, handleActivity));
+      document.removeEventListener('visibilitychange', handleVisibility);
       if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
       if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
     };

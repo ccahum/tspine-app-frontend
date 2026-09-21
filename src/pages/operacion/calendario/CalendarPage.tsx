@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader, CalendarDays } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { MaterialIcon } from '../../../components/icons/MaterialIcon';
+import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import { programacionesService } from '../../../services/programaciones.service';
 import { toLocalDateString } from '../../../lib/date.utils';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
@@ -36,13 +36,28 @@ export default function CalendarPage() {
   const { isMobile } = useResponsiveStyles();
   const navigate = useNavigateWithLoading();
   const [currentDate, setCurrentDate] = useState(new Date());
+
+  // Mismo patrón que CotizacionesPage/OperacionPage: pageWrapper anclado al viewport +
+  // scroll del body bloqueado mientras esta página está montada, para que todo el contenido dé
+  // en una sola pantalla (el calendario en sí scrollea internamente si le hace falta).
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
   const [view, setView] = useState<ViewType>('mes');
   const [programacionesByDate, setProgramacionesByDate] = useState<{ [key: string]: ProgramacionInfo[] }>({});
   const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
 
-  const { data: allProgramaciones } = useQuery({
-    queryKey: ['programaciones-calendar'],
-    queryFn: () => programacionesService.findAllForCalendar(),
+  // Antes se traía TODO el histórico de programaciones sin ningún filtro de fecha (el endpoint
+  // soporta dateFrom/dateTo, pero no se le mandaban) — con el tiempo esa consulta se vuelve cada
+  // vez más lenta. Se acota a una ventana de 3 meses centrada en el mes que se está viendo (uno
+  // antes, el actual, uno después), suficiente para navegar semana/día sin quedarse corto, y se
+  // vuelve a pedir solo si el usuario navega fuera de esa ventana.
+  const rangeStart = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
+  const rangeEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 2, 0);
+  const { data: allProgramaciones, isLoading: programacionesLoading } = useQuery({
+    queryKey: ['programaciones-calendar', currentDate.getFullYear(), currentDate.getMonth()],
+    queryFn: () => programacionesService.findAllForCalendar(toLocalDateString(rangeStart), toLocalDateString(rangeEnd)),
   });
 
   const { data: sedeOptions = [] } = useQuery({
@@ -88,66 +103,15 @@ export default function CalendarPage() {
   };
 
   const monthYear = currentDate.toLocaleString('es-MX', { month: 'long', year: 'numeric' });
-
-  // Render Mes — en mobile, la grilla de 7 columnas es inutilizable (cada columna queda en
-  // ~45px), así que se muestra una agenda vertical con solo los días que tienen cirugías.
-  const renderMesAgendaMobile = () => {
-    const daysInMonth = getDaysInMonth(currentDate);
-    const isCurrentMonth = currentDate.getMonth() === today.getMonth() && currentDate.getFullYear() === today.getFullYear();
-
-    const diasConEventos = Array.from({ length: daysInMonth }, (_, i) => i + 1)
-      .map(day => {
-        const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-        return { day, date, progs: getProgramacionesForDay(date) };
-      })
-      .filter(d => d.progs.length > 0);
-
-    if (diasConEventos.length === 0) {
-      return <div style={styles.mesAgendaEmpty}>Sin cirugías programadas este mes</div>;
-    }
-
-    return (
-      <div style={styles.mesAgendaList}>
-        {diasConEventos.map(({ day, date, progs }) => {
-          const isToday = isCurrentMonth && day === today.getDate();
-          const dayLabel = date.toLocaleString('es-MX', { weekday: 'long', day: 'numeric' });
-          return (
-            <div key={day} style={styles.mesAgendaGroup}>
-              <div style={styles.mesAgendaDateRow}>
-                <span style={isToday ? styles.todayBadge : styles.mesAgendaDayNum}>{day}</span>
-                <span style={styles.mesAgendaDayLabel}>{dayLabel}</span>
-              </div>
-              <div style={styles.dayDetailContent}>
-                {progs.map(prog => {
-                  const color = getSedeColor(prog.sede);
-                  return (
-                    <div
-                      key={prog.id}
-                      onClick={() => navigate(`/operacion/programaciones/${prog.id}`, '/operacion/programaciones/:id')}
-                      style={{ ...styles.dayProgItem, borderLeft: `4px solid ${color}` }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, color: '#16170f', fontSize: '0.85rem' }}>
-                          <span style={{ ...styles.eventDot, backgroundColor: color }} />
-                          {prog.medicos[0] || 'Sin médico'}
-                        </div>
-                        {prog.horaQx && <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>{prog.horaQx}</div>}
-                      </div>
-                      <div style={{ fontSize: '0.78rem', color: '#9ca3af' }}>{prog.sede || '-'}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
+  // En la vista de día, se muestra a la izquierda de la barra de navegación de mes (que no
+  // scrollea) en vez de como título arriba de la lista, para que quede siempre visible aunque
+  // se haga scroll en las cirugías del día.
+  const dayNavLabel = (() => {
+    const s = currentDate.toLocaleString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' });
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  })();
 
   const renderMes = () => {
-    if (isMobile) return renderMesAgendaMobile();
-
     const daysInMonth = getDaysInMonth(currentDate);
     const firstDay = getFirstDayOfMonth(currentDate);
     const days = Array(firstDay).fill(null).concat(Array.from({ length: daysInMonth }, (_, i) => i + 1));
@@ -161,13 +125,41 @@ export default function CalendarPage() {
             <div key={d} style={styles.weekDayHeader}>{d}</div>
           ))}
         </div>
-        <div style={styles.monthGrid}>
+        <div style={{ ...styles.monthGrid, ...(isMobile ? { gridAutoRows: '92px' } : {}) }}>
           {days.map((day, idx) => {
             if (!day) return <div key={`empty-${idx}`} style={styles.emptyDay} />;
 
             const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
             const progs = getProgramacionesForDay(date);
             const isToday = isCurrentMonth && day === today.getDate();
+
+            if (isMobile) {
+              return (
+                <div
+                  key={`day-${currentDate.getFullYear()}-${currentDate.getMonth()}-${day}`}
+                  style={{ ...styles.dayCellMobile, cursor: 'pointer' }}
+                  onClick={() => { setCurrentDate(date); setView('dia'); }}
+                >
+                  <span style={isToday ? styles.todayBadge : styles.dayNumber}>{day}</span>
+                  <div style={styles.dayBarsList}>
+                    {progs.slice(0, MAX_VISIBLE_EVENTS).map(prog => (
+                      <div
+                        key={prog.id}
+                        onClick={e => { e.stopPropagation(); navigate(`/operacion/programaciones/${prog.id}`, '/operacion/programaciones/:id'); }}
+                        style={{ ...styles.dayBar, backgroundColor: getSedeColor(prog.sede) }}
+                      >
+                        {prog.medicos[0] || '—'}
+                      </div>
+                    ))}
+                    {progs.length > MAX_VISIBLE_EVENTS && (
+                      <div style={styles.dayBarMore}>
+                        +{progs.length - MAX_VISIBLE_EVENTS} más
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            }
 
             return (
               <div key={`day-${currentDate.getFullYear()}-${currentDate.getMonth()}-${day}`} style={styles.dayCell}>
@@ -266,7 +258,8 @@ export default function CalendarPage() {
 
     return (
       <div style={styles.dayDetail}>
-        <h3 style={styles.dayDetailTitle}>{dayName}</h3>
+        {/* En escritorio este título ya se muestra fijo en la barra de navegación (dayNavLabel) */}
+        {isMobile && <h3 style={styles.dayDetailTitle}>{dayName}</h3>}
         <div style={styles.dayDetailContent}>
           {progs.length === 0 ? (
             <p style={{ color: '#9ca3af', textAlign: 'center', padding: '2rem' }}>Sin cirugías programadas</p>
@@ -299,89 +292,144 @@ export default function CalendarPage() {
   };
 
   return (
-      <div style={styles.pageWrapper}>
-        <button
-          type="button"
-          onClick={() => navigate('/operacion')}
-          style={styles.backLink}
-          onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}
-        >
-          <MaterialIcon name="arrow_back" size={16} />
-          Volver
-        </button>
-
-        <div style={{ ...styles.topBar, ...(isMobile ? styles.topBarMobile : {}) }}>
-          <div style={{ ...styles.viewTabs, ...(isMobile ? { width: '100%', justifyContent: 'center' as const } : {}) }}>
-            {(['mes', 'semana', 'dia'] as ViewType[]).map(v => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                style={{ ...styles.viewTab, ...(view === v ? styles.viewTabActive : {}), ...(isMobile ? { flex: 1 } : {}) }}
+      <div style={{ ...styles.pageWrapper, left: isMobile ? 0 : '60px' }}>
+        <div style={styles.headerCard}>
+          <div style={{ ...styles.header, ...(isMobile ? styles.headerMobile : {}) }}>
+            <div style={styles.headerTitleGroup}>
+              <HeaderBackReveal
+                onBack={() => navigate(-1)}
+                icon={<CalendarDays size={20} color="#4d7a13" />}
+                mobileIconAsBack={isMobile}
               >
-                {v === 'mes' ? 'Mes' : v === 'semana' ? 'Semana' : 'Día'}
-              </button>
+                <h1 style={styles.title}>Calendario de programación</h1>
+              </HeaderBackReveal>
+            </div>
+
+            <div style={{ ...styles.viewTabs, ...(isMobile ? { width: '100%', justifyContent: 'center' as const } : {}) }}>
+              {(['mes', 'semana', 'dia'] as ViewType[]).map(v => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  style={{ ...styles.viewTab, ...(view === v ? styles.viewTabActive : {}), ...(isMobile ? { flex: 1 } : {}) }}
+                >
+                  {v === 'mes' ? 'Mes' : v === 'semana' ? 'Semana' : 'Día'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={styles.sedesLegendDivider} />
+
+          <div style={styles.sedesLegend}>
+            <span style={styles.sedesLabel}>Sedes</span>
+            {sedeOptions.map(s => (
+              <span key={s.id} style={styles.sedeLegendItem}>
+                <span style={{ ...styles.sedeLegendDot, backgroundColor: getSedeColor(s.nombre) }} />
+                {s.nombre.replace(/^Sede\s+/i, '')}
+              </span>
             ))}
           </div>
-
-          <div style={{ ...styles.monthNav, ...(isMobile ? { justifySelf: 'stretch' as const, justifyContent: 'space-between' as const } : {}) }}>
-            <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1))} style={styles.navBtn}>
-              <ChevronLeft size={18} />
-            </button>
-            <h2 style={{ ...styles.monthYear, ...(isMobile ? { minWidth: 0, fontSize: '1.1rem' } : {}) }}>{monthYear.charAt(0).toUpperCase() + monthYear.slice(1)}</h2>
-            <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1))} style={styles.navBtn}>
-              <ChevronRight size={18} />
-            </button>
-          </div>
-
-          {!isMobile && <div style={styles.topBarSpacer} />}
-        </div>
-
-        <div style={styles.sedesLegend}>
-          <span style={styles.sedesLabel}>Sedes</span>
-          {sedeOptions.map(s => (
-            <span key={s.id} style={styles.sedeLegendItem}>
-              <span style={{ ...styles.sedeLegendDot, backgroundColor: getSedeColor(s.nombre) }} />
-              {s.nombre.replace(/^Sede\s+/i, '')}
-            </span>
-          ))}
         </div>
 
         <div style={styles.calendarCard}>
-          {view === 'mes' && renderMes()}
-          {view === 'semana' && renderSemana()}
-          {view === 'dia' && renderDia()}
+          <div style={{ ...styles.calendarNav, ...(isMobile ? styles.calendarNavMobile : {}) }}>
+            {isMobile ? (
+              <>
+                <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1))} style={styles.navBtn}>
+                  <ChevronLeft size={18} />
+                </button>
+                <h2 style={{ ...styles.monthYear, minWidth: 0, fontSize: '1.1rem' }}>{monthYear.charAt(0).toUpperCase() + monthYear.slice(1)}</h2>
+                <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1))} style={styles.navBtn}>
+                  <ChevronRight size={18} />
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={styles.calendarNavSide}>
+                  {view === 'dia' && <span style={styles.dayTitleInline}>{dayNavLabel}</span>}
+                </div>
+                <div style={styles.calendarNavCenter}>
+                  <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1))} style={styles.navBtn}>
+                    <ChevronLeft size={18} />
+                  </button>
+                  <h2 style={styles.monthYear}>{monthYear.charAt(0).toUpperCase() + monthYear.slice(1)}</h2>
+                  <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1))} style={styles.navBtn}>
+                    <ChevronRight size={18} />
+                  </button>
+                </div>
+                <div style={styles.calendarNavSide} />
+              </>
+            )}
+          </div>
+
+          <div style={styles.calendarContent}>
+            {programacionesLoading ? (
+              <div style={{ padding: '4rem', textAlign: 'center' as const, color: '#9ca3af' }}>
+                <Loader className="spinner" size={28} />
+              </div>
+            ) : (
+              <>
+                {view === 'mes' && renderMes()}
+                {view === 'semana' && renderSemana()}
+                {view === 'dia' && renderDia()}
+              </>
+            )}
+          </div>
         </div>
       </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  pageWrapper: { padding: '0.05rem 1.5rem 1.5rem', maxWidth: '1400px', margin: '0 auto' },
-  backLink: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem', padding: '0.25rem 0.1rem', border: 'none', background: 'transparent', color: '#6b7280', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, transition: 'color 0.15s ease' },
+  // Anclado directo a los bordes del viewport (en vez de calc(100vh - Npx)) para que el alto
+  // disponible salga siempre correcto. Mismo patrón que pageWrapper en CotizacionesPage.tsx.
+  pageWrapper: { position: 'fixed' as const, top: '60px', right: 0, bottom: 0, padding: '1.5rem', boxSizing: 'border-box' as const, display: 'flex', flexDirection: 'column' as const, gap: '1rem', overflow: 'hidden', maxWidth: '1400px', margin: '0 auto' },
+  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' as const },
+  headerMobile: { flexDirection: 'column' as const, alignItems: 'stretch' as const },
+  headerTitleGroup: { display: 'flex', alignItems: 'center', gap: '0.75rem' },
+  title: { fontSize: '1.4rem', fontWeight: 700, color: '#333', margin: 0 },
 
-  topBar: { display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', marginBottom: '1.25rem', gap: '1rem' },
-  topBarMobile: { gridTemplateColumns: '1fr', gap: '0.75rem' },
-  viewTabs: { display: 'flex', gap: '0.4rem', backgroundColor: '#fff', border: '1px solid #eeeee6', padding: '0.3rem', borderRadius: '10px', width: 'fit-content' },
+  // Un solo recuadro blanco agrupa el título, las pestañas de vista, la navegación de mes y la
+  // leyenda de sedes — antes eran dos cajas separadas (viewTabs con su propio fondo, sedesLegend
+  // aparte) además de un botón "Volver" suelto arriba.
+  headerCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '16px', padding: '1.25rem', flexShrink: 0 },
+  viewTabs: { display: 'flex', gap: '0.4rem', backgroundColor: '#f5f5f0', padding: '0.3rem', borderRadius: '10px', width: 'fit-content' },
   viewTab: { padding: '0.5rem 1.1rem', border: '1px solid transparent', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', backgroundColor: 'transparent', color: '#6b6b60', transition: 'all 0.15s ease' },
   viewTabActive: { backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' },
-  monthNav: { display: 'flex', alignItems: 'center', gap: '1rem', justifySelf: 'center' as const },
   navBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '34px', height: '34px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', cursor: 'pointer', color: '#374151', transition: 'all 0.15s ease' },
   monthYear: { fontSize: '1.3rem', fontWeight: 700, color: '#16170f', margin: 0, minWidth: '220px', textAlign: 'center' as const, textTransform: 'capitalize' as const },
-  topBarSpacer: { width: '1px' },
 
-  sedesLegend: { display: 'flex', alignItems: 'center', flexWrap: 'wrap' as const, gap: '1.1rem', backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '12px', padding: '0.85rem 1.25rem', marginBottom: '1.25rem' },
+  sedesLegendDivider: { height: '1px', backgroundColor: '#eeeee6', margin: '1.1rem 0' },
+  sedesLegend: { display: 'flex', alignItems: 'center', flexWrap: 'wrap' as const, gap: '1.1rem' },
   sedesLabel: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.08em', marginRight: '0.25rem' },
   sedeLegendItem: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', fontWeight: 600, color: '#33342a' },
   sedeLegendDot: { width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0 },
 
-  calendarCard: { backgroundColor: '#fff', borderRadius: '16px', padding: '1.25rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #eeeee6' },
+  // flex:1 + minHeight:0: ocupa todo el espacio restante del pageWrapper; su contenido
+  // (calendarContent) es lo único que scrollea si la grilla no cabe completa.
+  calendarCard: { backgroundColor: '#fff', borderRadius: '16px', padding: '1.25rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #eeeee6', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' as const, overflow: 'hidden' },
+  // Título del mes + flechas de navegación, ahora dentro de calendarCard (arriba de la grilla de
+  // días) en vez de en el recuadro superior junto a las pestañas de vista. En escritorio es un
+  // grid de 3 columnas (1fr auto 1fr) para poder anclar el título del día a la izquierda sin
+  // perder el centrado del bloque de navegación de mes; en mobile sigue siendo un flex simple.
+  calendarNav: { display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: '1rem', marginBottom: '1.25rem', flexShrink: 0 },
+  calendarNavMobile: { display: 'flex', justifyContent: 'space-between' as const },
+  calendarNavSide: { display: 'flex', alignItems: 'center', minWidth: 0, overflow: 'hidden' },
+  calendarNavCenter: { display: 'flex', alignItems: 'center', gap: '1rem', justifySelf: 'center' as const },
+  // Título de la vista de día, mostrado a la izquierda de la barra de navegación de mes (que no
+  // scrollea) para que quede siempre visible aunque se haga scroll en las cirugías del día.
+  dayTitleInline: { fontSize: '1.05rem', fontWeight: 700, color: '#16170f', textTransform: 'capitalize' as const, whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis' },
+  calendarContent: { flex: 1, minHeight: 0, overflowY: 'auto' as const },
 
   weekDaysRow: { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', marginBottom: '0.4rem' },
   weekDayHeader: { padding: '0.4rem 0.3rem', fontWeight: 700, color: '#9ca3af', fontSize: '0.68rem', textAlign: 'center' as const, textTransform: 'uppercase' as const, letterSpacing: '0.06em' },
   monthGrid: { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gridAutoRows: '176px', gap: '1px', backgroundColor: '#eeeee6', border: '1px solid #eeeee6', borderRadius: '10px' },
   emptyDay: { backgroundColor: '#fafaf8' },
   dayCell: { backgroundColor: '#fff', padding: '0.4rem 0.4rem 0.5rem', display: 'flex', flexDirection: 'column' as const, gap: '0.3rem', height: '176px', overflow: 'visible', minWidth: 0 },
+  dayCellMobile: { backgroundColor: '#fff', padding: '0.2rem', display: 'flex', flexDirection: 'column' as const, gap: '0.12rem', height: '92px', minWidth: 0, overflow: 'hidden' },
+  dayBarsList: { display: 'flex', flexDirection: 'column' as const, gap: '0.1rem', minWidth: 0 },
+  dayBar: { fontSize: '0.5rem', fontWeight: 700, color: '#fff', padding: '0.09rem 0.2rem', borderRadius: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, cursor: 'pointer', lineHeight: 1.35 },
+  dayBarMore: { fontSize: '0.48rem', fontWeight: 700, color: '#6b7280', padding: '0.05rem 0.2rem', cursor: 'pointer', lineHeight: 1.35 },
   dayNumberRow: { display: 'flex', alignItems: 'center', flexShrink: 0 },
   dayNumber: { fontSize: '0.8rem', color: '#33342a', fontWeight: 600, lineHeight: 1, padding: '0.15rem 0.35rem' },
   todayBadge: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '22px', height: '22px', borderRadius: '50%', backgroundColor: '#6b8c1f', color: '#fff', fontSize: '0.75rem', fontWeight: 700, lineHeight: 1 },
@@ -399,13 +447,6 @@ const styles: Record<string, React.CSSProperties> = {
   dayColumnHeader: { padding: '0.65rem', fontSize: '0.8rem', fontWeight: 700, color: '#33342a', borderBottom: '1px solid #eeeee6', textAlign: 'center' as const, backgroundColor: '#f9fafb', textTransform: 'capitalize' as const },
   dayColumnHeaderToday: { backgroundColor: '#e9f2d8', color: '#3f6510' },
   dayColumnContent: { flex: 1, padding: '0.5rem', display: 'flex', flexDirection: 'column' as const, gap: '0.4rem', overflow: 'auto', maxHeight: '420px' },
-
-  mesAgendaList: { display: 'flex', flexDirection: 'column' as const, gap: '1.25rem' },
-  mesAgendaGroup: { display: 'flex', flexDirection: 'column' as const, gap: '0.6rem' },
-  mesAgendaDateRow: { display: 'flex', alignItems: 'center', gap: '0.6rem' },
-  mesAgendaDayNum: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '22px', height: '22px', borderRadius: '50%', backgroundColor: '#f4f4ee', color: '#33342a', fontSize: '0.75rem', fontWeight: 700, lineHeight: 1 },
-  mesAgendaDayLabel: { fontSize: '0.85rem', fontWeight: 700, color: '#16170f', textTransform: 'capitalize' as const },
-  mesAgendaEmpty: { textAlign: 'center' as const, color: '#9ca3af', fontSize: '0.875rem', padding: '2rem 1rem' },
 
   dayDetail: { padding: '1rem' },
   dayDetailTitle: { fontSize: '1.4rem', fontWeight: 700, color: '#16170f', marginBottom: '1.25rem', textTransform: 'capitalize' as const },

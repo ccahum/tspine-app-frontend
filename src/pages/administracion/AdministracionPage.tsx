@@ -42,7 +42,7 @@ export default function AdministracionPage() {
       <div style={{ ...styles.container, paddingLeft: isMobile ? '1rem' : '2rem', paddingRight: isMobile ? '1rem' : '2rem' }}>
         <button
           type="button"
-          onClick={() => navigate('/dashboard')}
+          onClick={() => navigate(-1)}
           style={styles.backLink}
           onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
           onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}

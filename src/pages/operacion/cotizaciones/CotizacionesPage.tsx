@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, memo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { Search, X, Plus, Trash2, Pencil, FileDown, MoreHorizontal, Check, PenTool } from 'lucide-react';
+import { Search, X, Plus, Trash2, Pencil, FileDown, MoreHorizontal, Check, PenTool, ArrowUp, ArrowDown } from 'lucide-react';
 // jsPDF (+ jspdf-autotable, html2canvas, dompurify) pesa ~380kB/124kB gzip — es más de lo que
 // pesa toda esta página. Se carga con import() dinámico dentro de buildCotizacionPdf, solo
 // cuando el usuario realmente pide un PDF, en vez de venir incluido desde que se abre Cotizaciones.
@@ -15,9 +15,11 @@ import iso9001Url from '../../../assets/iso9001.jpg';
 import DateRangeFilter from '../../../components/filters/DateRangeFilter';
 import SuccessToast from '../../../components/SuccessToast';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
+import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import { toLocalDateString } from '../../../lib/date.utils';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { authService } from '../../../services/auth.service';
 import {
   cotizacionesService,
   type CotizacionListItem,
@@ -28,6 +30,7 @@ import {
   type PaqueteOption,
   type PaqueteConsumoOption,
   type SedeOption,
+  type CotizacionSortField,
 } from '../../../services/cotizaciones.service';
 
 type AutoTableDoc = jsPDF & { autoTable: (options: Record<string, unknown>) => void; lastAutoTable: { finalY: number } };
@@ -67,6 +70,27 @@ const CUBRIMIENTO_TO_CLASIFICACION: Record<string, string> = {
 // espacio inicial, para que no se pueda dejar un campo "vacío" a base de solo espacios.
 const sanitizeCirugiaDirigido = (value: string): string =>
   value.replace(/[^A-Za-z0-9À-ÿ .,'-]/g, '').replace(/^ +/, '');
+
+/** Input con sanitización (sanitizeCirugiaDirigido/similares) que no interfiere con la
+ * composición de teclas muertas de acentos en macOS — chequear `e.nativeEvent.isComposing` en
+ * cada tecla no es confiable en Safari (se quedaba bloqueando el acento); acá se rastrea el
+ * estado de composición con los eventos dedicados onCompositionStart/End. */
+function SanitizedInput({ value, onChange, sanitize, ...rest }: {
+  value: string;
+  onChange: (value: string) => void;
+  sanitize: (value: string) => string;
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
+  const composingRef = useRef(false);
+  return (
+    <input
+      {...rest}
+      value={value}
+      onCompositionStart={() => { composingRef.current = true; }}
+      onCompositionEnd={e => { composingRef.current = false; onChange(sanitize(e.currentTarget.value)); }}
+      onChange={e => { if (composingRef.current) return; onChange(sanitize(e.target.value)); }}
+    />
+  );
+}
 
 /** Solo dígitos y un único punto decimal — para Cantidad y Valor Unitario. */
 const sanitizeNumeric = (value: string): string => {
@@ -194,37 +218,6 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-// Círculo relleno + glifo blanco adentro, para los badges de contacto de la franja final del PDF.
-// Usa el path SVG real de los íconos "Phone"/"Mail" de lucide-react (los mismos que ya se usan en
-// el resto de la app) en vez de recrearlos a mano con las formas básicas de jsPDF — así el trazo
-// coincide exactamente, no es una aproximación. jsPDF no dibuja SVG directo (necesitaría el plugin
-// svg2pdf), así que se rasteriza a PNG en un <canvas> antes de pasárselo a doc.addImage().
-function svgToImage(svg: string, size = 200): Promise<HTMLImageElement> {
-  return loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`).then(img => {
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('No se pudo generar el ícono');
-    ctx.drawImage(img, 0, 0, size, size);
-    return loadImage(canvas.toDataURL('image/png'));
-  });
-}
-
-const PHONE_BADGE_SVG = (bgColor: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <circle cx="12" cy="12" r="12" fill="${bgColor}"/>
-  <path d="M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384"
-    fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(4.8,4.8) scale(0.6)"/>
-</svg>`;
-
-const MAIL_BADGE_SVG = (bgColor: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <circle cx="12" cy="12" r="12" fill="${bgColor}"/>
-  <g transform="translate(4.8,4.8) scale(0.6)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7"/>
-    <rect x="2" y="4" width="20" height="16" rx="2"/>
-  </g>
-</svg>`;
-
 // Dibuja "Etiqueta: valor" (etiqueta en negrita) con ajuste de línea; devuelve el Y final.
 // dryRun=true solo mide (para calcular el alto de la caja antes de rellenarla).
 function drawField(doc: AutoTableDoc, label: string, value: string, x: number, maxWidth: number, y: number, dryRun = false, fontSize = 9): number {
@@ -286,8 +279,13 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   const HEADER_SAFE_Y = empresaEsVermed ? 46 : usaFormatoAlterno ? 60 : 48;
   // La ola decorativa del membrete arranca ~82% de la altura de la imagen (medido pixel a pixel
   // con pngjs sobre el PNG real) — nada de contenido debe dibujarse por debajo de esta línea o
-  // queda encimado con la ola.
+  // queda encimado con la ola. Rige la tabla de ítems y el sello ISO 9001 (que se posiciona a
+  // propósito DENTRO de la ola, ver más abajo) — ninguno de los dos debe moverse de acá.
   const FOOTER_SAFE_Y = pageHeight * 0.82;
+  // Nota/Totales/Firma/Fecha de generación sí pueden bajar un poco más allá de FOOTER_SAFE_Y (ese
+  // texto es chico y va en la mitad superior de la ola, donde todavía se lee bien) para ganar
+  // espacio en cotizaciones con muchos ítems, sin mover el sello ISO 9001 ni la tabla.
+  const FOOTER_CONTENT_SAFE_Y = pageHeight * 0.88;
   // HEADER_SAFE_Y (48) es seguro para la página 1, donde ahí mismo empieza el nombre de la empresa
   // (texto chico, tolera pisar el desvanecido de la curva). Pero en una página 2+, donde lo primero
   // que se dibuja es un bloque sólido (cabecera verde de la tabla, o el título "Nota:"), esa curva
@@ -314,17 +312,6 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     // Si el sello ISO no carga, se omite esa franja final en vez de romper el PDF completo.
   }
   const isoSize = 16;
-
-  let phoneBadgeImg: HTMLImageElement | null = null;
-  let mailBadgeImg: HTMLImageElement | null = null;
-  try {
-    [phoneBadgeImg, mailBadgeImg] = await Promise.all([
-      svgToImage(PHONE_BADGE_SVG('#252624')),
-      svgToImage(MAIL_BADGE_SVG('#252624')),
-    ]);
-  } catch {
-    // Si por lo que sea no se pueden rasterizar, se omiten (el texto de contacto igual se dibuja).
-  }
 
   let firmaImg: HTMLImageElement | null = null;
   if (data.firma) {
@@ -388,7 +375,9 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     doc.setTextColor(...PDF_GRAY_TEXT);
     doc.text(`${empresaInfo.rfc}`, companyInfoX, hy, companyInfoAlign);
     hy += 3.5;
-    doc.text(empresaInfo.telefono, companyInfoX, hy, companyInfoAlign);
+    // El celular solo se agrega junto al teléfono para Tecnología Spine — antes vivía en la franja
+    // de contacto de la última página, que ya no lleva esa información (ver el bloque del sello ISO).
+    doc.text(usaFormatoAlterno ? empresaInfo.telefono : `${empresaInfo.telefono} / ${empresaInfo.celular}`, companyInfoX, hy, companyInfoAlign);
     hy += 3.5;
     doc.text(empresaInfo.email, companyInfoX, hy, companyInfoAlign);
     // Para Cabcari, "Cotización"/Hospital quedan más abajo que esta columna izquierda (RFC/tel/
@@ -512,7 +501,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     },
   });
 
-  let afterItemsY = doc.lastAutoTable.finalY + 6;
+  let afterItemsY = doc.lastAutoTable.finalY + 4;
 
   const notaWidth = 100;
   const notaText = 'La presente cotización fue elaborada de acuerdo a los productos y/o servicios solicitados por el cliente. Los precios establecidos en el presente son en moneda nacional mexicana y no generan obligación o compromiso por parte del receptor, salvo manifestación expresa.\n\nEstos precios perderán vigencia a partir del 5to día hábil después de la expedición del presente documento, agradecemos su preferencia y estamos a sus órdenes para aclarar cualquier duda.';
@@ -541,13 +530,37 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   totalsRows.push(['Retención', retencion > 0 ? `-${formatMoney(retencion)}` : formatMoney(retencion)]);
   totalsRows.push(['Total', formatMoney(total)]);
 
-  // Estimación conservadora del alto de la tabla de totales (cellPadding 3+3 arriba/abajo + una
-  // línea de texto por fila), para decidir si el bloque completo (Nota + Totales + contacto/firma)
-  // cabe antes de la ola del membrete. Si no cabe, se agrega una página nueva (con membrete) y todo
-  // el bloque se dibuja ahí — antes este bloque no verificaba espacio y quedaba encimado con la ola.
-  const estimatedTotalsHeight = totalsRows.length * 9.7;
-  const footerBlockReserve = 18 + 8; // separación antes de la firma + texto "Firma" debajo de la línea
-  if (afterItemsY + Math.max(notaHeight, estimatedTotalsHeight) + footerBlockReserve > FOOTER_SAFE_Y) {
+  // Alto EXACTO de la tabla de totales (no una fórmula aproximada): se renderiza una vez en un
+  // documento descartable, con los mismos estilos/columnas que la tabla real de más abajo, solo
+  // para medir cuánto ocupa. Una estimación por fórmula se quedaba corta o larga según la cantidad
+  // de filas y forzaba saltos de página innecesarios (o insuficientes) — con la medida real no hay
+  // margen de error.
+  const measureDoc = new JsPDF({ unit: 'mm', format: 'letter' }) as AutoTableDoc;
+  measureDoc.autoTable({
+    startY: 0,
+    theme: 'plain',
+    body: totalsRows,
+    styles: { fontSize: 7.5, cellPadding: { top: 0.8, right: 3, bottom: 0.8, left: 3 } },
+    columnStyles: {
+      0: { cellWidth: totalsWidth * 0.55, fontStyle: 'bold' },
+      1: { cellWidth: totalsWidth * 0.45, halign: 'right', fontStyle: 'bold' },
+    },
+    margin: { left: totalsX, right: marginX },
+    didParseCell: (hookData: { row: { index: number }; cell: { styles: Record<string, unknown> } }) => {
+      if (hookData.row.index === totalsRows.length - 1) hookData.cell.styles.fontSize = 8.5;
+    },
+  });
+  const totalsHeight = measureDoc.lastAutoTable.finalY;
+
+  // Nota y Totales/Firma son columnas separadas con requisitos de espacio distintos: debajo de
+  // Totales va la firma (reserva grande), pero debajo de la Nota solo va la línea de "Fecha de
+  // generación" (reserva chica) — exigirle a la Nota la misma reserva grande que a Totales forzaba
+  // saltos de página innecesarios.
+  const totalsFooterReserve = 22 + 8; // separación antes de la firma (deja lugar a la firma dibujada, hasta 14mm de alto) + texto "Firma" debajo de la línea
+  const notaFooterReserve = 6; // espacio para la línea de "Fecha de generación del documento"
+  const notaCabe = afterItemsY + notaHeight + notaFooterReserve <= FOOTER_CONTENT_SAFE_Y;
+  const totalesCaben = afterItemsY + totalsHeight + totalsFooterReserve <= FOOTER_CONTENT_SAFE_Y;
+  if (!notaCabe || !totalesCaben) {
     doc.addPage();
     drawFondo();
     afterItemsY = drawInfoGrid(drawCompanyHeader() + 6);
@@ -568,6 +581,15 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
     doc.text(lines, marginX, notaY, { maxWidth: notaWidth, align: 'justify' });
     notaY += lines.length * notaLineHeight + (pIdx < notaParagraphLines.length - 1 ? notaParagraphGap : 0);
   });
+
+  // Fecha y hora en que se generó ESTE pdf (hora local del navegador, no la fecha de la cotización)
+  // — va justo debajo del contenido de la Nota, no junto a la firma.
+  const now = new Date();
+  const genFecha = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  doc.setFontSize(6.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...PDF_GRAY_TEXT);
+  doc.text(`Fecha de generación del documento: ${genFecha}`, marginX, notaY + 5);
 
   doc.autoTable({
     startY: afterItemsY,
@@ -595,11 +617,11 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   doc.setLineWidth(0.2);
   doc.rect(totalsX, afterItemsY, totalsWidth, doc.lastAutoTable.finalY - afterItemsY, 'S');
 
-  // Sin límite superior artificial: antes se topaba en FOOTER_SAFE_Y - 14, y si la nota o los
-  // totales terminaban más abajo que eso (cotizaciones con varios ítems), el contacto y la firma
-  // quedaban encimados sobre ese contenido. Ahora siempre se ubican debajo de donde termine lo
-  // que esté más abajo (nota o totales), sin importar cuánto crezca la tabla de arriba.
-  const afterFooterY = Math.max(afterItemsY + notaHeight, doc.lastAutoTable.finalY) + 18;
+  // La firma va justo debajo de la tabla de totales, no de la Nota — están en columnas separadas
+  // (Nota a la izquierda, firma alineada con la columna de totales a la derecha), así que la altura
+  // de la Nota (un texto fijo, siempre relativamente largo) no debe empujarla hacia abajo dejando
+  // un hueco grande cuando los totales son pocas filas.
+  const afterFooterY = doc.lastAutoTable.finalY + 22;
 
   // Nombre de quien elaboró la cotización, impreso arriba de la línea de firma (convención
   // habitual: el nombre va encima, "Firma" queda debajo como leyenda de qué se firma ahí).
@@ -630,19 +652,9 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   doc.setTextColor(...PDF_DARK);
   doc.text('Firma', rightX - 27.5, afterFooterY + 5, { align: 'center' });
 
-  // Fecha y hora en que se generó ESTE pdf (hora local del navegador, no la fecha de la cotización).
-  const now = new Date();
-  const genFecha = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  doc.setFontSize(6.5);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(...PDF_GRAY_TEXT);
-  doc.text(`Fecha de generación del documento: ${genFecha}`, rightX - 27.5, afterFooterY + 9, { align: 'center' });
-
-  // Franja final: teléfono a la izquierda y correo a la derecha, cada uno con su ícono en un
-  // círculo relleno (color oscuro de la marca, no el verde, para distinguirla del resto del
-  // documento) y el sello ISO 9001 centrado entre ambos.
-  const badgeRadius = 3.2;
-  const isoOffsetDown = 22; // el sello va un poco más abajo que los badges de teléfono/correo
+  // Franja final: solo el sello ISO 9001, centrado (el teléfono/correo con íconos se retiró de
+  // acá — ver drawCompanyHeader, donde el celular ahora va junto al teléfono).
+  const isoOffsetDown = 22; // el sello va un poco más abajo que la fila de referencia
   // Posición FIJA relativa a FOOTER_SAFE_Y (no a afterFooterY/el contenido de arriba) — antes se
   // calculaba como "afterFooterY + N", así que con notas/totales más largos o más cortos esta fila
   // se corría de lugar. Ahora queda siempre en el mismo punto de la página, sin importar cuánto
@@ -650,24 +662,10 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   const finalRowY = FOOTER_SAFE_Y - 5;
 
   // Cabcari y Neurotec no llevan franja de teléfono/correo con íconos ni el sello ISO 9001 (esa
-  // certificación es de Tecnología Spine).
+  // certificación es de Tecnología Spine). Tecnología Spine tampoco lleva ya esa franja de
+  // contacto — el celular se movió al bloque de información debajo del logo, junto al teléfono —
+  // pero conserva el sello ISO 9001.
   if (!usaFormatoAlterno) {
-    doc.setFontSize(7.5);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(...PDF_GRAY_TEXT);
-
-    if (phoneBadgeImg) {
-      doc.addImage(phoneBadgeImg, 'PNG', marginX, finalRowY - badgeRadius, badgeRadius * 2, badgeRadius * 2);
-    }
-    doc.text(empresaInfo.celular, marginX + badgeRadius * 2 + 3, finalRowY + 1.2);
-
-    const emailTextWidth = doc.getTextWidth(empresaInfo.email);
-    const emailStartX = rightX - (badgeRadius * 2 + 3 + emailTextWidth);
-    if (mailBadgeImg) {
-      doc.addImage(mailBadgeImg, 'PNG', emailStartX, finalRowY - badgeRadius, badgeRadius * 2, badgeRadius * 2);
-    }
-    doc.text(empresaInfo.email, emailStartX + badgeRadius * 2 + 3, finalRowY + 1.2);
-
     if (iso9001Img) {
       const isoY = finalRowY + isoOffsetDown;
       doc.addImage(iso9001Img, 'JPEG', pageWidth / 2 - isoSize / 2, isoY - isoSize / 2, isoSize, isoSize);
@@ -710,22 +708,12 @@ function cotizacionPdfFileName(data: CotizacionDetail): string {
   return `Cotizacion-${data.numCotizacion || data.id}.pdf`;
 }
 
-async function generarPdfCotizacion(data: CotizacionDetail, preOpenedTab?: Window | null) {
+async function generarPdfCotizacion(data: CotizacionDetail) {
   const doc = await buildCotizacionPdf(data);
   const fileName = cotizacionPdfFileName(data);
-
-  // Se abre en una pestaña del navegador (para verlo) Y se descarga automáticamente (doc.save())
-  // al mismo tiempo — preOpenedTab se abre en blanco ANTES de este await (ver handleGenerarPdf),
-  // ya que si se llamara a window.open() recién aquí, el navegador móvil ya no lo asociaría al
-  // toque original del usuario y lo bloquearía en silencio.
-  const blob = doc.output('blob');
-  const url = URL.createObjectURL(blob);
-  if (preOpenedTab) {
-    preOpenedTab.location.href = url;
-  } else {
-    window.open(url, '_blank');
-  }
-
+  // Solo se descarga — que se abra o no una pestaña con el PDF queda a criterio de la
+  // configuración de cada navegador (ej. "abrir siempre archivos de este tipo" tras descargar),
+  // no algo que la app deba forzar por su cuenta.
   doc.save(fileName);
 }
 
@@ -773,6 +761,7 @@ const CotizacionRow = memo(({ item, index, onSelect }: { item: CotizacionListIte
       <span style={styles.idCode}>{item.numCotizacion || item.id}</span>
     </td>
     <td style={{ ...styles.td, paddingRight: '0.3rem' }}>{formatDate(item.fecha)}</td>
+    <td style={{ ...styles.td, whiteSpace: 'nowrap' as const, color: '#6b6b60' }}>{formatDateTime(item.marcaDeTiempo)}</td>
     <td style={{ ...styles.td, paddingLeft: '0.3rem' }}>{item.usuario ?? '-'}</td>
     <td style={{ ...styles.td, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.hospital ?? '-'}</td>
     <td style={{ ...styles.td, maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.medico ?? '-'}</td>
@@ -785,13 +774,13 @@ const CotizacionRow = memo(({ item, index, onSelect }: { item: CotizacionListIte
 const CotizacionCard = memo(({ item, onSelect }: { item: CotizacionListItem; onSelect: (id: string) => void }) => (
   <div style={styles.mobileCard} onClick={() => onSelect(item.id)}>
     <div style={styles.mobileCardTopRow}>
-      <span style={styles.mobileCardId}>{item.numCotizacion || item.id}</span>
+      <span style={styles.mobileCardId}>
+        <MaterialIcon name="request_quote" size={13} color="#4d7a13" />
+        {item.numCotizacion || item.id}
+      </span>
       <span style={styles.mobileCardDate}>{formatDate(item.fecha)}</span>
     </div>
     <div style={styles.mobileCardMainRow}>
-      <span style={styles.modalTitleIconBadge}>
-        <MaterialIcon name="request_quote" size={18} color="#4d7a13" />
-      </span>
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={styles.mobileCardTitle}>{item.hospital ?? 'Sin hospital'}</div>
         <div style={styles.mobileCardSubtext}>{item.medico ?? '-'}</div>
@@ -907,6 +896,7 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem,
                     >
                       <span style={styles.addedItemQty}>{it.cantidad}×</span>
                       <span style={styles.addedItemLabel} title={it.descripcion ?? undefined}>{it.descripcion ?? '-'}</span>
+                      {it.esEspecial && <span style={styles.especialTag} title="Nombre/referencia especial de este hospital">Especial</span>}
                       <span style={styles.addedItemValue}>{formatMoney(Number(it.valor) || 0)}</span>
                     </div>
                   ))}
@@ -923,11 +913,12 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem,
                 </span>
               ) : (
                 <div style={{ position: 'relative' as const }}>
-                  <input
+                  <SanitizedInput
                     style={styles.formInput}
                     placeholder="Buscar por clave, nombre o sistema..."
                     value={productoSearch}
-                    onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setProductoSearch(sanitizeCirugiaDirigido(e.target.value)); }}
+                    sanitize={sanitizeCirugiaDirigido}
+                    onChange={setProductoSearch}
                     onFocus={() => setProductoFocused(true)}
                     onBlur={() => setTimeout(() => setProductoFocused(false), 150)}
                   />
@@ -960,7 +951,12 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem,
                               {p.referencia && <span style={styles.productoClaveTag}>{p.referencia}</span>}
                               {p.referencia ? ' / ' : ''}{p.nombre}
                             </span>
-                            {p.sistema && <span style={styles.productoSistemaTag}>{p.sistema}</span>}
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+                              {(p.nombreEspecial || p.referenciaEspecial) && (
+                                <span style={styles.especialTag} title={`Este hospital lo conoce como: ${p.referenciaEspecial ?? ''}${p.referenciaEspecial && p.nombreEspecial ? ' / ' : ''}${p.nombreEspecial ?? ''}`}>Especial</span>
+                              )}
+                              {p.sistema && <span style={styles.productoSistemaTag}>{p.sistema}</span>}
+                            </span>
                           </div>
                         ))
                       )}
@@ -1006,7 +1002,7 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem,
 
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Observaciones</label>
-              <input style={styles.formInput} value={form.observaciones} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) }); }} />
+              <SanitizedInput style={styles.formInput} value={form.observaciones} sanitize={sanitizeCirugiaDirigido} onChange={observaciones => setForm({ ...form, observaciones })} />
             </div>
 
             {error && <span style={styles.errorText}>{error}</span>}
@@ -1039,8 +1035,10 @@ interface StagedItem {
  * servidor — se usa al crear una cotización nueva, que todavía no tiene id (no se puede llamar
  * a POST :id/items). Los ítems en memoria se envían al servidor recién cuando se crea la
  * cotización (ver NuevaCotizacionModal). Por eso tampoco se le pasa cotizacionId a
- * searchProductos: sin cotización aún no hay tarifa para sugerir precio, el usuario lo ingresa. */
-function AddStagedItemForm({ tarifaId, tarifaLabel, items, onSelectItem, onAdd, onDone }: { tarifaId?: string; tarifaLabel?: string | null; items: StagedItem[]; onSelectItem: (item: StagedItem) => void; onAdd: (item: StagedItem) => void; onDone: () => void }) {
+ * searchProductos: sin cotización aún no hay tarifa para sugerir precio, el usuario lo ingresa —
+ * hospitalId sí se pasa directo (el Hospital ya se eligió en el formulario padre), para poder
+ * marcar los productos con nombre/referencia especial aunque la cotización no exista todavía. */
+function AddStagedItemForm({ tarifaId, tarifaLabel, hospitalId, items, onSelectItem, onAdd, onDone }: { tarifaId?: string; tarifaLabel?: string | null; hospitalId?: string; items: StagedItem[]; onSelectItem: (item: StagedItem) => void; onAdd: (item: StagedItem) => void; onDone: () => void }) {
   const [form, setForm] = useState(emptyItemForm);
   const [productoSearch, setProductoSearch] = useState('');
   const [productoFocused, setProductoFocused] = useState(false);
@@ -1052,8 +1050,8 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, items, onSelectItem, onAdd, 
   }, [items.length]);
 
   const { data: productoResults = [] } = useQuery<ProductoOption[]>({
-    queryKey: ['cotizaciones-productos', productoSearch, tarifaId],
-    queryFn: () => cotizacionesService.searchProductos(productoSearch, undefined, tarifaId),
+    queryKey: ['cotizaciones-productos', productoSearch, tarifaId, hospitalId],
+    queryFn: () => cotizacionesService.searchProductos(productoSearch, undefined, tarifaId, hospitalId),
     enabled: productoFocused,
   });
 
@@ -1116,11 +1114,12 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, items, onSelectItem, onAdd, 
                 </span>
               ) : (
                 <div style={{ position: 'relative' as const }}>
-                  <input
+                  <SanitizedInput
                     style={styles.formInput}
                     placeholder="Buscar por clave, nombre o sistema..."
                     value={productoSearch}
-                    onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setProductoSearch(sanitizeCirugiaDirigido(e.target.value)); }}
+                    sanitize={sanitizeCirugiaDirigido}
+                    onChange={setProductoSearch}
                     onFocus={() => setProductoFocused(true)}
                     onBlur={() => setTimeout(() => setProductoFocused(false), 150)}
                   />
@@ -1153,7 +1152,12 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, items, onSelectItem, onAdd, 
                               {p.referencia && <span style={styles.productoClaveTag}>{p.referencia}</span>}
                               {p.referencia ? ' / ' : ''}{p.nombre}
                             </span>
-                            {p.sistema && <span style={styles.productoSistemaTag}>{p.sistema}</span>}
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+                              {(p.nombreEspecial || p.referenciaEspecial) && (
+                                <span style={styles.especialTag} title={`Este hospital lo conoce como: ${p.referenciaEspecial ?? ''}${p.referenciaEspecial && p.nombreEspecial ? ' / ' : ''}${p.nombreEspecial ?? ''}`}>Especial</span>
+                              )}
+                              {p.sistema && <span style={styles.productoSistemaTag}>{p.sistema}</span>}
+                            </span>
                           </div>
                         ))
                       )}
@@ -1199,7 +1203,7 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, items, onSelectItem, onAdd, 
 
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Observaciones</label>
-              <input style={styles.formInput} value={form.observaciones} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) }); }} />
+              <SanitizedInput style={styles.formInput} value={form.observaciones} sanitize={sanitizeCirugiaDirigido} onChange={observaciones => setForm({ ...form, observaciones })} />
             </div>
 
             {error && <span style={styles.errorText}>{error}</span>}
@@ -1217,13 +1221,20 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, items, onSelectItem, onAdd, 
 
 /** Modal para dibujar una firma a mano (mouse o dedo) sobre un canvas y guardarla como PNG en
  * base64 — se reutiliza tanto al crear una cotización (¿firmar ahora?) como después desde el
- * detalle ("Firmar"/"Editar firma" en el menú •••). */
+ * detalle ("Firmar"/"Editar firma" en el menú •••). Si el usuario logueado ya tiene una firma
+ * personal guardada (ver "Guarda tu firma" en el login), se ofrece usarla directo en vez de
+ * tener que dibujarla de nuevo. */
 function SignaturePadModal({ onClose, onSave, saving }: {
   onClose: () => void;
   onSave: (dataUrl: string) => void;
   saving?: boolean;
 }) {
   const { isMobile } = useResponsiveStyles();
+  const { data: firmaGuardadaData } = useQuery({
+    queryKey: ['mi-firma'],
+    queryFn: () => authService.obtenerFirma(),
+  });
+  const firmaGuardada = firmaGuardadaData?.firma ?? null;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isEmpty, setIsEmpty] = useState(true);
   const drawingRef = useRef(false);
@@ -1304,6 +1315,15 @@ function SignaturePadModal({ onClose, onSave, saving }: {
           <p style={{ fontSize: '0.85rem', color: '#6b6b60', marginTop: 0, marginBottom: '0.75rem' }}>
             Dibuja tu firma en el recuadro de abajo.
           </p>
+          {firmaGuardada && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 0.75rem', backgroundColor: '#f4f4ee', border: '1px solid #eeeee6', borderRadius: '10px', marginBottom: '0.9rem' }}>
+              <img src={firmaGuardada} alt="Tu firma guardada" style={{ width: '90px', height: '40px', objectFit: 'contain' as const, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '6px', flexShrink: 0 }} />
+              <span style={{ fontSize: '0.8rem', color: '#6b6b60', flex: 1 }}>Ya tienes una firma guardada.</span>
+              <button type="button" className="btn-press" style={{ ...styles.saveBtn, flexShrink: 0 }} onClick={() => onSave(firmaGuardada)} disabled={saving}>
+                {saving ? 'Guardando...' : 'Usar mi firma'}
+              </button>
+            </div>
+          )}
           <canvas
             ref={canvasRef}
             style={{ width: '100%', height: '220px', border: '1px solid #e5e7eb', borderRadius: '10px', touchAction: 'none' as const, cursor: 'crosshair', backgroundColor: '#fff', display: 'block' }}
@@ -1342,9 +1362,10 @@ function SignaturePadModal({ onClose, onSave, saving }: {
 /** Igual a ItemDetailModal, pero para un consumo que todavía vive en memoria (formulario de
  * Crear cotización, aún sin id): en vez de mutaciones al servidor, onSave/onDelete solo tocan
  * el arreglo local de stagedItems del formulario padre. */
-function StagedItemDetailModal({ item, tarifaId, onClose, onSave, onDelete }: {
+function StagedItemDetailModal({ item, tarifaId, hospitalId, onClose, onSave, onDelete }: {
   item: StagedItem;
   tarifaId?: string;
+  hospitalId?: string;
   onClose: () => void;
   onSave: (updated: StagedItem) => void;
   onDelete: () => void;
@@ -1363,8 +1384,8 @@ function StagedItemDetailModal({ item, tarifaId, onClose, onSave, onDelete }: {
   const [error, setError] = useState<string | null>(null);
 
   const { data: productoResults = [] } = useQuery<ProductoOption[]>({
-    queryKey: ['cotizaciones-productos', productoSearch, tarifaId],
-    queryFn: () => cotizacionesService.searchProductos(productoSearch, undefined, tarifaId),
+    queryKey: ['cotizaciones-productos', productoSearch, tarifaId, hospitalId],
+    queryFn: () => cotizacionesService.searchProductos(productoSearch, undefined, tarifaId, hospitalId),
     enabled: editing && !!productoSearch.trim(),
   });
 
@@ -1428,11 +1449,12 @@ function StagedItemDetailModal({ item, tarifaId, onClose, onSave, onDelete }: {
                   </span>
                 ) : (
                   <div style={{ position: 'relative' as const }}>
-                    <input
+                    <SanitizedInput
                       style={styles.formInput}
                       placeholder="Buscar por clave, nombre o sistema..."
                       value={productoSearch}
-                      onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setProductoSearch(sanitizeCirugiaDirigido(e.target.value)); }}
+                      sanitize={sanitizeCirugiaDirigido}
+                      onChange={setProductoSearch}
                     />
                     {productoSearch.trim() && (
                       <div style={styles.medicoDropdown}>
@@ -1487,7 +1509,7 @@ function StagedItemDetailModal({ item, tarifaId, onClose, onSave, onDelete }: {
 
               <div style={styles.formGroup}>
                 <label style={styles.formLabel}>Observaciones</label>
-                <input style={styles.formInput} value={form.observaciones} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) }); }} />
+                <SanitizedInput style={styles.formInput} value={form.observaciones} sanitize={sanitizeCirugiaDirigido} onChange={observaciones => setForm({ ...form, observaciones })} />
               </div>
 
               {error && <span style={styles.errorText}>{error}</span>}
@@ -1518,12 +1540,13 @@ function StagedItemDetailModal({ item, tarifaId, onClose, onSave, onDelete }: {
   );
 }
 
-function ItemDetailModal({ item, cotizacionId, onClose, onSaved, onDeleted }: {
+function ItemDetailModal({ item, cotizacionId, onClose, onSaved, onDeleted, readOnly = false }: {
   item: CotizacionItem;
   cotizacionId: string;
   onClose: () => void;
   onSaved: () => void;
   onDeleted: () => void;
+  readOnly?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
@@ -1587,7 +1610,7 @@ function ItemDetailModal({ item, cotizacionId, onClose, onSaved, onDeleted }: {
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>{item.descripcion ?? item.referencia ?? 'Consumo'}</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            {!editing && (
+            {!readOnly && !editing && (
               <>
                 <button style={styles.iconBtnDanger} onClick={() => setConfirmDelete(true)} title="Eliminar">
                   <Trash2 size={16} />
@@ -1625,11 +1648,12 @@ function ItemDetailModal({ item, cotizacionId, onClose, onSaved, onDeleted }: {
                   </span>
                 ) : (
                   <div style={{ position: 'relative' as const }}>
-                    <input
+                    <SanitizedInput
                       style={styles.formInput}
                       placeholder="Buscar por clave, nombre o sistema..."
                       value={productoSearch}
-                      onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setProductoSearch(sanitizeCirugiaDirigido(e.target.value)); }}
+                      sanitize={sanitizeCirugiaDirigido}
+                      onChange={setProductoSearch}
                     />
                     {productoSearch.trim() && (
                       <div style={styles.medicoDropdown}>
@@ -1722,6 +1746,8 @@ function TerceroButtonList({ label, required, clasificacion, valueId, onSelect, 
   const { data: options = [] } = useQuery<TerceroOption[]>({
     queryKey: ['cotizaciones-terceros-fijas', clasificacion],
     queryFn: () => cotizacionesService.searchTerceros(undefined, clasificacion),
+    // Yucamark no debe poder elegirse como Empresa en una cotización.
+    select: results => results.filter(o => !o.nombreCompleto?.toLowerCase().includes('yucamark')),
   });
 
   return (
@@ -1981,6 +2007,9 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
   const { data: sedeOptions = [] } = useQuery<SedeOption[]>({
     queryKey: ['cotizaciones-sedes'],
     queryFn: () => cotizacionesService.getSedes(),
+    // "Global" es una sede administrativa, no una sede real de operación — no debe poder
+    // seleccionarse al crear/editar una cotización.
+    select: sedes => sedes.filter(s => !s.nombre?.toLowerCase().includes('global')),
   });
 
   // Tarifa: si el responsable económico tiene tarifa propia asignada se usa esa; si no, cae al
@@ -2041,11 +2070,15 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
   // consumos ya agregados se recalculan y guardan de inmediato contra la lista de precios de la
   // nueva tarifa (mismo comportamiento de "guardado inmediato" que agregar/editar/eliminar un
   // consumo, sin esperar al botón Guardar del formulario). recalculatedTarifaRef evita recalcular
-  // dos veces para la misma tarifa (ej. por re-renders) y arranca en la tarifa ya persistida para
-  // no disparar un recálculo al montar el formulario. Se espera a que termine de resolver
-  // terceroTarifa antes de comparar, para no disparar con el valor intermedio de fallback
-  // (form.cubrimientoId) mientras la consulta de tarifa propia del responsable aún está en curso.
-  const recalculatedTarifaRef = useRef<string | null>(cotizacion.tarifaId ?? null);
+  // dos veces para la misma tarifa (ej. por re-renders). Antes arrancaba en cotizacion.tarifaId (la
+  // tarifa guardada en el registro), pero esa no siempre coincide con cómo se resuelve `tarifaId`
+  // en vivo (ej. el responsable económico ya tiene tarifa propia pero la cotización se guardó antes
+  // de eso) — esa discrepancia disparaba un recálculo fantasma apenas se abría "Editar", sin que el
+  // usuario hubiera tocado nada. Ahora la primera resolución de `tarifaId` tras montar el formulario
+  // solo establece la base (sin recalcular); un recálculo real solo dispara si DESPUÉS de eso el
+  // usuario cambia Cubrimiento/Responsable y `tarifaId` resuelve distinto a esa base.
+  const recalculatedTarifaRef = useRef<string | null>(null);
+  const tarifaBaselineEstablecidaRef = useRef(false);
 
   const recalcPreciosMutation = useMutation({
     mutationFn: (nuevoTarifaId: string) => cotizacionesService.recalcularPrecios(cotizacion.id, nuevoTarifaId),
@@ -2062,8 +2095,13 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
   });
 
   useEffect(() => {
-    if (terceroTarifaLoading) return;
-    if (!tarifaId || tarifaId === recalculatedTarifaRef.current) return;
+    if (terceroTarifaLoading || !tarifaId) return;
+    if (!tarifaBaselineEstablecidaRef.current) {
+      tarifaBaselineEstablecidaRef.current = true;
+      recalculatedTarifaRef.current = tarifaId;
+      return;
+    }
+    if (tarifaId === recalculatedTarifaRef.current) return;
     recalculatedTarifaRef.current = tarifaId;
     if (cotizacion.items.length > 0) {
       recalcPreciosMutation.mutate(tarifaId);
@@ -2151,7 +2189,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-dirigidoA">
         <label style={styles.formLabel}>Dirigido a *</label>
-        <input style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, dirigidoA: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+        <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} sanitize={sanitizeCirugiaDirigido} onChange={dirigidoA => { setForm({ ...form, dirigidoA }); setError(null); }} />
         {error?.field === 'dirigidoA' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -2184,7 +2222,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-cirugia">
         <label style={styles.formLabel}>Cirugía *</label>
-        <input style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, cirugia: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+        <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} sanitize={sanitizeCirugiaDirigido} onChange={cirugia => { setForm({ ...form, cirugia }); setError(null); }} />
         {error?.field === 'cirugia' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -2245,7 +2283,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
           value={form.sedeId}
           onChange={e => { setForm({ ...form, sedeId: e.target.value }); setError(null); }}
         >
-          <option value="">Selecciona...</option>
+          <option value="" disabled hidden>Selecciona...</option>
           {sedeOptions.map(s => (
             <option key={s.id} value={s.id}>{s.nombre}</option>
           ))}
@@ -2255,7 +2293,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-numProveedor">
         <label style={styles.formLabel}>N° Proveedor{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
-        <input style={{ ...styles.formInput, ...(error?.field === 'numProveedor' ? styles.inputError : {}) }} value={form.numProveedor} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, numProveedor: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+        <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'numProveedor' ? styles.inputError : {}) }} value={form.numProveedor} sanitize={sanitizeCirugiaDirigido} onChange={numProveedor => { setForm({ ...form, numProveedor }); setError(null); }} />
         {error?.field === 'numProveedor' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -2268,13 +2306,13 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-tiempoEntrega">
         <label style={styles.formLabel}>Tiempo de Entrega{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
-        <input style={{ ...styles.formInput, ...(error?.field === 'tiempoEntrega' ? styles.inputError : {}) }} value={form.tiempoEntrega} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, tiempoEntrega: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+        <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'tiempoEntrega' ? styles.inputError : {}) }} value={form.tiempoEntrega} sanitize={sanitizeCirugiaDirigido} onChange={tiempoEntrega => { setForm({ ...form, tiempoEntrega }); setError(null); }} />
         {error?.field === 'tiempoEntrega' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
       <div style={styles.formGroup}>
         <label style={styles.formLabel}>Observaciones</label>
-        <input style={styles.formInput} value={form.observaciones} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) }); }} />
+        <SanitizedInput style={styles.formInput} value={form.observaciones} sanitize={sanitizeCirugiaDirigido} onChange={observaciones => setForm({ ...form, observaciones })} />
       </div>
 
       <ListPicker
@@ -2340,7 +2378,10 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
                       onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
                     >
                       <td style={styles.consumosTd}>{it.cantidad ?? '-'}</td>
-                      <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={producto}>{producto}</td>
+                      <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={producto}>
+                        {producto}
+                        {it.esEspecial && <span style={{ ...styles.especialTag, marginLeft: '0.4rem' }} title="Nombre/referencia especial de este hospital">Especial</span>}
+                      </td>
                       <td style={styles.consumosTd}>{formatMoney(it.valorUnitario)}</td>
                       <td style={{ ...styles.consumosTd, fontWeight: 700, color: '#3f6510' }}>{formatMoney(it.valor)}</td>
                       <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={it.observaciones ?? undefined}>{it.observaciones ?? '-'}</td>
@@ -2614,12 +2655,17 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
   const [showAddItem, setShowAddItem] = useState(false);
   const [selectedStagedItem, setSelectedStagedItem] = useState<StagedItem | null>(null);
   const [confirmAddConsumoConPaquete, setConfirmAddConsumoConPaquete] = useState(false);
-  // Tras crear la cotización, se ofrece firmarla antes de cerrar el modal — createdId/createdMsg
-  // guardan lo necesario para ese paso intermedio (firmar o cerrar directo).
-  const [createdId, setCreatedId] = useState<string | null>(null);
-  const [createdMsg, setCreatedMsg] = useState<string | null>(null);
-  const [showSignaturePad, setShowSignaturePad] = useState(false);
-  const [signing, setSigning] = useState(false);
+  // Firmar queda como una opción más al final del propio formulario (checkbox), en vez de un
+  // modal separado que aparecía después de crear la cotización. No se puede dibujar/cambiar la
+  // firma desde acá — siempre usa la firma personal ya guardada (se edita desde el ícono de
+  // perfil → "Editar mi firma"), este checkbox solo decide si se aplica o no a esta cotización.
+  const [quiereFirmar, setQuiereFirmar] = useState(false);
+  const { data: firmaGuardadaData } = useQuery({
+    queryKey: ['mi-firma'],
+    queryFn: () => authService.obtenerFirma(),
+    enabled: quiereFirmar,
+  });
+  const firmaGuardada = firmaGuardadaData?.firma ?? null;
 
   const stagedSubtotal = stagedItems.reduce((sum, it) => sum + (Number(it.valor) || 0), 0);
   const { subtotal, vrDcto, totalAntesImpuestos, iva, retencion, total } = computeTotalesFromSubtotal(stagedSubtotal, form.tieneDcto, form.porcentajeDcto, form.vrDctoPesos, form.impuestos);
@@ -2632,6 +2678,9 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
   const { data: sedeOptions = [] } = useQuery<SedeOption[]>({
     queryKey: ['cotizaciones-sedes'],
     queryFn: () => cotizacionesService.getSedes(),
+    // "Global" es una sede administrativa, no una sede real de operación — no debe poder
+    // seleccionarse al crear/editar una cotización.
+    select: sedes => sedes.filter(s => !s.nombre?.toLowerCase().includes('global')),
   });
 
   // Tarifa: si el responsable económico tiene tarifa propia asignada se usa esa; si no, cae al
@@ -2751,15 +2800,15 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
           observaciones: it.observaciones || undefined,
         });
       }
+      if (quiereFirmar && firmaGuardada) {
+        await cotizacionesService.setFirma(created.id, firmaGuardada);
+      }
       return created;
     },
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ['cotizaciones'] });
-      // El toast de éxito sale de inmediato (onNotify no cierra el modal) — el modal se queda
-      // abierto un momento más para preguntar si quiere firmarla antes de cerrar (ver createdId).
       onNotify(`Cotización ${created.numCotizacion || created.id} creada`);
-      setCreatedId(created.id);
-      setCreatedMsg(`Cotización ${created.numCotizacion || created.id} creada`);
+      onClose();
     },
   });
 
@@ -2784,6 +2833,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
       if (dctoPorcentajeMonto + dctoValorMonto > subtotal) { setError({ field: 'vrDctoPesos', message: 'Los descuentos combinados no pueden exceder el subtotal.' }); return; }
     }
     if (!form.impuestos) { setError({ field: 'impuestos', message: 'Selecciona impuestos.' }); return; }
+    if (quiereFirmar && !firmaGuardada) { setError({ field: 'firma', message: 'No tienes una firma guardada. Configúrala desde el ícono de tu perfil ("Editar mi firma") o desmarca esta opción.' }); return; }
     setError(null);
     createMutation.mutate();
   };
@@ -2792,50 +2842,6 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
     if (!error) return;
     document.getElementById(`cotizacion-create-field-${error.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [error]);
-
-  if (createdId && createdMsg) {
-    const handleSaveFirma = async (dataUrl: string) => {
-      setSigning(true);
-      try {
-        await cotizacionesService.setFirma(createdId, dataUrl);
-        onNotify('Firma guardada');
-        onClose();
-      } catch {
-        onNotify('No se pudo guardar la firma. Intenta de nuevo.', 'info');
-      } finally {
-        setSigning(false);
-      }
-    };
-
-    return (
-      <div className="modal-overlay-anim" style={styles.modalOverlay}>
-        <div key="cotizacion-creada" className="modal-content-anim page-fade-in" style={{ ...styles.modalContent, maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
-          <div style={{ ...styles.modalHeader, justifyContent: 'center' as const }}>
-            <h2 style={{ ...styles.modalTitle, textAlign: 'center' as const }}>¡Cotización creada!</h2>
-          </div>
-          <div style={{ ...styles.modalBody, textAlign: 'center' as const }}>
-            <p style={{ color: '#6b6b60', marginTop: 0 }}>¿Deseas firmarla ahora?</p>
-            <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.6rem', marginTop: '1.25rem' }}>
-              <button
-                type="button"
-                className="btn-press header-btn-primary"
-                style={{ ...styles.pillBtnPrimary, justifyContent: 'center' as const }}
-                onClick={() => setShowSignaturePad(true)}
-              >
-                Firmar ahora
-              </button>
-              <button type="button" className="btn-press" style={styles.cancelBtn} onClick={onClose}>
-                Omitir
-              </button>
-            </div>
-          </div>
-        </div>
-        {showSignaturePad && (
-          <SignaturePadModal onClose={() => setShowSignaturePad(false)} onSave={handleSaveFirma} saving={signing} />
-        )}
-      </div>
-    );
-  }
 
   return (
     <div className="modal-overlay-anim" style={styles.modalOverlay}>
@@ -2861,7 +2867,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-dirigidoA">
               <label style={styles.formLabel}>Dirigido a *</label>
-              <input style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, dirigidoA: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+              <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} sanitize={sanitizeCirugiaDirigido} onChange={dirigidoA => { setForm({ ...form, dirigidoA }); setError(null); }} />
               {error?.field === 'dirigidoA' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
@@ -2910,7 +2916,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                   Selecciona primero el hospital
                 </span>
               ) : (
-                <input style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, cirugia: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+                <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} sanitize={sanitizeCirugiaDirigido} onChange={cirugia => { setForm({ ...form, cirugia }); setError(null); }} />
               )}
               {error?.field === 'cirugia' && <span style={styles.errorText}>{error.message}</span>}
             </div>
@@ -2983,7 +2989,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                 value={form.sedeId}
                 onChange={e => { setForm({ ...form, sedeId: e.target.value }); setError(null); }}
               >
-                <option value="">Selecciona...</option>
+                <option value="" disabled hidden>Selecciona...</option>
                 {sedeOptions.map(s => (
                   <option key={s.id} value={s.id}>{s.nombre}</option>
                 ))}
@@ -2993,7 +2999,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-numProveedor">
               <label style={styles.formLabel}>N° Proveedor{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
-              <input style={{ ...styles.formInput, ...(error?.field === 'numProveedor' ? styles.inputError : {}) }} value={form.numProveedor} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, numProveedor: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+              <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'numProveedor' ? styles.inputError : {}) }} value={form.numProveedor} sanitize={sanitizeCirugiaDirigido} onChange={numProveedor => { setForm({ ...form, numProveedor }); setError(null); }} />
               {error?.field === 'numProveedor' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
@@ -3006,13 +3012,13 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-tiempoEntrega">
               <label style={styles.formLabel}>Tiempo de Entrega{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
-              <input style={{ ...styles.formInput, ...(error?.field === 'tiempoEntrega' ? styles.inputError : {}) }} value={form.tiempoEntrega} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, tiempoEntrega: sanitizeCirugiaDirigido(e.target.value) }); setError(null); }} />
+              <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'tiempoEntrega' ? styles.inputError : {}) }} value={form.tiempoEntrega} sanitize={sanitizeCirugiaDirigido} onChange={tiempoEntrega => { setForm({ ...form, tiempoEntrega }); setError(null); }} />
               {error?.field === 'tiempoEntrega' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Observaciones</label>
-              <input style={styles.formInput} value={form.observaciones} onChange={e => { if ((e.nativeEvent as InputEvent).isComposing) return; setForm({ ...form, observaciones: sanitizeCirugiaDirigido(e.target.value) }); }} />
+              <SanitizedInput style={styles.formInput} value={form.observaciones} sanitize={sanitizeCirugiaDirigido} onChange={observaciones => setForm({ ...form, observaciones })} />
             </div>
 
             <ListPicker
@@ -3141,6 +3147,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                 <AddStagedItemForm
                   tarifaId={tarifaId}
                   tarifaLabel={tarifaLabel}
+                  hospitalId={form.hospitalId}
                   items={stagedItems}
                   onSelectItem={setSelectedStagedItem}
                   onAdd={item => {
@@ -3156,6 +3163,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                 <StagedItemDetailModal
                   item={selectedStagedItem}
                   tarifaId={tarifaId}
+                  hospitalId={form.hospitalId}
                   onClose={() => setSelectedStagedItem(null)}
                   onSave={updated => {
                     setStagedItems(prev => prev.map(x => (x.localId === updated.localId ? updated : x)));
@@ -3292,6 +3300,24 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
               />
             </div>
 
+            <div style={styles.formGroup} id="cotizacion-create-field-firma">
+              <label style={{ ...styles.formLabel, display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={quiereFirmar}
+                  onChange={e => { setQuiereFirmar(e.target.checked); setError(null); }}
+                />
+                Firmar esta cotización
+              </label>
+              {quiereFirmar && firmaGuardada && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 0.75rem', backgroundColor: '#f4f4ee', border: '1px solid #eeeee6', borderRadius: '10px' }}>
+                  <img src={firmaGuardada} alt="Tu firma guardada" style={{ width: '90px', height: '40px', objectFit: 'contain' as const, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '6px', flexShrink: 0 }} />
+                  <span style={{ fontSize: '0.8rem', color: '#6b6b60' }}>Se firmará con tu firma guardada.</span>
+                </div>
+              )}
+              {error?.field === 'firma' && <span style={styles.errorText}>{error.message}</span>}
+            </div>
+
             <div style={styles.formActions}>
               <button style={styles.cancelBtn} onClick={onClose}>Cancelar</button>
               <button style={styles.saveBtn} onClick={handleGuardar} disabled={createMutation.isPending}>
@@ -3305,7 +3331,10 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
   );
 }
 
-function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClose: () => void; onNotify: (message: string, variant?: 'check' | 'info') => void; onDeleted: () => void }) {
+// Exportado (no solo usado acá adentro) para que otras páginas puedan abrir el detalle de una
+// cotización en un modal sin navegar fuera de sí mismas (ver ProgramacionDetailPage.tsx, sección
+// Cotizaciones) — se importa con lazy() ahí para no meter todo este archivo en su bundle inicial.
+export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClose: () => void; onNotify: (message: string, variant?: 'check' | 'info') => void; onDeleted: () => void }) {
   const { isMobile } = useResponsiveStyles();
   const navigate = useNavigateWithLoading();
   const queryClient = useQueryClient();
@@ -3369,14 +3398,9 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
   const handleGenerarPdf = async () => {
     if (!data) return;
     setGeneratingPdf(true);
-    // Se abre la pestaña en blanco YA, dentro del mismo clic — buildCotizacionPdf tarda un rato
-    // cargando imágenes con await, y si se llama a window.open() recién al terminar, el navegador
-    // ya no lo asocia al toque del usuario y lo bloquea en silencio.
-    const preOpenedTab = window.open('', '_blank');
     try {
-      await generarPdfCotizacion(data, preOpenedTab);
+      await generarPdfCotizacion(data);
     } catch (err) {
-      if (preOpenedTab) preOpenedTab.close();
       alert('No se pudo generar el PDF. Intenta de nuevo.');
       console.error(err);
     } finally {
@@ -3445,15 +3469,17 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
               <Pencil size={15} />
               Editar
             </button>
-            <button
-              style={styles.moreMenuItem}
-              onClick={() => { setShowMoreMenu(false); setShowSignaturePad(true); }}
-              onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
-              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-            >
-              <PenTool size={15} />
-              {data?.firma ? 'Editar firma' : 'Firmar'}
-            </button>
+            {!data?.firma && (
+              <button
+                style={styles.moreMenuItem}
+                onClick={() => { setShowMoreMenu(false); setShowSignaturePad(true); }}
+                onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
+                onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+              >
+                <PenTool size={15} />
+                Firmar
+              </button>
+            )}
             <div style={styles.moreMenuDivider} />
             <button
               style={{ ...styles.moreMenuItem, ...styles.moreMenuItemDanger }}
@@ -3657,7 +3683,10 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
                             onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
                           >
                             <td style={styles.consumosTd}>{it.cantidad ?? '-'}</td>
-                            <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={producto}>{producto}</td>
+                            <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={producto}>
+                              {producto}
+                              {it.esEspecial && <span style={{ ...styles.especialTag, marginLeft: '0.4rem' }} title="Nombre/referencia especial de este hospital">Especial</span>}
+                            </td>
                             <td style={styles.consumosTd}>{formatMoney(it.valorUnitario)}</td>
                             <td style={{ ...styles.consumosTd, fontWeight: 700, color: '#3f6510' }}>{formatMoney(it.valor)}</td>
                             <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={it.observaciones ?? undefined}>{it.observaciones ?? '-'}</td>
@@ -3680,7 +3709,7 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
                   </div>
 
                   {data.remisionesAsociadas.length === 0 ? (
-                    <div style={styles.emptySection}>No hay artículos</div>
+                    <div style={styles.emptySection}>Sin remisiones asociadas</div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.5rem' }}>
                       {data.remisionesAsociadas.map(r => (
@@ -3697,6 +3726,40 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
                       ))}
                     </div>
                   )}
+
+                  <div style={{ marginTop: '1.5rem' }}>
+                    <div style={styles.sectionHeader}>
+                      <span style={{ ...styles.sectionTitle, fontWeight: 500 }}>Programación asociada</span>
+                    </div>
+
+                    {!data.programacionAsociada ? (
+                      <div style={styles.emptySection}>Sin programación asociada</div>
+                    ) : (
+                      <div
+                        style={styles.remisionRow}
+                        onClick={() => navigate(`/operacion/programaciones/${data.programacionAsociada!.id}`, '/operacion/programaciones/:id')}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', minWidth: 0 }}>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#4d7a13' }}>
+                            {data.programacionAsociada.numProgram || data.programacionAsociada.id}
+                          </span>
+                          {data.programacionAsociada.medicos.length > 0 && (
+                            <span style={{ color: '#6b6b60', fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+                              {data.programacionAsociada.medicos.join(', ')}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', alignItems: 'flex-end', flexShrink: 0 }}>
+                          <span style={{ color: '#33342a', fontSize: '0.85rem', fontWeight: 600 }}>
+                            {formatDate(data.programacionAsociada.fechaQx)}{data.programacionAsociada.horaQx ? ` · ${data.programacionAsociada.horaQx}` : ''}
+                          </span>
+                          {data.programacionAsociada.sede && (
+                            <span style={{ color: '#6b6b60', fontSize: '0.78rem' }}>{data.programacionAsociada.sede}</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -3754,6 +3817,7 @@ function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string; onClos
           onClose={() => setSelectedItem(null)}
           onSaved={() => onNotify('Consumo actualizado')}
           onDeleted={() => onNotify('Consumo eliminado')}
+          readOnly={!editing}
         />
       )}
 
@@ -3776,12 +3840,27 @@ export default function CotizacionesPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
+  const [sortBy, setSortBy] = useState<CotizacionSortField | undefined>(undefined);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastVariant, setToastVariant] = useState<'check' | 'info'>('check');
   const tableWrapRef = useRef<HTMLDivElement>(null);
   useSmoothWheelScroll(tableWrapRef, [], 3);
+
+  // pageWrapper ya está anclado exacto al viewport (position:fixed + overflow:hidden) para que
+  // solo la tabla scrollee internamente — pero medido en vivo seguía apareciendo una barra de
+  // scroll del navegador de unos ~59px, sin que ningún elemento (fixed/sticky/absolute) midiera
+  // pasarse del viewport al revisarlo con DevTools. En vez de seguir cazando el origen exacto,
+  // se bloquea el scroll del body directamente mientras esta página esté montada — mismo
+  // mecanismo que ya se usa acá abajo para los modales, sin el truco de iOS (no hace falta
+  // "congelar" una posición de scroll previa: esta página nunca debe scrollear, ni antes ni
+  // después de este efecto).
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
 
   useEffect(() => {
     if (!(showCreateModal || selectedId)) return;
@@ -3804,19 +3883,6 @@ export default function CotizacionesPage() {
     };
   }, [showCreateModal, selectedId]);
 
-  // Le da sombra a la tarjeta fija (título + toolbar) solo mientras está "pegada" arriba por el
-  // scroll de la PÁGINA — mismo patrón que Remisiones / Solicitud de Programación. El colapso del
-  // título/filtros en móvil también depende únicamente de este scroll (no del scroll interno de
-  // tableWrap): desplazarse dentro de la lista de registros no debe afectar al apartado principal,
-  // solo el scroll de la página completa (hacia arriba o abajo, fuera del contenedor de la lista).
-  const [isStuck, setIsStuck] = useState(false);
-  useEffect(() => {
-    const handleScroll = () => setIsStuck(window.scrollY > 4);
-    handleScroll();
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
   // Deep-link desde el buscador global (/operacion/cotizaciones?id=...): abre el modal de
   // detalle directo al llegar, sin depender de que esa cotización esté en la página cargada.
   // Reacciona a cambios en searchParams (no solo al montar): si el usuario ya estaba en esta
@@ -3829,7 +3895,17 @@ export default function CotizacionesPage() {
     }
   }, [searchParams, setSearchParams]);
 
-  const query = { page, limit: 200, search: search || undefined, dateFrom: dateFrom || undefined, dateTo: dateTo || undefined };
+  const query = { page, limit: 200, search: search || undefined, dateFrom: dateFrom || undefined, dateTo: dateTo || undefined, sortBy, sortOrder: sortBy ? sortOrder : undefined };
+
+  const handleSort = (field: CotizacionSortField) => {
+    setPage(1);
+    if (sortBy === field) {
+      setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(field);
+      setSortOrder('asc');
+    }
+  };
 
   const { data, isLoading } = useQuery({
     queryKey: ['cotizaciones', query],
@@ -3841,63 +3917,24 @@ export default function CotizacionesPage() {
 
   return (
     <>
-      <div style={styles.pageWrapper}>
-        <button
-          type="button"
-          onClick={() => navigate('/operacion')}
-          style={styles.backLink}
-          onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}
-        >
-          <MaterialIcon name="arrow_back" size={16} />
-          Volver
-        </button>
-
+      <div style={{ ...styles.pageWrapper, left: isMobile ? 0 : '60px' }}>
         <div
           style={{
             ...styles.contentCard,
-            // Con el título/filtros colapsados solo queda la barra buscadora adentro, pero el
-            // padding del contenedor (pensado para cuando tenía todo el contenido) seguía siendo
-            // el mismo — se veía un contenedor mucho más alto de lo necesario.
-            ...(isMobile && isStuck ? {
-              padding: '0.6rem 1.25rem',
-              transition: `${styles.contentCard.transition}, padding 0.2s ease`,
-            } : {}),
-            // En móvil se deja la sombra siempre puesta, para separar visualmente la tarjeta de
-            // la lista incluso antes de que la página empiece a desplazarse.
-            ...(isStuck || isMobile ? styles.contentCardStuck : {}),
+            ...(isMobile ? styles.contentCardStuck : {}),
           }}
         >
-          <div
-            style={{
-              ...styles.header,
-              ...(isMobile ? {
-                maxHeight: isStuck ? '0px' : '40px',
-                opacity: isStuck ? 0 : 1,
-                marginBottom: isStuck ? 0 : styles.header.marginBottom,
-                overflow: 'hidden' as const,
-                transition: 'max-height 0.2s ease, opacity 0.15s ease, margin-bottom 0.2s ease',
-              } : {}),
-            }}
-          >
-            {!isMobile && (
-              <span style={styles.modalTitleIconBadge}>
-                <MaterialIcon name="request_quote" size={20} color="#4d7a13" />
-              </span>
-            )}
-            <h1 style={styles.title}>Cotizaciones</h1>
+          <div style={styles.header}>
+            <HeaderBackReveal
+              onBack={() => navigate(-1)}
+              icon={<MaterialIcon name="request_quote" size={20} color="#4d7a13" />}
+              mobileIconAsBack={isMobile}
+            >
+              <h1 style={styles.title}>Cotizaciones</h1>
+            </HeaderBackReveal>
           </div>
 
-          <div
-            style={{
-              ...styles.toolbar,
-              // El filtro/botón y el contador colapsan a 0 de alto, pero como el buscador (flex:1,
-              // minWidth:280px) no deja suficiente ancho para que quepan al lado, igual "envuelven"
-              // a su propia línea del flex-wrap — y el gap entre esas líneas invisibles seguía
-              // reservando espacio debajo del buscador.
-              ...(isMobile && isStuck ? { gap: 0 } : {}),
-            }}
-          >
+          <div style={styles.toolbar}>
             <div style={styles.searchWrap}>
               <Search size={15} color="#9ca3af" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
               <input
@@ -3908,19 +3945,7 @@ export default function CotizacionesPage() {
               />
             </div>
 
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.75rem',
-                ...(isMobile ? {
-                  maxHeight: isStuck ? '0px' : '50px',
-                  opacity: isStuck ? 0 : 1,
-                  overflow: 'hidden' as const,
-                  transition: 'max-height 0.2s ease, opacity 0.15s ease',
-                } : {}),
-              }}
-            >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
               <DateRangeFilter
                 dateFrom={dateFrom}
                 dateTo={dateTo}
@@ -3937,35 +3962,13 @@ export default function CotizacionesPage() {
               </button>
             </div>
 
-            <span
-              style={{
-                ...styles.totalLabel,
-                // Ya no se colapsa junto con el título/filtros: se queda visible debajo de la
-                // barra buscadora incluso con la tarjeta colapsada. Como toolbar queda con gap:0
-                // en ese estado (para no reservar espacio de las líneas invisibles del filtro y
-                // el botón, que sí siguen colapsando), el espacio respecto al buscador se le da
-                // directo con marginTop en vez de depender del gap del flex.
-                ...(isMobile ? {
-                  display: 'block' as const,
-                  ...(isStuck ? { marginTop: '0.35rem' } : {}),
-                } : {}),
-              }}
-            >
+            <span style={{ ...styles.totalLabel, ...(isMobile ? { display: 'block' as const } : {}) }}>
               {isLoading ? '...' : `${data?.total ?? 0} registros`}
             </span>
           </div>
         </div>
 
-        <div
-          ref={tableWrapRef}
-          style={{
-            ...styles.tableWrap,
-            // Aprovecha el espacio que queda libre debajo de la paginación en móvil. El espaciado
-            // con la tarjeta de arriba no depende de esto (es el marginBottom de contentCard) —
-            // este maxHeight solo mueve el borde INFERIOR de la lista hacia abajo.
-            ...(isMobile ? { maxHeight: 'calc(100vh - 250px)' } : {}),
-          }}
-        >
+        <div ref={tableWrapRef} style={styles.tableWrap}>
           {isLoading && items.length === 0 ? (
             <div style={styles.empty}>Cargando...</div>
           ) : items.length === 0 ? (
@@ -3980,8 +3983,33 @@ export default function CotizacionesPage() {
             <table style={styles.table}>
               <thead>
                 <tr style={styles.thead}>
-                  {['#', 'N° Cotización', 'Fecha', 'Usuario', 'Hospital', 'Médico', 'Cirugía', 'Sede', 'Total'].map((h, i) => (
-                    <th key={i} style={{ ...styles.th, ...(i === 2 ? { paddingRight: '0.3rem' } : {}), ...(i === 3 ? { paddingLeft: '0.3rem' } : {}) }}>{h}</th>
+                  {([
+                    { label: '#', field: null },
+                    { label: 'N° Cotización', field: 'numCotizacion' },
+                    { label: 'Fecha', field: 'fecha' },
+                    { label: 'Marca de Tiempo', field: 'marcaDeTiempo' },
+                    { label: 'Usuario', field: 'usuario' },
+                    { label: 'Hospital', field: 'hospital' },
+                    { label: 'Médico', field: 'medico' },
+                    { label: 'Cirugía', field: 'cirugia' },
+                    { label: 'Sede', field: 'sede' },
+                    { label: 'Total', field: null },
+                  ] as { label: string; field: CotizacionSortField | null }[]).map((col, i) => (
+                    <th
+                      key={i}
+                      onClick={col.field ? () => handleSort(col.field as CotizacionSortField) : undefined}
+                      style={{
+                        ...styles.th,
+                        ...(col.field ? { cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' as const } : {}),
+                      }}
+                    >
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}>
+                        {col.label}
+                        {col.field && sortBy === col.field && (
+                          sortOrder === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />
+                        )}
+                      </span>
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -4046,9 +4074,19 @@ export default function CotizacionesPage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  pageWrapper: { padding: '0.05rem 1.5rem 1.5rem' },
-  backLink: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem', padding: '0.25rem 0.1rem', border: 'none', background: 'transparent', color: '#6b7280', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, transition: 'color 0.15s ease' },
-  contentCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '16px', padding: '1.25rem', marginBottom: '1.5rem', position: 'sticky' as const, top: '60px', zIndex: 10, boxShadow: '0 0 0 rgba(0,0,0,0)', transition: 'box-shadow 0.2s ease, border-color 0.2s ease, margin-bottom 0.2s ease' },
+  // Antes cada pieza (contentCard, tableWrap) adivinaba su propia altura máxima con calc(100vh -
+  // Npx) — aproximado, y calc(100vh - Npx) es frágil: cualquier diferencia de un par de píxeles
+  // respecto al padding/margen real de <main> (que no se controla desde acá) hacía que la PÁGINA
+  // completa terminara haciendo scroll de todos modos (ocultando el título y "Volver"). En vez de
+  // adivinar la altura, pageWrapper ahora se ancla directo a los bordes del viewport con
+  // position:fixed (top = alto del header, left = ancho del sidebar en escritorio) — el navegador
+  // calcula el alto exacto disponible sin que nosotros lo restemos a mano. contentCard/pagination
+  // no crecen (flexShrink: 0) y tableWrap es el único que se estira (flex: 1) y scrollea
+  // internamente si hace falta.
+  pageWrapper: { position: 'fixed' as const, top: '60px', right: 0, bottom: 0, padding: '1.5rem', boxSizing: 'border-box' as const, display: 'flex', flexDirection: 'column' as const, gap: '1rem', overflow: 'hidden' },
+  // Ícono de "volver" pegado al título (mismo patrón que Linear/GitHub/Notion) en vez de un link
+  // de texto en su propia fila arriba de todo — más compacto y no roba espacio vertical.
+  contentCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '16px', padding: '1.25rem', flexShrink: 0 },
   contentCardStuck: { boxShadow: '0 8px 20px rgba(0,0,0,0.08)', border: '1px solid #e5e7eb' },
   header: { display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' },
   title: { fontSize: '1.4rem', fontWeight: 700, color: '#333', margin: 0 },
@@ -4056,7 +4094,7 @@ const styles: Record<string, React.CSSProperties> = {
   searchWrap: { position: 'relative' as const, flex: 1, minWidth: '280px' },
   searchInput: { width: '100%', padding: '0.6rem 0.75rem 0.6rem 2.25rem', border: 'none', backgroundColor: '#f5f5f0', borderRadius: '10px', fontSize: '0.875rem', outline: 'none', boxSizing: 'border-box' as const, color: '#374151' },
   totalLabel: { fontSize: '0.8rem', color: '#9ca3af', whiteSpace: 'nowrap' as const, marginLeft: 'auto' },
-  tableWrap: { backgroundColor: '#fff', borderRadius: '16px', overflowX: 'auto' as const, overflowY: 'auto' as const, maxHeight: 'calc(100vh - 260px)', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #eeeee6' },
+  tableWrap: { backgroundColor: '#fff', borderRadius: '16px', overflowX: 'auto' as const, overflowY: 'auto' as const, flex: 1, minHeight: 0, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #eeeee6' },
   table: { width: '100%', borderCollapse: 'collapse' as const, fontSize: '0.84375rem' },
   thead: { backgroundColor: '#f9fafb' },
   th: { padding: '0.7rem 0.875rem', textAlign: 'left' as const, fontWeight: 500, color: '#9ca3af', fontSize: '0.68rem', textTransform: 'uppercase' as const, letterSpacing: '0.04em', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' as const, position: 'sticky' as const, top: 0, backgroundColor: '#f9fafb', zIndex: 1 },
@@ -4066,7 +4104,7 @@ const styles: Record<string, React.CSSProperties> = {
   mobileCardList: { display: 'flex', flexDirection: 'column' as const, gap: '0.75rem', padding: '0.75rem' },
   mobileCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '12px', padding: '0.85rem', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' },
   mobileCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' },
-  mobileCardId: { fontSize: '0.8rem', fontWeight: 700, color: '#4d7a13' },
+  mobileCardId: { display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.8rem', fontWeight: 700, color: '#4d7a13' },
   mobileCardDate: { fontSize: '0.75rem', color: '#9ca3af' },
   mobileCardMainRow: { display: 'flex', alignItems: 'center', gap: '0.7rem', marginBottom: '0.7rem' },
   mobileCardTitle: { fontSize: '0.9rem', fontWeight: 700, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
@@ -4076,7 +4114,7 @@ const styles: Record<string, React.CSSProperties> = {
   mobileCardFieldLabel: { fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
   mobileCardFieldValue: { fontSize: '0.82rem', fontWeight: 600, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   empty: { textAlign: 'center' as const, padding: '3rem', color: '#9ca3af' },
-  pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem', marginTop: '1.5rem' },
+  pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem', flexShrink: 0 },
   pageLabel: { fontSize: '0.875rem', fontWeight: 600, color: '#33342a' },
   pageBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.5rem 1rem', backgroundColor: '#e9f2d8', color: '#3f6510', border: '1px solid #dbe8c2', borderRadius: '10px', cursor: 'pointer', fontWeight: 600, fontSize: '0.84375rem' },
   pageBtnDisabled: { backgroundColor: '#f4f4ee', borderColor: '#eeeee6', color: '#c7c7ba', cursor: 'not-allowed' as const },
@@ -4133,6 +4171,7 @@ const styles: Record<string, React.CSSProperties> = {
   tarifaHint: { padding: '0.65rem 0.9rem', backgroundColor: '#f4f4ee', borderRadius: '10px', fontSize: '0.82rem', color: '#6b6b60', lineHeight: 1.4, marginBottom: '0.9rem' },
   productoSistemaTag: { fontSize: '0.7rem', fontWeight: 600, color: '#9ca3af', whiteSpace: 'nowrap' as const, flexShrink: 0 },
   productoClaveTag: { color: '#3f6510' },
+  especialTag: { fontSize: '0.65rem', fontWeight: 700, color: '#92400e', backgroundColor: '#fef3c7', border: '1px solid #fde68a', borderRadius: '999px', padding: '0.1rem 0.5rem', whiteSpace: 'nowrap' as const, flexShrink: 0 },
   // overscrollBehavior:'contain' evita que el gesto de scroll "se escape" hacia el modal que la
   // contiene cuando llegas al límite de la tabla — sin esto, en móvil arrastrar dentro de la tabla
   // podía terminar moviendo el modal completo, dando la sensación de que la tabla "se mueve a

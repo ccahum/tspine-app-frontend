@@ -1237,7 +1237,7 @@ export default function RemisionDetailPage() {
       <div style={styles.container}>
         <button
           type="button"
-          onClick={() => navigate('/operacion/remision')}
+          onClick={() => navigate(-1)}
           style={styles.backLink}
           onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
           onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}
@@ -1458,7 +1458,7 @@ export default function RemisionDetailPage() {
           <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '1.5rem' }}>
             <div>
               <div style={styles.sectionTitleRow}>
-                <h2 style={styles.sectionTitle}>Técnicos Asociados</h2>
+                <h2 style={styles.sectionTitle}>Técnicos asociados</h2>
                 <span style={styles.badge}>{remision.tecnicos.length}</span>
               </div>
               {remision.tecnicos.length === 0 ? (

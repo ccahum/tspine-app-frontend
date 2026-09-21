@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Wrench, FileText, Calendar, ClipboardCheck, ShieldCheck,
-  CalendarDays, Tag, Tags, CalendarPlus,
+  CalendarDays, Tag, Tags,
 } from 'lucide-react';
-import { MaterialIcon } from '../../components/icons/MaterialIcon';
+import HeaderBackReveal from '../../components/HeaderBackReveal';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 import { useNavigateWithLoading } from '../../hooks/useNavigateWithLoading';
 
@@ -17,7 +17,6 @@ const submodules = [
   { icon: CalendarDays, label: 'Calendario de programación', description: 'Vista mensual por sede', path: '/operacion/calendario' },
   { icon: Tag, label: 'Listas de precio', description: 'Precios vigentes por producto', path: '/operacion/listas-precio' },
   { icon: Tags, label: 'Precios especiales', description: 'Acuerdos y descuentos por cliente', path: '/operacion/precios-especiales' },
-  { icon: CalendarPlus, label: 'Solicitud de programación', description: 'Solicitudes pendientes de agendar', path: '/operacion/solicitud-programacion' },
 ];
 
 function SubmoduleCard({ icon: Icon, label, description, path }: typeof submodules[0]) {
@@ -47,58 +46,59 @@ export default function OperacionPage() {
   const navigate = useNavigateWithLoading();
   const { isMobile } = useResponsiveStyles();
 
-  return (
-      <div style={{ ...styles.container, paddingLeft: isMobile ? '1rem' : '2rem', paddingRight: isMobile ? '1rem' : '2rem' }}>
-        <button
-          type="button"
-          onClick={() => navigate('/dashboard')}
-          style={styles.backLink}
-          onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}
-        >
-          <MaterialIcon name="arrow_back" size={16} />
-          Volver
-        </button>
+  // Misma solución que Cotizaciones: pageWrapper anclado al viewport (position:fixed) más el
+  // scroll del body bloqueado mientras esta página está montada, para que todo el contenido
+  // (título, botón Volver, tarjetas) dé en una sola pantalla sin barra de scroll de la página.
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
 
+  return (
+      <div style={{ ...styles.pageWrapper, left: isMobile ? 0 : '60px', paddingLeft: isMobile ? '1rem' : '2rem', paddingRight: isMobile ? '1rem' : '2rem' }}>
         <div style={styles.header}>
-          <div style={styles.headerIconWrap}>
-            <Wrench size={30} color={ACCENT} />
-          </div>
-          <div>
-            <h1 style={styles.headerTitle}>Operación</h1>
-            <p style={styles.headerSub}>{submodules.length} submódulos disponibles</p>
-          </div>
+          <HeaderBackReveal
+            onBack={() => navigate(-1)}
+            icon={<Wrench size={30} color={ACCENT} />}
+            size={64}
+            badgeRadius={16}
+            mobileIconAsBack={isMobile}
+          >
+            <div>
+              <h1 style={styles.headerTitle}>Operación</h1>
+              <p style={styles.headerSub}>{submodules.length} submódulos disponibles</p>
+            </div>
+          </HeaderBackReveal>
         </div>
 
-        <div style={{ ...styles.grid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(240px, 1fr))' }}>
-          {submodules.map((mod) => (
-            <SubmoduleCard key={mod.path} {...mod} />
-          ))}
+        <div style={styles.gridWrap}>
+          <div style={{ ...styles.grid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(240px, 1fr))' }}>
+            {submodules.map((mod) => (
+              <SubmoduleCard key={mod.path} {...mod} />
+            ))}
+          </div>
         </div>
       </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {
-    paddingLeft: '2rem',
-    paddingRight: '2rem',
+  // Anclado directo a los bordes del viewport (en vez de calc(100vh - Npx)) para que el alto
+  // disponible salga siempre correcto, sin adivinar paddings/márgenes. Mismo patrón que
+  // pageWrapper en CotizacionesPage.tsx.
+  pageWrapper: {
+    position: 'fixed', top: '60px', right: 0, bottom: 0,
+    paddingTop: '1.5rem', paddingBottom: '1.5rem', boxSizing: 'border-box',
+    display: 'flex', flexDirection: 'column', gap: '1rem', overflow: 'hidden',
   },
-  backLink: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem', padding: '0.25rem 0.1rem', border: 'none', background: 'transparent', color: '#6b7280', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, transition: 'color 0.15s ease' },
+  // paddingTop: sin esto, el translateY(-2px) + boxShadow del hover en la primera fila quedaba
+  // recortado por el propio overflowY:auto de este contenedor.
+  gridWrap: { flex: 1, minHeight: 0, overflowY: 'auto', paddingTop: '6px' },
   header: {
     display: 'flex',
     alignItems: 'center',
     gap: '1.1rem',
     marginBottom: '1.75rem',
-  },
-  headerIconWrap: {
-    width: '64px',
-    height: '64px',
-    borderRadius: '16px',
-    backgroundColor: '#e9f2d8',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
     flexShrink: 0,
   },
   headerTitle: {

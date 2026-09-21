@@ -1,18 +1,26 @@
-import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
+import { useState, useMemo, useEffect, useRef, Fragment, lazy, Suspense } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Loader, FileText, CheckCircle, Circle, X, Plus, Lock, AlertCircle, CircleX, DollarSign, Trash2 } from 'lucide-react';
 import { SiGmail } from 'react-icons/si';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
+import HeaderBackReveal from '../../../components/HeaderBackReveal';
+import DatePicker from '../../../components/DatePicker';
 import SignaturePad from '../../../components/SignaturePad';
 import SuccessToast from '../../../components/SuccessToast';
-import { programacionesService, type ProgramacionDetail, type SedeOption, type HospitalOption, type MedicoOption } from '../../../services/programaciones.service';
+import { programacionesService, type ProgramacionDetail, type SedeOption, type HospitalOption, type MedicoOption, type CotizacionOption } from '../../../services/programaciones.service';
 import { api } from '../../../lib/axios';
 import { toLocalDateString } from '../../../lib/date.utils';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { remisionesService, CATEGORIAS_COMISION, TIPOS_COMISION, SELECCIONE_TIPO_COMISION, IMPUESTOS_REMISION, type RemisionItem, type RemTecnicoItem, type ConsumoGrupo, type ValidacionConsumoGrupo, type ComisionGrupo, type RequisicionItem, type NotaCreditoItem, type GastoRelacionadoItem, type FuenteRelacionadaItem, type DocumentoProgramacionItem, type TecnicoSugeridoItem, type TecnicoOption, type CubrimientoOption, type TarifaOption, type LoteOption, type ProductoOption } from '../../../services/remisiones.service';
+
+// lazy() para no meter todo CotizacionesPage.tsx (~4200 líneas) en el bundle inicial de
+// Programaciones — solo se descarga si de verdad se abre el detalle de una cotización desde acá.
+const CotizacionDetalleModal = lazy(() =>
+  import('../cotizaciones/CotizacionesPage').then(m => ({ default: m.DetalleModal })),
+);
 
 // ID de Tarifa/Cubrimiento "Hospitales" (ver prisma/seed-catalogos.ts) — usado para autoseleccionar
 // el Tercero del Hospital de la programación como Responsable Económico en Agregar Remisión.
@@ -194,6 +202,8 @@ export default function ProgramacionDetailPage() {
     setDocumentoArchivoAbriendo(false);
   }, [selectedDocumento]);
   const [selectedNotaCredito, setSelectedNotaCredito] = useState<NotaCreditoItem | null>(null);
+  const [selectedCotizacionId, setSelectedCotizacionId] = useState<string | null>(null);
+  const [cotizacionToastMsg, setCotizacionToastMsg] = useState<string | null>(null);
   const [selectedFuente, setSelectedFuente] = useState<FuenteRelacionadaItem | null>(null);
   const [selectedTecnico, setSelectedTecnico] = useState<RemTecnicoItem | null>(null);
   const [cerrarError, setCerrarError] = useState<string | null>(null);
@@ -205,7 +215,13 @@ export default function ProgramacionDetailPage() {
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const whatsappFileInputRef = useRef<HTMLInputElement>(null);
   const [showWhatsappConfirm, setShowWhatsappConfirm] = useState(false);
+  // Modal con un link real a WhatsApp Web (nunca window.open programático — el bloqueador de
+  // pop-ups lo descarta de forma inconsistente justo después de cerrarse el diálogo de
+  // selección de archivo). Solo se usa en el respaldo de "con PDF".
   const [whatsappLink, setWhatsappLink] = useState<string | null>(null);
+  // Toast simple para el respaldo de "sin PDF" — ahí sí se puede abrir la pestaña de forma
+  // directa (no hay diálogo de archivo de por medio que rompa el permiso del navegador).
+  const [whatsappCopiedMessage, setWhatsappCopiedMessage] = useState<string | null>(null);
   const gmailFileInputRef = useRef<HTMLInputElement>(null);
   const [showGmailConfirm, setShowGmailConfirm] = useState(false);
   const [gmailSending, setGmailSending] = useState(false);
@@ -282,10 +298,33 @@ export default function ProgramacionDetailPage() {
     return lines.join('\n');
   };
 
-  const handleWhatsappSinPdf = () => {
+  const handleWhatsappSinPdf = async () => {
     setShowWhatsappConfirm(false);
     if (!programacion) return;
-    window.open(`https://wa.me/?text=${encodeURIComponent(buildWhatsappMessage(programacion, false))}`, '_blank');
+    const mensaje = buildWhatsappMessage(programacion, false);
+
+    const nav = navigator as Navigator & { share?: (data: ShareData) => Promise<void> };
+    if (nav.share) {
+      try {
+        await nav.share({ text: mensaje, title: 'Programación quirúrgica' });
+        return;
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return;
+        // Si falla por otro motivo, se sigue con el respaldo abajo.
+      }
+    }
+
+    // Respaldo (típicamente escritorio, sin soporte de compartir nativo): un link wa.me sin
+    // número de destinatario no funciona en escritorio — WhatsApp no sabe a qué chat mandarlo y
+    // se queda en una pantalla genérica sin avanzar. Se abre WhatsApp Web directo (llamada
+    // síncrona, sin diálogo de archivo de por medio, así que el navegador no la bloquea) y se
+    // copia el mensaje para pegarlo ahí. "_blank" normal (no un nombre fijo): con WhatsApp
+    // instalado como app de escritorio, un target con nombre le impide a Chrome mandarlo a la
+    // app y el link deja de abrir cualquier cosa — se prioriza que siempre abra sobre evitar
+    // pestañas duplicadas.
+    window.open('https://web.whatsapp.com/', '_blank');
+    navigator.clipboard.writeText(mensaje).catch(() => {});
+    setWhatsappCopiedMessage('Mensaje copiado — pégalo en el chat de WhatsApp Web.');
   };
 
   const handleWhatsappConPdf = () => {
@@ -311,11 +350,18 @@ export default function ProgramacionDetailPage() {
       }
     }
 
-    // Respaldo: el navegador no soporta compartir archivos directamente (común en escritorio, y
-    // el bloqueador de pop-ups de Chrome es demasiado inconsistente para abrir la pestaña por
-    // código de forma confiable después del diálogo de archivo) — se muestra un link real para
-    // que el usuario le dé clic; un clic genuino en un <a> nunca lo bloquea el navegador.
-    setWhatsappLink(`https://wa.me/?text=${encodeURIComponent(mensaje)}`);
+    // Respaldo: el navegador no soporta compartir archivos directamente (común en escritorio).
+    // Un link wa.me sin número de destinatario tampoco sirve acá (se queda en una pantalla
+    // genérica sin avanzar, que es justo el bug reportado) — en vez de eso se copia el mensaje y
+    // se deja un botón real a WhatsApp Web (nunca window.open programático: el bloqueador de
+    // pop-ups lo descarta de forma inconsistente justo después de cerrarse el diálogo de
+    // archivo; un clic genuino en un <a> nunca lo bloquea).
+    try {
+      await navigator.clipboard.writeText(mensaje);
+    } catch {
+      // Sin permiso de portapapeles — el modal de abajo igual deja abrir WhatsApp Web.
+    }
+    setWhatsappLink('https://web.whatsapp.com/');
   };
 
   useEffect(() => {
@@ -333,9 +379,46 @@ export default function ProgramacionDetailPage() {
   const [editForm, setEditForm] = useState({ fechaQx: '', horaQx: '', sedeId: '', hospitalId: '' });
   const [editObservaciones, setEditObservaciones] = useState('');
   const [editConsumo, setEditConsumo] = useState('');
+  const [editConsumoPanelOpen, setEditConsumoPanelOpen] = useState(false);
+  const [editConsumoProductoSearch, setEditConsumoProductoSearch] = useState('');
+  const [editConsumoProductoFocused, setEditConsumoProductoFocused] = useState(false);
+  const editConsumoPanelRef = useRef<HTMLDivElement>(null);
+
+  // Al cerrar el panel (clic afuera, X, o volver a pulsar el botón) se limpia la búsqueda a medias.
+  const closeEditConsumoPanel = () => {
+    setEditConsumoPanelOpen(false);
+    setEditConsumoProductoSearch('');
+  };
+
+  // Cierra el panel "Agregar del catálogo" al hacer clic afuera (mismo patrón que DatePicker).
+  useEffect(() => {
+    if (!editConsumoPanelOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (editConsumoPanelRef.current?.contains(e.target as Node)) return;
+      closeEditConsumoPanel();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [editConsumoPanelOpen]);
+
   const [editMedicos, setEditMedicos] = useState<MedicoOption[]>([]);
   const [medicoSearch, setMedicoSearch] = useState('');
+  const [editHospitalSearch, setEditHospitalSearch] = useState('');
+  const [editHospitalFocused, setEditHospitalFocused] = useState(false);
+  const [editCotizaciones, setEditCotizaciones] = useState<CotizacionOption[]>([]);
+  const [editCotizacionFocused, setEditCotizacionFocused] = useState(false);
+  const [editCotizacionFilterText, setEditCotizacionFilterText] = useState('');
+  const [importandoEditConsumos, setImportandoEditConsumos] = useState(false);
+  const [editTecnicosSugeridos, setEditTecnicosSugeridos] = useState<TecnicoOption[]>([]);
+  const [editTecnicoSugeridoSearch, setEditTecnicoSugeridoSearch] = useState('');
+  const [editTecnicoSugeridoFocused, setEditTecnicoSugeridoFocused] = useState(false);
+  // Estado original de técnicos sugeridos al abrir el modal — al guardar se compara contra
+  // editTecnicosSugeridos para saber cuáles crear y cuáles eliminar (no hay un endpoint de
+  // "reemplazar todos" como sí existe para médicos/cotizaciones).
+  const editTecnicosSugeridosSnapshotRef = useRef<TecnicoSugeridoItem[]>([]);
   const [showEditSuccess, setShowEditSuccess] = useState(false);
+  const [editProgramacionError, setEditProgramacionError] = useState<{ field: string; message: string } | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
   const editSnapshotRef = useRef<string | null>(null);
 
   const [showComisionModal, setShowComisionModal] = useState(false);
@@ -418,14 +501,15 @@ export default function ProgramacionDetailPage() {
   const [remisionCreatedId, setRemisionCreatedId] = useState<string | null>(null);
 
   const [showTecnicoSugeridoModal, setShowTecnicoSugeridoModal] = useState(false);
-  const [tecnicoSugeridoSeleccionado, setTecnicoSugeridoSeleccionado] = useState<TecnicoOption | null>(null);
+  const [tecnicoSugeridoSeleccionados, setTecnicoSugeridoSeleccionados] = useState<TecnicoOption[]>([]);
   const [tecnicoSugeridoSearch, setTecnicoSugeridoSearch] = useState('');
+  const [tecnicoSugeridoFocused, setTecnicoSugeridoFocused] = useState(false);
   const [tecnicoSugeridoError, setTecnicoSugeridoError] = useState<{ field: string; message: string } | null>(null);
 
   useEffect(() => {
-    document.body.style.overflow = (selectedTecnico || showEditModal || showComisionModal || showConfirmComision || showDocumentoModal || showRequisicionModal || showInsumoSubModal || showRemisionModal || showTecnicoSugeridoModal) ? 'hidden' : '';
+    document.body.style.overflow = (selectedTecnico || showEditModal || showComisionModal || showConfirmComision || showDocumentoModal || showRequisicionModal || showInsumoSubModal || showRemisionModal || showTecnicoSugeridoModal || selectedCotizacionId) ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
-  }, [selectedTecnico, showEditModal, showComisionModal, showConfirmComision, showDocumentoModal, showRequisicionModal, showInsumoSubModal, showRemisionModal, showTecnicoSugeridoModal]);
+  }, [selectedTecnico, showEditModal, showComisionModal, showConfirmComision, showDocumentoModal, showRequisicionModal, showInsumoSubModal, showRemisionModal, showTecnicoSugeridoModal, selectedCotizacionId]);
 
   const { data: programacion, isLoading, error } = useQuery<ProgramacionDetail | null>({
     queryKey: ['programacion', id],
@@ -464,6 +548,54 @@ export default function ProgramacionDetailPage() {
     enabled: showEditModal,
   });
 
+  const { data: editConsumoProductoResults = [] } = useQuery<ProductoOption[]>({
+    queryKey: ['programaciones-edit-consumo-productos', editConsumoProductoSearch],
+    queryFn: () => remisionesService.searchProductos(editConsumoProductoSearch),
+    enabled: showEditModal && editConsumoProductoFocused,
+  });
+
+  const editMedicoNombres = editMedicos.map(m => m.nombreCompleto);
+  const { data: editCotizacionResults = [] } = useQuery<CotizacionOption[]>({
+    queryKey: ['programaciones-cotizaciones', editMedicoNombres],
+    queryFn: () => programacionesService.searchCotizaciones(undefined, editMedicoNombres),
+    enabled: showEditModal && editCotizacionFocused && editMedicoNombres.length > 0,
+  });
+  // El servidor ya acota a las cotizaciones de los médicos seleccionados — esto solo afina esa
+  // lista en el navegador por folio/cirugía/fecha/total, sin volver a pedirle nada al backend.
+  const editCotizacionFilterQuery = editCotizacionFilterText.trim().toLowerCase();
+  const editCotizacionResultsFiltradas = editCotizacionFilterQuery
+    ? editCotizacionResults.filter(c => {
+        const folio = (c.numCotizacion ?? c.id).toLowerCase();
+        const cirugia = (c.cirugia ?? '').toLowerCase();
+        const fecha = formatDate(c.fecha).toLowerCase();
+        const total = formatMoney(c.total).toLowerCase();
+        return folio.includes(editCotizacionFilterQuery)
+          || cirugia.includes(editCotizacionFilterQuery)
+          || fecha.includes(editCotizacionFilterQuery)
+          || total.includes(editCotizacionFilterQuery);
+      })
+    : editCotizacionResults;
+
+  const { data: editTecnicoComisionistaResults = [] } = useQuery<TecnicoOption[]>({
+    queryKey: ['tecnicos-comisionistas', editTecnicoSugeridoSearch],
+    queryFn: () => remisionesService.searchTecnicosComisionistas(editTecnicoSugeridoSearch),
+    enabled: showEditModal && editTecnicoSugeridoFocused,
+  });
+
+  const handleImportarEditConsumosCotizacion = async () => {
+    if (editCotizaciones.length === 0 || importandoEditConsumos) return;
+    setImportandoEditConsumos(true);
+    try {
+      const nombres = await programacionesService.getConsumosDeCotizaciones(editCotizaciones.map(c => c.id));
+      if (nombres.length > 0) {
+        setEditConsumo(prev => (prev.trim() ? `${prev.trim()}, ${nombres.join(', ')}` : nombres.join(', ')));
+        setEditProgramacionError(null);
+      }
+    } finally {
+      setImportandoEditConsumos(false);
+    }
+  };
+
   const updateMutation = useMutation({
     mutationFn: () => programacionesService.update(id!, {
       fechaQx: editForm.fechaQx || undefined,
@@ -473,11 +605,10 @@ export default function ProgramacionDetailPage() {
       observaciones: editObservaciones,
       consumo: editConsumo,
       medicoIds: editMedicos.map(m => m.id),
+      cotizacionIds: editCotizaciones.map(c => c.id),
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['programacion', id] });
-      setShowEditModal(false);
-      setShowEditSuccess(true);
     },
   });
 
@@ -486,6 +617,7 @@ export default function ProgramacionDetailPage() {
     observaciones: string,
     consumo: string,
     medicos: MedicoOption[],
+    cotizaciones: CotizacionOption[],
   ): string =>
     JSON.stringify({
       fechaQx: form.fechaQx,
@@ -495,16 +627,59 @@ export default function ProgramacionDetailPage() {
       observaciones,
       consumo,
       medicoIds: medicos.map(m => m.id).slice().sort(),
+      cotizacionIds: cotizaciones.map(c => c.id).slice().sort(),
     });
 
-  const handleGuardarEdit = () => {
-    const currentSnapshot = buildEditSnapshot(editForm, editObservaciones, editConsumo, editMedicos);
-    if (currentSnapshot === editSnapshotRef.current) {
+  const handleGuardarEdit = async () => {
+    if (!editForm.fechaQx) { setEditProgramacionError({ field: 'fechaQx', message: 'Selecciona la fecha.' }); return; }
+    if (!editForm.horaQx || editForm.horaQx.split(':').some(p => !p)) { setEditProgramacionError({ field: 'horaQx', message: 'Selecciona la hora.' }); return; }
+    if (!editForm.sedeId) { setEditProgramacionError({ field: 'sedeId', message: 'Selecciona la sede.' }); return; }
+    if (!editForm.hospitalId) { setEditProgramacionError({ field: 'hospitalId', message: 'Selecciona el hospital.' }); return; }
+    if (editMedicos.length === 0) { setEditProgramacionError({ field: 'medicos', message: 'Agrega al menos un médico.' }); return; }
+    if (!editConsumo.trim()) { setEditProgramacionError({ field: 'consumo', message: 'Ingresa el consumo.' }); return; }
+    setEditProgramacionError(null);
+
+    // Técnicos sugeridos no tiene un endpoint de "reemplazar todos" (a diferencia de médicos y
+    // cotizaciones) — se compara contra el snapshot tomado al abrir el modal para saber a
+    // cuáles crear y a cuáles eliminar.
+    const tecnicosOriginal = editTecnicosSugeridosSnapshotRef.current;
+    const tecnicosOriginalIds = new Set(tecnicosOriginal.map(t => t.tecnicoId));
+    const tecnicosNuevoIds = new Set(editTecnicosSugeridos.map(t => t.id));
+    const tecnicosAEliminar = tecnicosOriginal.filter(t => !tecnicosNuevoIds.has(t.tecnicoId));
+    const tecnicosAAgregar = editTecnicosSugeridos.filter(t => !tecnicosOriginalIds.has(t.id));
+    const huboCambiosTecnicos = tecnicosAEliminar.length > 0 || tecnicosAAgregar.length > 0;
+
+    const currentSnapshot = buildEditSnapshot(editForm, editObservaciones, editConsumo, editMedicos, editCotizaciones);
+    const huboCambiosPrincipales = currentSnapshot !== editSnapshotRef.current;
+
+    if (!huboCambiosPrincipales && !huboCambiosTecnicos) {
       setShowEditModal(false);
       return;
     }
-    updateMutation.mutate();
+
+    setSavingEdit(true);
+    try {
+      if (huboCambiosTecnicos) {
+        await Promise.all([
+          ...tecnicosAEliminar.map(t => remisionesService.deleteTecnicoSugerido(t.id)),
+          ...tecnicosAAgregar.map(t => remisionesService.createTecnicoSugerido({ programacionId: id!, tecnicoId: t.id })),
+        ]);
+        queryClient.invalidateQueries({ queryKey: ['tecnicos-sugeridos', id] });
+      }
+      if (huboCambiosPrincipales) {
+        await updateMutation.mutateAsync();
+      }
+      setShowEditModal(false);
+      setShowEditSuccess(true);
+    } finally {
+      setSavingEdit(false);
+    }
   };
+
+  useEffect(() => {
+    if (!editProgramacionError) return;
+    document.getElementById(`programacion-edit-field-${editProgramacionError.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [editProgramacionError]);
 
   const cerrarProgramacionMutation = useMutation({
     mutationFn: () => programacionesService.updateFlags(id!, { cerrada: true }),
@@ -557,16 +732,29 @@ export default function ProgramacionDetailPage() {
     const initialObservaciones = programacion.observaciones ?? '';
     const initialConsumo = programacion.consumo ?? '';
     const initialMedicos = programacion.medicos.map(m => m.medico);
+    const initialCotizaciones = programacion.cotizaciones;
     setEditForm(initialForm);
     setEditObservaciones(initialObservaciones);
     setEditConsumo(initialConsumo);
     setEditMedicos(initialMedicos);
     setMedicoSearch('');
-    editSnapshotRef.current = buildEditSnapshot(initialForm, initialObservaciones, initialConsumo, initialMedicos);
+    setEditHospitalSearch('');
+    setEditCotizaciones(initialCotizaciones);
+    setEditCotizacionFilterText('');
+    setEditConsumoPanelOpen(false);
+    setEditConsumoProductoSearch('');
+    setEditTecnicosSugeridos(tecnicosSugeridos.map(t => ({ id: t.tecnicoId, nombreCompleto: t.tecnico ?? '' })));
+    editTecnicosSugeridosSnapshotRef.current = tecnicosSugeridos;
+    setEditTecnicoSugeridoSearch('');
+    setEditProgramacionError(null);
+    editSnapshotRef.current = buildEditSnapshot(initialForm, initialObservaciones, initialConsumo, initialMedicos, initialCotizaciones);
     setShowEditModal(true);
   };
 
-  const selectedHospitalCiudad = hospitalOptions.find(h => h.id === editForm.hospitalId)?.ciudadCat?.nombre ?? null;
+  const selectedEditHospital = hospitalOptions.find(h => h.id === editForm.hospitalId) ?? null;
+  const editHospitalResults = editHospitalSearch.trim()
+    ? hospitalOptions.filter(h => h.nombre.toLowerCase().includes(editHospitalSearch.trim().toLowerCase()))
+    : hospitalOptions;
 
   const autoResizeTextarea = (el: HTMLTextAreaElement | null) => {
     if (!el) return;
@@ -958,10 +1146,9 @@ export default function ProgramacionDetailPage() {
   });
 
   const createTecnicoSugeridoMutation = useMutation({
-    mutationFn: () => remisionesService.createTecnicoSugerido({
-      programacionId: id!,
-      tecnicoId: tecnicoSugeridoSeleccionado!.id,
-    }),
+    mutationFn: () => Promise.all(
+      tecnicoSugeridoSeleccionados.map(t => remisionesService.createTecnicoSugerido({ programacionId: id!, tecnicoId: t.id })),
+    ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tecnicos-sugeridos', id] });
       setShowTecnicoSugeridoModal(false);
@@ -976,14 +1163,15 @@ export default function ProgramacionDetailPage() {
   });
 
   const openTecnicoSugeridoModal = () => {
-    setTecnicoSugeridoSeleccionado(null);
+    setTecnicoSugeridoSeleccionados([]);
     setTecnicoSugeridoSearch('');
+    setTecnicoSugeridoFocused(false);
     setTecnicoSugeridoError(null);
     setShowTecnicoSugeridoModal(true);
   };
 
   const handleGuardarTecnicoSugerido = () => {
-    if (!tecnicoSugeridoSeleccionado) { setTecnicoSugeridoError({ field: 'tecnico', message: 'Selecciona un técnico.' }); return; }
+    if (tecnicoSugeridoSeleccionados.length === 0) { setTecnicoSugeridoError({ field: 'tecnico', message: 'Selecciona al menos un técnico.' }); return; }
     setTecnicoSugeridoError(null);
     createTecnicoSugeridoMutation.mutate();
   };
@@ -1081,7 +1269,7 @@ export default function ProgramacionDetailPage() {
   const mainTabItems: { key: string; label: string; count: number | null }[] = [
     { key: 'resumen', label: 'Resumen', count: null },
     { key: 'consumos', label: 'Consumos', count: totalConsumos },
-    { key: 'validar-consumos', label: 'Validar Consumos', count: totalValidacion },
+    { key: 'validar-consumos', label: 'Validar consumos', count: totalValidacion },
     { key: 'comisiones', label: 'Comisiones', count: totalComisiones },
     { key: 'gastos', label: 'Gastos', count: gastosRelacionados.length },
     { key: 'fuentes', label: 'Fuentes', count: fuentesRelacionadas.length },
@@ -1107,30 +1295,25 @@ export default function ProgramacionDetailPage() {
         </div>
       )}
       <div className="page-fade-in" style={styles.container}>
-        <button
-          type="button"
-          onClick={() => navigate('/operacion/programaciones')}
-          style={styles.backLink}
-          onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}
-        >
-          <MaterialIcon name="arrow_back" size={16} />
-          Volver
-        </button>
         <div style={styles.headerCard}>
         <div style={{ ...styles.header, ...(isMobile ? { flexWrap: 'wrap' as const } : {}) }}>
-          <span style={styles.titleIconBadge}>
-            <MaterialIcon name="event_note" size={30} color="#4d7a13" />
-          </span>
-          <div style={{ ...styles.titleGroup, ...(isMobile ? { gap: '0.1rem' } : {}) }}>
-            <span style={styles.titleLabel}>Programación</span>
-            <div style={styles.titleRow}>
-              <h1 style={{ ...styles.title, ...(isMobile ? { fontSize: '1.15rem' } : {}) }}>{programacion.hospital?.nombre || 'Programación'}</h1>
+          <HeaderBackReveal
+            onBack={() => navigate(-1)}
+            icon={<MaterialIcon name="event_note" size={30} color="#4d7a13" />}
+            size={66}
+            badgeRadius={20}
+            mobileIconAsBack={isMobile}
+          >
+            <div style={{ ...styles.titleGroup, ...(isMobile ? { gap: '0.1rem' } : {}) }}>
+              <span style={styles.titleLabel}>Programación</span>
+              <div style={styles.titleRow}>
+                <h1 style={{ ...styles.title, ...(isMobile ? { fontSize: '1.15rem' } : {}) }}>{programacion.hospital?.nombre || 'Programación'}</h1>
+              </div>
+              <div style={{ ...styles.breadcrumbRow, ...(isMobile ? { fontSize: '0.8rem' } : {}) }}>
+                <span style={styles.breadcrumbId}>{programacion.id}</span>
+              </div>
             </div>
-            <div style={{ ...styles.breadcrumbRow, ...(isMobile ? { fontSize: '0.8rem' } : {}) }}>
-              <span style={styles.breadcrumbId}>{programacion.id}</span>
-            </div>
-          </div>
+          </HeaderBackReveal>
 
           <div style={{ ...styles.headerActions, ...(isMobile ? { flexWrap: 'wrap' as const, width: '100%' } : {}) }}>
             <input
@@ -1210,7 +1393,7 @@ export default function ProgramacionDetailPage() {
                       onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
                     >
                       <MaterialIcon name="description" size={17} />
-                      Agregar Remisión
+                      Agregar remisión
                     </button>
                     <button
                       style={styles.dropdownItem}
@@ -1219,7 +1402,7 @@ export default function ProgramacionDetailPage() {
                       onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
                     >
                       <MaterialIcon name="engineering" size={17} />
-                      Agregar Técnico Sugerido
+                      Agregar técnico sugerido
                     </button>
                     <button
                       style={styles.dropdownItem}
@@ -1228,7 +1411,7 @@ export default function ProgramacionDetailPage() {
                       onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
                     >
                       <MaterialIcon name="inventory_2" size={17} />
-                      Agregar Requisición
+                      Agregar requisición
                     </button>
                   </div>
                 )}
@@ -1252,7 +1435,7 @@ export default function ProgramacionDetailPage() {
                     onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
                   >
                     <MaterialIcon name="edit" size={17} />
-                    Editar Programación
+                    Editar programación
                   </button>
                   {!programacion.cerrada ? (
                     <button
@@ -1264,7 +1447,7 @@ export default function ProgramacionDetailPage() {
                       onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
                     >
                       <MaterialIcon name="lock" size={17} />
-                      {cerrarProgramacionMutation.isPending ? 'Cerrando...' : 'Cerrar Programación'}
+                      {cerrarProgramacionMutation.isPending ? 'Cerrando...' : 'Cerrar programación'}
                     </button>
                   ) : (
                     <button
@@ -1286,7 +1469,7 @@ export default function ProgramacionDetailPage() {
                     onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
                   >
                     <MaterialIcon name="delete" size={17} />
-                    Eliminar Programación
+                    Eliminar programación
                   </button>
                 </div>
               )}
@@ -1427,11 +1610,11 @@ export default function ProgramacionDetailPage() {
             </div>
           </div>
 
-          {/* Técnicos Asociados + Remisiones */}
+          {/* Técnicos Asociados */}
           <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '2rem' }}>
             <div>
               <div style={styles.remisionesTitleRow}>
-                <h2 style={styles.sectionTitle}>Técnicos Asociados</h2>
+                <h2 style={styles.sectionTitle}>Técnicos asociados</h2>
                 <span style={styles.badge}>{totalTecnicos}</span>
               </div>
               {tecnicos.length === 0 ? (
@@ -1469,72 +1652,92 @@ export default function ProgramacionDetailPage() {
 
             <div>
               <div style={styles.remisionesTitleRow}>
-                <h2 style={styles.sectionTitle}>Remisiones</h2>
-                <span style={styles.badge}>{remisiones.length}</span>
+                <h2 style={styles.sectionTitle}>Técnicos sugeridos</h2>
+                <span style={styles.badge}>{tecnicosSugeridos.length}</span>
               </div>
-              {remisiones.length === 0 ? (
+              {tecnicosSugeridos.length === 0 ? (
                 <div style={styles.emptyState}>No hay datos relacionados</div>
               ) : (
                 <div style={styles.remList}>
-                  <div style={{ ...styles.remGridRow, ...styles.colHeader }}>
-                    <span style={styles.colHeaderText}>N° Remisión</span>
-                    <span style={styles.colHeaderText}>Estado</span>
-                    <span style={styles.colHeaderText}>CxC</span>
-                  </div>
-                  <div ref={remisionesScrollRef} style={styles.scrollBody}>
-                    {remisiones.map((rem, i) => (
-                      <div
-                        key={rem.id}
-                        style={{ ...styles.remGridRow, ...(i > 0 ? styles.remRowBorder : {}), cursor: 'pointer' }}
-                        onClick={() => navigate(`/operacion/remisiones/${rem.id}`, '/operacion/remisiones/:id')}
-                        onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f3f4f6'; }}
-                        onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; }}
-                      >
-                        <div style={styles.remRowLeft}>
-                          <FileText size={14} color="#6b8c1f" style={{ flexShrink: 0 }} />
-                          <span style={styles.remRowCode}>{rem.numRemision || rem.id}</span>
+                  <div ref={tecnicosSugeridosScrollRef} style={styles.tecnicoScrollBody}>
+                    <div style={styles.tecnicoList}>
+                      {tecnicosSugeridos.map((t, i) => (
+                        <div
+                          key={t.id}
+                          style={{ ...styles.tecnicoListRow, justifyContent: 'space-between', ...(i > 0 ? styles.remRowBorder : {}) }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', minWidth: 0 }}>
+                            <span style={styles.tecnicoAvatar}>{getTecnicoInitials(t.tecnico || '-')}</span>
+                            <span style={styles.tecnicoNombre}>{t.tecnico ?? '-'}</span>
+                          </div>
+                          <button
+                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af', padding: '0.25rem', flexShrink: 0 }}
+                            onClick={() => deleteTecnicoSugeridoMutation.mutate(t.id)}
+                            disabled={deleteTecnicoSugeridoMutation.isPending}
+                            title="Eliminar"
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </div>
-                        {rem.estado ? (
-                          <span style={{ ...styles.estadoBadge, ...(rem.estado === 'Definitiva' ? styles.estadoDefinitiva : styles.estadoOtro) }}>
-                            {rem.estado}
-                          </span>
-                        ) : <span style={{ color: '#9ca3af' }}>-</span>}
-                        <div style={styles.cxcLabel}>
-                          {rem.cxc
-                            ? <><CheckCircle size={13} color="#16a34a" /><span style={{ color: '#16a34a' }}>Enviada</span></>
-                            : <><Circle size={13} color="#9ca3af" /><span style={{ color: '#9ca3af' }}>Pendiente</span></>
-                          }
-                        </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
-              <div style={{ position: 'relative' as const }}>
-                <button
-                  style={{ ...styles.addComisionBtnBelow, ...(!puedeAgregarRemision ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
-                  onClick={() => { if (puedeAgregarRemision) openRemisionModal(); }}
-                  onMouseEnter={e => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    setRemisionBtnTooltipPos({ top: rect.top, left: rect.left + rect.width / 2 });
-                  }}
-                  onMouseLeave={() => setRemisionBtnTooltipPos(null)}
-                >
-                  <Plus size={14} /> Agregar Remisión
-                </button>
-                {!puedeAgregarRemision && remisionBtnTooltipPos && (
-                  <div style={{ ...styles.tooltipBubble, top: remisionBtnTooltipPos.top - 8, left: remisionBtnTooltipPos.left }}>
-                    Necesitas al menos una requisición para poder agregar una remisión.
-                  </div>
-                )}
-              </div>
+              <button style={styles.addComisionBtnBelow} onClick={openTecnicoSugeridoModal}>
+                <Plus size={14} /> Agregar técnico sugerido
+              </button>
             </div>
           </div>
         </div>
 
-        {/* ── Requisiciones + Notas de Crédito ──────────────────────── */}
+        {/* ── Cotizaciones + Requisiciones + Remisiones + Documentos + Notas de Crédito ── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginBottom: '2rem' }}>
         <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, gap: '1.5rem' }}>
+          {/* ── Cotizaciones ───────────────────────────────────────── */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={styles.remisionesTitleRow}>
+              <h2 style={styles.sectionTitle}>Cotizaciones</h2>
+              <span style={styles.badge}>{programacion.cotizaciones.length}</span>
+            </div>
+            {programacion.cotizaciones.length === 0 ? (
+              <div style={styles.emptyState}>No hay cotizaciones vinculadas</div>
+            ) : (
+              <div style={styles.remList}>
+                <div style={{ ...styles.cotizacionRow, ...styles.colHeader }}>
+                  <span style={styles.colHeaderText}>Folio</span>
+                  <span style={styles.colHeaderText}>Fecha</span>
+                  <span style={styles.colHeaderText}>Cirugía</span>
+                  <span style={{ ...styles.colHeaderText, textAlign: 'right' as const }}>Total</span>
+                </div>
+                {programacion.cotizaciones.map((c, i) => (
+                  <div
+                    key={c.id}
+                    style={{ ...styles.cotizacionRow, ...(i > 0 ? styles.remRowBorder : {}), cursor: 'pointer' }}
+                    onClick={() => setSelectedCotizacionId(c.id)}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.backgroundColor = '#f3f4f6';
+                      // Precarga el chunk de Cotizaciones al pasar el mouse, para que ya esté
+                      // descargado cuando de verdad haga clic (mismo criterio que el prefetch de
+                      // useNavigateWithLoading) — así el modal no tarda en aparecer al abrir.
+                      import('../cotizaciones/CotizacionesPage');
+                    }}
+                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; }}
+                  >
+                    <span style={{ ...styles.requisicionCellText, fontWeight: 700, color: '#4d7a13' }}>
+                      <FileText size={13} style={{ marginRight: '0.3rem', verticalAlign: 'text-bottom' }} />
+                      {c.numCotizacion ?? c.id}
+                    </span>
+                    <span style={styles.requisicionCellText}>{formatDate(c.fecha)}</span>
+                    <span style={styles.requisicionCellText}>{c.cirugia || '-'}</span>
+                    <span style={{ ...styles.requisicionCellText, textAlign: 'right' as const, fontWeight: 600, color: '#333' }}>{formatMoney(c.total)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Requisiciones ───────────────────────────────────────── */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={styles.remisionesTitleRow}>
               <h2 style={styles.sectionTitle}>Requisiciones</h2>
@@ -1572,58 +1775,77 @@ export default function ProgramacionDetailPage() {
               </div>
             )}
             <button style={styles.addComisionBtnBelow} onClick={openRequisicionModal}>
-              <Plus size={14} /> Agregar Requisición
+              <Plus size={14} /> Agregar requisición
             </button>
-          </div>
-
-          {/* ── Notas de Crédito ───────────────────────────────────── */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={styles.remisionesTitleRow}>
-              <h2 style={styles.sectionTitle}>Notas de Crédito</h2>
-              <span style={styles.badge}>{notasCredito.length}</span>
-            </div>
-            {notasCredito.length === 0 ? (
-              <div style={styles.emptyState}>No hay datos relacionados</div>
-            ) : (
-              <div style={styles.remList}>
-                <div style={{ ...styles.notaCreditoRow, ...styles.colHeader }}>
-                  <span style={styles.colHeaderText}>Fecha Nota Crédito</span>
-                  <span style={styles.colHeaderText}>Remisión</span>
-                  <span style={styles.colHeaderText}>Aplicada Por</span>
-                  <span style={{ ...styles.colHeaderText, textAlign: 'right' }}>Total</span>
-                </div>
-                <div ref={notasCreditoScrollRef} style={styles.comisionScrollBody}>
-                  {notasCredito.map((nc, i) => {
-                    const hoverStyle = hoveredNotaCreditoId === nc.id ? styles.consumoCellHover : {};
-                    return (
-                      <div
-                        key={nc.id}
-                        style={{ ...styles.notaCreditoRow, ...(i > 0 ? styles.remRowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
-                        onClick={() => setSelectedNotaCredito(nc)}
-                        onMouseEnter={() => setHoveredNotaCreditoId(nc.id)}
-                        onMouseLeave={() => setHoveredNotaCreditoId(null)}
-                      >
-                        <span style={styles.requisicionCellText}>{formatDate(nc.fechaNotaCredito)}</span>
-                        <span style={styles.requisicionCellText}>{nc.factura?.remision?.numRemision || nc.factura?.remision?.id || '-'}</span>
-                        <span style={styles.requisicionCellText}>{nc.aplicadaPor?.nombreCompleto ?? '-'}</span>
-                        <span style={{ ...styles.requisicionCellText, textAlign: 'right', fontWeight: 600, color: '#333' }}>{formatMoney(nc.total)}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div style={styles.consumoTotalRow}>
-                  <span style={styles.consumoTotalLabel}>Total notas de crédito</span>
-                  <span style={styles.consumoTotalValue}>
-                    {formatMoney(notasCredito.reduce((sum, nc) => sum + Number(nc.total ?? 0), 0))}
-                  </span>
-                </div>
-              </div>
-            )}
           </div>
         </div>
 
-        {/* ── Documentos + Técnicos Sugeridos ───────────────────────── */}
         <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, gap: '1.5rem' }}>
+          {/* ── Remisiones ─────────────────────────────────────────── */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={styles.remisionesTitleRow}>
+              <h2 style={styles.sectionTitle}>Remisiones</h2>
+              <span style={styles.badge}>{remisiones.length}</span>
+            </div>
+            {remisiones.length === 0 ? (
+              <div style={styles.emptyState}>No hay datos relacionados</div>
+            ) : (
+              <div style={styles.remList}>
+                <div style={{ ...styles.remGridRow, ...styles.colHeader }}>
+                  <span style={styles.colHeaderText}>N° Remisión</span>
+                  <span style={styles.colHeaderText}>Estado</span>
+                  <span style={styles.colHeaderText}>CxC</span>
+                </div>
+                <div ref={remisionesScrollRef} style={styles.scrollBody}>
+                  {remisiones.map((rem, i) => (
+                    <div
+                      key={rem.id}
+                      style={{ ...styles.remGridRow, ...(i > 0 ? styles.remRowBorder : {}), cursor: 'pointer' }}
+                      onClick={() => navigate(`/operacion/remisiones/${rem.id}`, '/operacion/remisiones/:id')}
+                      onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f3f4f6'; }}
+                      onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; }}
+                    >
+                      <div style={styles.remRowLeft}>
+                        <FileText size={14} color="#6b8c1f" style={{ flexShrink: 0 }} />
+                        <span style={styles.remRowCode}>{rem.numRemision || rem.id}</span>
+                      </div>
+                      {rem.estado ? (
+                        <span style={{ ...styles.estadoBadge, ...(rem.estado === 'Definitiva' ? styles.estadoDefinitiva : styles.estadoOtro) }}>
+                          {rem.estado}
+                        </span>
+                      ) : <span style={{ color: '#9ca3af' }}>-</span>}
+                      <div style={styles.cxcLabel}>
+                        {rem.cxc
+                          ? <><CheckCircle size={13} color="#16a34a" /><span style={{ color: '#16a34a' }}>Enviada</span></>
+                          : <><Circle size={13} color="#9ca3af" /><span style={{ color: '#9ca3af' }}>Pendiente</span></>
+                        }
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div style={{ position: 'relative' as const }}>
+              <button
+                style={{ ...styles.addComisionBtnBelow, ...(!puedeAgregarRemision ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                onClick={() => { if (puedeAgregarRemision) openRemisionModal(); }}
+                onMouseEnter={e => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setRemisionBtnTooltipPos({ top: rect.top, left: rect.left + rect.width / 2 });
+                }}
+                onMouseLeave={() => setRemisionBtnTooltipPos(null)}
+              >
+                <Plus size={14} /> Agregar remisión
+              </button>
+              {!puedeAgregarRemision && remisionBtnTooltipPos && (
+                <div style={{ ...styles.tooltipBubble, top: remisionBtnTooltipPos.top - 8, left: remisionBtnTooltipPos.left }}>
+                  Necesitas al menos una requisición para poder agregar una remisión.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Documentos ─────────────────────────────────────────── */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={styles.remisionesTitleRow}>
               <h2 style={styles.sectionTitle}>Documentos</h2>
@@ -1668,48 +1890,51 @@ export default function ProgramacionDetailPage() {
               <Plus size={14} /> Agregar Documento
             </button>
           </div>
+        </div>
 
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={styles.remisionesTitleRow}>
-              <h2 style={styles.sectionTitle}>Técnicos Sugeridos</h2>
-              <span style={styles.badge}>{tecnicosSugeridos.length}</span>
-            </div>
-            {tecnicosSugeridos.length === 0 ? (
-              <div style={styles.emptyState}>No hay datos relacionados</div>
-            ) : (
-              <div style={styles.remList}>
-                <div style={{ ...styles.fuenteRow, ...styles.colHeader, gridTemplateColumns: '1fr 1fr 1fr 32px' }}>
-                  <span style={styles.colHeaderText}>Técnico</span>
-                  <span style={styles.colHeaderText}>Fecha Registro</span>
-                  <span style={styles.colHeaderText}>Registrado Por</span>
-                  <span />
-                </div>
-                <div ref={tecnicosSugeridosScrollRef} style={styles.tabScrollBody}>
-                  {tecnicosSugeridos.map((t, i) => (
-                    <div
-                      key={t.id}
-                      style={{ ...styles.fuenteRow, gridTemplateColumns: '1fr 1fr 1fr 32px', ...(i > 0 ? styles.remRowBorder : {}) }}
-                    >
-                      <span style={styles.requisicionCellText}>{t.tecnico ?? '-'}</span>
-                      <span style={styles.requisicionCellText}>{formatDateTime(t.fechaRegistro)}</span>
-                      <span style={styles.requisicionCellText}>{t.registradoPor ?? '-'}</span>
-                      <button
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af', padding: '0.25rem' }}
-                        onClick={() => deleteTecnicoSugeridoMutation.mutate(t.id)}
-                        disabled={deleteTecnicoSugeridoMutation.isPending}
-                        title="Eliminar"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <button style={styles.addComisionBtnBelow} onClick={openTecnicoSugeridoModal}>
-              <Plus size={14} /> Agregar Técnico Sugerido
-            </button>
+        {/* ── Notas de Crédito ───────────────────────────────────── */}
+        <div style={{ width: isMobile ? '100%' : '50%' }}>
+          <div style={styles.remisionesTitleRow}>
+            <h2 style={styles.sectionTitle}>Notas de crédito</h2>
+            <span style={styles.badge}>{notasCredito.length}</span>
           </div>
+          {notasCredito.length === 0 ? (
+            <div style={styles.emptyState}>No hay datos relacionados</div>
+          ) : (
+            <div style={styles.remList}>
+              <div style={{ ...styles.notaCreditoRow, ...styles.colHeader }}>
+                <span style={styles.colHeaderText}>Fecha Nota Crédito</span>
+                <span style={styles.colHeaderText}>Remisión</span>
+                <span style={styles.colHeaderText}>Aplicada Por</span>
+                <span style={{ ...styles.colHeaderText, textAlign: 'right' }}>Total</span>
+              </div>
+              <div ref={notasCreditoScrollRef} style={styles.comisionScrollBody}>
+                {notasCredito.map((nc, i) => {
+                  const hoverStyle = hoveredNotaCreditoId === nc.id ? styles.consumoCellHover : {};
+                  return (
+                    <div
+                      key={nc.id}
+                      style={{ ...styles.notaCreditoRow, ...(i > 0 ? styles.remRowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
+                      onClick={() => setSelectedNotaCredito(nc)}
+                      onMouseEnter={() => setHoveredNotaCreditoId(nc.id)}
+                      onMouseLeave={() => setHoveredNotaCreditoId(null)}
+                    >
+                      <span style={styles.requisicionCellText}>{formatDate(nc.fechaNotaCredito)}</span>
+                      <span style={styles.requisicionCellText}>{nc.factura?.remision?.numRemision || nc.factura?.remision?.id || '-'}</span>
+                      <span style={styles.requisicionCellText}>{nc.aplicadaPor?.nombreCompleto ?? '-'}</span>
+                      <span style={{ ...styles.requisicionCellText, textAlign: 'right', fontWeight: 600, color: '#333' }}>{formatMoney(nc.total)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={styles.consumoTotalRow}>
+                <span style={styles.consumoTotalLabel}>Total notas de crédito</span>
+                <span style={styles.consumoTotalValue}>
+                  {formatMoney(notasCredito.reduce((sum, nc) => sum + Number(nc.total ?? 0), 0))}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
         </div>
 
@@ -1791,7 +2016,7 @@ export default function ProgramacionDetailPage() {
         {mainTab === 'validar-consumos' && (
         <div style={{ marginBottom: '2rem' }}>
           <div style={styles.remisionesTitleRow}>
-            <h2 style={styles.sectionTitle}>Validar Consumos</h2>
+            <h2 style={styles.sectionTitle}>Validar consumos</h2>
             <span style={styles.badge}>{totalValidacion}</span>
           </div>
           {validacionGrupos.length === 0 ? (
@@ -2191,24 +2416,30 @@ export default function ProgramacionDetailPage() {
               <button style={styles.closeBtn} onClick={() => setShowEditModal(false)}>
                 <X size={18} />
               </button>
-              <h2 style={styles.modalTitle}>Editar Programación</h2>
+              <h2 style={styles.modalTitle}>Editar programación</h2>
             </div>
 
             <div style={styles.editModalBody}>
-              <div style={styles.formGroup}>
+              <div style={styles.formGroup} id="programacion-edit-field-fechaQx">
                 <label style={styles.label}>Fecha QX *</label>
-                <input type="date" style={styles.input} value={editForm.fechaQx} onChange={e => setEditForm({ ...editForm, fechaQx: e.target.value })} />
+                <DatePicker
+                  error={editProgramacionError?.field === 'fechaQx'}
+                  value={editForm.fechaQx}
+                  onChange={fechaQx => { setEditForm({ ...editForm, fechaQx }); setEditProgramacionError(null); }}
+                />
+                {editProgramacionError?.field === 'fechaQx' && <span style={styles.errorText}>{editProgramacionError.message}</span>}
               </div>
 
-              <div style={styles.formGroup}>
+              <div style={styles.formGroup} id="programacion-edit-field-horaQx">
                 <label style={styles.label}>Hora QX *</label>
                 <div style={styles.horaGrid}>
                   <select
-                    style={styles.input}
+                    style={{ ...styles.input, ...(editProgramacionError?.field === 'horaQx' ? styles.inputError : {}) }}
                     value={editForm.horaQx.split(':')[0] ?? ''}
                     onChange={e => {
                       const minuto = editForm.horaQx.split(':')[1] ?? '00';
                       setEditForm({ ...editForm, horaQx: `${e.target.value}:${minuto}` });
+                      setEditProgramacionError(null);
                     }}
                   >
                     <option value="">HH</option>
@@ -2217,11 +2448,12 @@ export default function ProgramacionDetailPage() {
                     ))}
                   </select>
                   <select
-                    style={styles.input}
+                    style={{ ...styles.input, ...(editProgramacionError?.field === 'horaQx' ? styles.inputError : {}) }}
                     value={editForm.horaQx.split(':')[1] ?? ''}
                     onChange={e => {
                       const hora = editForm.horaQx.split(':')[0] ?? '00';
                       setEditForm({ ...editForm, horaQx: `${hora}:${e.target.value}` });
+                      setEditProgramacionError(null);
                     }}
                   >
                     <option value="">MM</option>
@@ -2230,47 +2462,83 @@ export default function ProgramacionDetailPage() {
                     ))}
                   </select>
                 </div>
+                {editProgramacionError?.field === 'horaQx' && <span style={styles.errorText}>{editProgramacionError.message}</span>}
               </div>
 
-              <div style={styles.formGroup}>
+              <div style={styles.formGroup} id="programacion-edit-field-sedeId">
                 <label style={styles.label}>Sede *</label>
                 <div style={styles.sedeGrid}>
                   {sedeOptions.map(s => (
                     <button
                       key={s.id}
                       type="button"
-                      style={{ ...styles.sedeBtn, ...(editForm.sedeId === s.id ? styles.sedeBtnActive : {}) }}
+                      style={{ ...styles.sedeBtn, ...(editForm.sedeId === s.id ? styles.editSedeBtnActive : {}), ...(editProgramacionError?.field === 'sedeId' ? styles.inputError : {}) }}
                       onMouseDown={e => e.preventDefault()}
-                      onClick={e => { setEditForm({ ...editForm, sedeId: s.id }); e.currentTarget.blur(); }}
+                      onClick={e => { setEditForm({ ...editForm, sedeId: s.id }); setEditProgramacionError(null); e.currentTarget.blur(); }}
                     >
-                      {editForm.sedeId === s.id ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
                       {s.nombre}
                     </button>
                   ))}
                 </div>
+                {editProgramacionError?.field === 'sedeId' && <span style={styles.errorText}>{editProgramacionError.message}</span>}
               </div>
 
-              <div style={styles.formGroup}>
+              <div style={styles.formGroup} id="programacion-edit-field-hospitalId">
                 <label style={styles.label}>Hospital *</label>
-                <select style={styles.input} value={editForm.hospitalId} onChange={e => setEditForm({ ...editForm, hospitalId: e.target.value })}>
-                  <option value="">Seleccionar hospital</option>
-                  {hospitalOptions.map(h => <option key={h.id} value={h.id}>{h.nombre}</option>)}
-                </select>
+                {selectedEditHospital && (
+                  <div style={styles.medicoTagsWrap}>
+                    <span style={styles.editMedicoTag}>
+                      {selectedEditHospital.nombre}
+                      <X size={12} style={{ cursor: 'pointer' }} onClick={() => setEditForm({ ...editForm, hospitalId: '' })} />
+                    </span>
+                  </div>
+                )}
+                {!selectedEditHospital && (
+                  <div style={{ position: 'relative' as const }}>
+                    <input
+                      style={{ ...styles.input, ...(editProgramacionError?.field === 'hospitalId' ? styles.inputError : {}) }}
+                      placeholder="Buscar hospital..."
+                      value={editHospitalSearch}
+                      onChange={e => { setEditHospitalSearch(e.target.value); setEditProgramacionError(null); }}
+                      onFocus={() => setEditHospitalFocused(true)}
+                      onBlur={() => setTimeout(() => setEditHospitalFocused(false), 150)}
+                    />
+                    {editHospitalFocused && (
+                      <div style={styles.medicoDropdown}>
+                        {editHospitalResults.length === 0 ? (
+                          <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
+                        ) : (
+                          editHospitalResults.map(h => (
+                            <div
+                              key={h.id}
+                              className="dropdown-item-hover"
+                              style={styles.medicoDropdownItem}
+                              onClick={() => { setEditForm({ ...editForm, hospitalId: h.id }); setEditHospitalSearch(''); setEditProgramacionError(null); }}
+                            >
+                              {h.nombre}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {editProgramacionError?.field === 'hospitalId' && <span style={styles.errorText}>{editProgramacionError.message}</span>}
               </div>
 
-              {selectedHospitalCiudad && (
+              {selectedEditHospital?.ciudadCat?.nombre && (
                 <div style={styles.formGroup}>
                   <label style={styles.label}>Ciudad QX</label>
-                  <span style={styles.ciudadPill}>{selectedHospitalCiudad}</span>
+                  <span style={styles.ciudadPill}>{selectedEditHospital?.ciudadCat?.nombre}</span>
                 </div>
               )}
 
-              <div style={styles.formGroup}>
+              <div style={styles.formGroup} id="programacion-edit-field-medicos">
                 <label style={styles.label}>Médico *</label>
                 {editMedicos.length > 0 && (
                   <div style={styles.medicoTagsWrap}>
                     {editMedicos.map(m => (
-                      <span key={m.id} style={styles.medicoTag}>
+                      <span key={m.id} style={styles.editMedicoTag}>
                         {m.nombreCompleto}
                         <X size={12} style={{ cursor: 'pointer' }} onClick={() => setEditMedicos(editMedicos.filter(x => x.id !== m.id))} />
                       </span>
@@ -2279,7 +2547,7 @@ export default function ProgramacionDetailPage() {
                 )}
                 <div style={{ position: 'relative' as const }}>
                   <input
-                    style={styles.input}
+                    style={{ ...styles.input, ...(editProgramacionError?.field === 'medicos' ? styles.inputError : {}) }}
                     placeholder="Buscar médico..."
                     value={medicoSearch}
                     onChange={e => setMedicoSearch(e.target.value)}
@@ -2293,7 +2561,7 @@ export default function ProgramacionDetailPage() {
                           <div
                             key={m.id}
                             style={styles.medicoDropdownItem}
-                            onClick={() => { setEditMedicos([...editMedicos, m]); setMedicoSearch(''); }}
+                            onClick={() => { setEditMedicos([...editMedicos, m]); setMedicoSearch(''); setEditProgramacionError(null); }}
                           >
                             <Plus size={14} /> {m.nombreCompleto}
                           </div>
@@ -2302,20 +2570,188 @@ export default function ProgramacionDetailPage() {
                     </div>
                   )}
                 </div>
+                {editProgramacionError?.field === 'medicos' && <span style={styles.errorText}>{editProgramacionError.message}</span>}
               </div>
 
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Consumo *</label>
+              <div style={styles.formGroup} id="programacion-edit-field-cotizaciones">
+                <label style={styles.label}>Cotización</label>
+                {editCotizaciones.length > 0 && (
+                  <div style={styles.medicoTagsWrap}>
+                    {editCotizaciones.map(c => (
+                      <span key={c.id} style={styles.cotizacionChip}>
+                        <FileText size={13} />
+                        {c.numCotizacion ?? c.id}
+                        <span style={{ color: '#7a9146' }}>· {formatMoney(c.total)}</span>
+                        <X size={12} style={{ cursor: 'pointer' }} onClick={() => setEditCotizaciones(editCotizaciones.filter(x => x.id !== c.id))} />
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {editMedicos.length === 0 ? (
+                  <span style={{ ...styles.input, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>
+                    Selecciona primero un médico
+                  </span>
+                ) : (
+                  <div style={{ position: 'relative' as const }}>
+                    <input
+                      style={styles.input}
+                      placeholder={`Buscar por folio, cirugía, fecha o total entre las cotizaciones de ${editMedicos.map(m => m.nombreCompleto).join(', ')}...`}
+                      value={editCotizacionFilterText}
+                      onChange={e => setEditCotizacionFilterText(e.target.value)}
+                      onFocus={() => setEditCotizacionFocused(true)}
+                      onBlur={() => setTimeout(() => setEditCotizacionFocused(false), 150)}
+                    />
+                    {editCotizacionFocused && (
+                      <div style={styles.medicoDropdown}>
+                        {editCotizacionResultsFiltradas.filter(c => !editCotizaciones.some(x => x.id === c.id)).length === 0 ? (
+                          <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin cotizaciones que coincidan</div>
+                        ) : (
+                          editCotizacionResultsFiltradas.filter(c => !editCotizaciones.some(x => x.id === c.id)).map(c => (
+                            <div
+                              key={c.id}
+                              className="dropdown-item-hover"
+                              style={styles.medicoDropdownItem}
+                              onClick={() => { setEditCotizaciones([...editCotizaciones, c]); setEditCotizacionFilterText(''); }}
+                            >
+                              <span style={{ flexShrink: 0, color: '#4d7a13', fontWeight: 700 }}>{c.numCotizacion ?? c.id}</span>
+                              <span style={{ flexShrink: 0, color: '#9ca3af', fontWeight: 400 }}>·</span>
+                              <span style={{ flexShrink: 0, fontWeight: 400 }}>{formatDate(c.fecha)}</span>
+                              <span style={{ flexShrink: 0, color: '#9ca3af', fontWeight: 400 }}>·</span>
+                              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, fontWeight: 400 }} title={c.cirugia || undefined}>
+                                {c.cirugia || 'Sin cirugía'}
+                              </span>
+                              <span style={{ flexShrink: 0, color: '#9ca3af', fontWeight: 400 }}>·</span>
+                              <span style={{ flexShrink: 0, fontWeight: 700 }}>{formatMoney(c.total)}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div style={styles.formGroup} id="programacion-edit-field-tecnicos-sugeridos">
+                <label style={styles.label}>Técnicos Sugeridos</label>
+                {editTecnicosSugeridos.length > 0 && (
+                  <div style={styles.medicoTagsWrap}>
+                    {editTecnicosSugeridos.map(t => (
+                      <span key={t.id} style={styles.editMedicoTag}>
+                        {t.nombreCompleto}
+                        <X size={12} style={{ cursor: 'pointer' }} onClick={() => setEditTecnicosSugeridos(editTecnicosSugeridos.filter(x => x.id !== t.id))} />
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div style={{ position: 'relative' as const }}>
+                  <input
+                    style={styles.input}
+                    placeholder="Buscar técnico..."
+                    value={editTecnicoSugeridoSearch}
+                    onChange={e => setEditTecnicoSugeridoSearch(e.target.value)}
+                    onFocus={() => setEditTecnicoSugeridoFocused(true)}
+                    onBlur={() => setTimeout(() => setEditTecnicoSugeridoFocused(false), 150)}
+                  />
+                  {editTecnicoSugeridoFocused && (
+                    <div style={styles.medicoDropdown}>
+                      {editTecnicoComisionistaResults.filter(t => !editTecnicosSugeridos.some(x => x.id === t.id)).length === 0 ? (
+                        <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
+                      ) : (
+                        editTecnicoComisionistaResults.filter(t => !editTecnicosSugeridos.some(x => x.id === t.id)).map(t => (
+                          <div
+                            key={t.id}
+                            style={styles.medicoDropdownItem}
+                            onClick={() => { setEditTecnicosSugeridos([...editTecnicosSugeridos, t]); setEditTecnicoSugeridoSearch(''); }}
+                          >
+                            <Plus size={14} /> {t.nombreCompleto}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div style={styles.formGroup} id="programacion-edit-field-consumo">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label style={styles.label}>Consumo *</label>
+                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    {editCotizaciones.length > 0 && (
+                      <button
+                        type="button"
+                        className="btn-press"
+                        style={styles.addFromCatalogBtn}
+                        onClick={handleImportarEditConsumosCotizacion}
+                        disabled={importandoEditConsumos}
+                      >
+                        <FileText size={12} /> {importandoEditConsumos ? 'Importando...' : `Importar de ${editCotizaciones.length > 1 ? 'las cotizaciones' : 'la cotización'}`}
+                      </button>
+                    )}
+                    <div style={{ position: 'relative' as const }} ref={editConsumoPanelRef}>
+                      <button
+                        type="button"
+                        className="btn-press"
+                        style={styles.addFromCatalogBtn}
+                        onClick={() => (editConsumoPanelOpen ? closeEditConsumoPanel() : setEditConsumoPanelOpen(true))}
+                      >
+                        <Plus size={12} /> Agregar del catálogo
+                      </button>
+                      {editConsumoPanelOpen && (
+                        <div style={styles.consumoPanel}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={styles.consumoPanelTitle}>Agregar producto</span>
+                            <X size={14} style={{ cursor: 'pointer', color: '#9ca3af' }} onClick={closeEditConsumoPanel} />
+                          </div>
+                          <div style={{ position: 'relative' as const }}>
+                            <input
+                              style={{ ...styles.input, width: '100%' }}
+                              placeholder="Buscar producto..."
+                              value={editConsumoProductoSearch}
+                              onChange={e => setEditConsumoProductoSearch(e.target.value)}
+                              onFocus={() => setEditConsumoProductoFocused(true)}
+                              onBlur={() => setTimeout(() => setEditConsumoProductoFocused(false), 150)}
+                              autoFocus
+                            />
+                            {editConsumoProductoFocused && (
+                              <div style={{ ...styles.medicoDropdown, left: 0, right: 0 }}>
+                                {editConsumoProductoResults.length === 0 ? (
+                                  <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
+                                ) : (
+                                  editConsumoProductoResults.map(p => (
+                                    <div
+                                      key={p.id}
+                                      className="dropdown-item-hover"
+                                      style={styles.medicoDropdownItem}
+                                      onClick={() => {
+                                        const texto = p.nombre ?? '';
+                                        setEditConsumo(prev => (prev.trim() ? `${prev.trim()}, ${texto}` : texto));
+                                        setEditConsumoProductoSearch('');
+                                        setEditProgramacionError(null);
+                                      }}
+                                    >
+                                      {p.nombre}
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
                 <textarea
                   ref={autoResizeTextarea}
-                  style={{ ...styles.input, minHeight: '44px', resize: 'none' as const, overflow: 'hidden' as const }}
+                  style={{ ...styles.input, minHeight: '44px', resize: 'none' as const, overflow: 'hidden' as const, ...(editProgramacionError?.field === 'consumo' ? styles.inputError : {}) }}
                   value={editConsumo}
-                  onChange={e => { setEditConsumo(e.target.value); autoResizeTextarea(e.target); }}
+                  onChange={e => { setEditConsumo(e.target.value); autoResizeTextarea(e.target); setEditProgramacionError(null); }}
                 />
+                {editProgramacionError?.field === 'consumo' && <span style={styles.errorText}>{editProgramacionError.message}</span>}
               </div>
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>Observaciones *</label>
+                <label style={styles.label}>Observaciones</label>
                 <textarea
                   ref={autoResizeTextarea}
                   style={{ ...styles.input, minHeight: '44px', resize: 'none' as const, overflow: 'hidden' as const }}
@@ -2327,8 +2763,8 @@ export default function ProgramacionDetailPage() {
 
             <div style={styles.editModalFooter}>
               <button style={styles.cancelBtn} onClick={() => setShowEditModal(false)}>Cancelar</button>
-              <button style={styles.saveBtn} onClick={handleGuardarEdit} disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? 'Guardando...' : 'Guardar'}
+              <button style={styles.saveBtn} onClick={handleGuardarEdit} disabled={savingEdit}>
+                {savingEdit ? 'Guardando...' : 'Guardar'}
               </button>
             </div>
           </div>
@@ -2789,7 +3225,7 @@ export default function ProgramacionDetailPage() {
               <button style={styles.closeBtn} onClick={() => setShowRequisicionModal(false)}>
                 <X size={18} />
               </button>
-              <h2 style={styles.modalTitle}>Agregar Requisición</h2>
+              <h2 style={styles.modalTitle}>Agregar requisición</h2>
             </div>
 
             <div style={styles.editModalBody}>
@@ -3057,7 +3493,7 @@ export default function ProgramacionDetailPage() {
               <button style={styles.closeBtn} onClick={() => setShowRemisionModal(false)}>
                 <X size={18} />
               </button>
-              <h2 style={styles.modalTitle}>Agregar Remisión</h2>
+              <h2 style={styles.modalTitle}>Agregar remisión</h2>
             </div>
 
             <div style={styles.editModalBody}>
@@ -3401,7 +3837,7 @@ export default function ProgramacionDetailPage() {
         <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => { if (!deleteProgramacionMutation.isPending) setShowDeleteConfirm(false); }}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
-              <h2 style={styles.modalTitle}>Eliminar Programación</h2>
+              <h2 style={styles.modalTitle}>Eliminar programación</h2>
             </div>
             <div style={styles.confirmBody}>
               <p style={styles.confirmIntro}>
@@ -3441,7 +3877,7 @@ export default function ProgramacionDetailPage() {
             </div>
             <div style={styles.confirmBody}>
               <p style={styles.confirmIntro}>
-                El mensaje ya está armado. Al abrir WhatsApp, adjunta el PDF manualmente en el chat.
+                El mensaje ya se copió al portapapeles. Al abrir WhatsApp Web, pégalo en el chat y adjunta el PDF manualmente.
               </p>
             </div>
             <div style={styles.editModalFooter}>
@@ -3452,10 +3888,16 @@ export default function ProgramacionDetailPage() {
                 href={whatsappLink}
                 target="_blank"
                 rel="noopener noreferrer"
+                // target="_blank" + noopener normal (no un nombre fijo): es la única combinación
+                // que Chrome respeta para mandar el link a WhatsApp instalado como app de
+                // escritorio en vez de abrir una pestaña — un target con nombre o sin noopener
+                // rompía esa integración y el botón dejaba de abrir cualquier cosa. Evitar
+                // pestañas duplicadas no es posible de forma confiable en este caso; se prioriza
+                // que siempre abra.
                 style={{ ...styles.saveBtn, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
                 onClick={() => setWhatsappLink(null)}
               >
-                Abrir WhatsApp
+                Abrir WhatsApp Web
               </a>
             </div>
           </div>
@@ -3463,6 +3905,28 @@ export default function ProgramacionDetailPage() {
       )}
       <SuccessToast show={showDocumentoSuccess} message="Documento agregado" onClose={() => setShowDocumentoSuccess(false)} />
       <SuccessToast show={showGmailSuccess} message="PDF enviado al chat de Google" onClose={() => setShowGmailSuccess(false)} />
+      <SuccessToast show={!!whatsappCopiedMessage} message={whatsappCopiedMessage ?? ''} onClose={() => setWhatsappCopiedMessage(null)} />
+      {selectedCotizacionId && (
+        <Suspense
+          fallback={
+            <div className="modal-overlay-anim" style={styles.modalOverlay}>
+              <Loader className="spinner" size={32} color="#fff" />
+            </div>
+          }
+        >
+          <CotizacionDetalleModal
+            id={selectedCotizacionId}
+            onClose={() => setSelectedCotizacionId(null)}
+            onNotify={msg => setCotizacionToastMsg(msg)}
+            onDeleted={() => {
+              setSelectedCotizacionId(null);
+              queryClient.invalidateQueries({ queryKey: ['programacion', id] });
+              setCotizacionToastMsg('Cotización eliminada');
+            }}
+          />
+        </Suspense>
+      )}
+      <SuccessToast show={!!cotizacionToastMsg} message={cotizacionToastMsg ?? ''} onClose={() => setCotizacionToastMsg(null)} />
       {gmailError && (
         <div
           style={{
@@ -3484,7 +3948,7 @@ export default function ProgramacionDetailPage() {
               <button style={styles.closeBtn} onClick={() => setShowTecnicoSugeridoModal(false)}>
                 <X size={18} />
               </button>
-              <h2 style={styles.modalTitle}>Agregar Técnico Sugerido</h2>
+              <h2 style={styles.modalTitle}>Agregar técnico sugerido</h2>
             </div>
 
             <div style={styles.editModalBody}>
@@ -3495,41 +3959,43 @@ export default function ProgramacionDetailPage() {
 
               <div style={styles.formGroup} id="tecnico-sugerido-field-tecnico">
                 <label style={styles.label}>Técnico *</label>
-                {tecnicoSugeridoSeleccionado && (
+                {tecnicoSugeridoSeleccionados.length > 0 && (
                   <div style={styles.medicoTagsWrap}>
-                    <span style={styles.medicoTag}>
-                      {tecnicoSugeridoSeleccionado.nombreCompleto}
-                      <X size={12} style={{ cursor: 'pointer' }} onClick={() => setTecnicoSugeridoSeleccionado(null)} />
-                    </span>
+                    {tecnicoSugeridoSeleccionados.map(t => (
+                      <span key={t.id} style={styles.editMedicoTag}>
+                        {t.nombreCompleto}
+                        <X size={12} style={{ cursor: 'pointer' }} onClick={() => setTecnicoSugeridoSeleccionados(tecnicoSugeridoSeleccionados.filter(x => x.id !== t.id))} />
+                      </span>
+                    ))}
                   </div>
                 )}
-                {!tecnicoSugeridoSeleccionado && (
-                  <div style={{ position: 'relative' as const }}>
-                    <input
-                      style={{ ...styles.input, ...(tecnicoSugeridoError?.field === 'tecnico' ? styles.inputError : {}) }}
-                      placeholder="Buscar técnico..."
-                      value={tecnicoSugeridoSearch}
-                      onChange={e => { setTecnicoSugeridoSearch(e.target.value); setTecnicoSugeridoError(null); }}
-                    />
-                    {tecnicoSugeridoSearch.trim() && (
-                      <div style={styles.medicoDropdown}>
-                        {tecnicoComisionistaResults.length === 0 ? (
-                          <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
-                        ) : (
-                          tecnicoComisionistaResults.map(t => (
-                            <div
-                              key={t.id}
-                              style={styles.medicoDropdownItem}
-                              onClick={() => { setTecnicoSugeridoSeleccionado(t); setTecnicoSugeridoSearch(''); setTecnicoSugeridoError(null); }}
-                            >
-                              <Plus size={14} /> {t.nombreCompleto}
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
+                <div style={{ position: 'relative' as const }}>
+                  <input
+                    style={{ ...styles.input, ...(tecnicoSugeridoError?.field === 'tecnico' ? styles.inputError : {}) }}
+                    placeholder="Buscar técnico..."
+                    value={tecnicoSugeridoSearch}
+                    onChange={e => { setTecnicoSugeridoSearch(e.target.value); setTecnicoSugeridoError(null); }}
+                    onFocus={() => setTecnicoSugeridoFocused(true)}
+                    onBlur={() => setTimeout(() => setTecnicoSugeridoFocused(false), 150)}
+                  />
+                  {tecnicoSugeridoFocused && (
+                    <div style={styles.medicoDropdown}>
+                      {tecnicoComisionistaResults.filter(t => !tecnicoSugeridoSeleccionados.some(x => x.id === t.id)).length === 0 ? (
+                        <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
+                      ) : (
+                        tecnicoComisionistaResults.filter(t => !tecnicoSugeridoSeleccionados.some(x => x.id === t.id)).map(t => (
+                          <div
+                            key={t.id}
+                            style={styles.medicoDropdownItem}
+                            onClick={() => { setTecnicoSugeridoSeleccionados([...tecnicoSugeridoSeleccionados, t]); setTecnicoSugeridoSearch(''); setTecnicoSugeridoError(null); }}
+                          >
+                            <Plus size={14} /> {t.nombreCompleto}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
                 {tecnicoSugeridoError?.field === 'tecnico' && <span style={styles.errorText}>{tecnicoSugeridoError.message}</span>}
               </div>
             </div>
@@ -3554,20 +4020,18 @@ export default function ProgramacionDetailPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   container: { padding: '0.05rem 1.5rem 1.5rem', maxWidth: '1400px', margin: '0 auto' },
-  backLink: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem', padding: '0.25rem 0.1rem', border: 'none', background: 'transparent', color: '#6b7280', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, transition: 'color 0.15s ease' },
   headerCard: { backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', padding: '1.25rem 1.5rem 0', marginBottom: '2rem' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1.5rem' },
   titleGroup: { flex: 1, display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', overflow: 'hidden' },
-  titleLabel: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
-  title: { fontSize: '2.0625rem', fontWeight: 800, color: '#16170f', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  titleLabel: { fontSize: '0.65rem', fontWeight: 400, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
+  title: { fontSize: '1.7rem', fontWeight: 800, color: '#16170f', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   titleId: { fontSize: '0.8rem', fontWeight: 500, color: '#4d7a13', flexShrink: 0 },
   titleRow: { display: 'flex', alignItems: 'center', gap: '0.75rem', overflow: 'hidden' },
-  titleIconBadge: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '66px', height: '66px', borderRadius: '20px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#4d7a13', flexShrink: 0 },
   statusPill: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.75rem', borderRadius: '999px', border: '1px solid transparent', fontSize: '0.75rem', fontWeight: 700, flexShrink: 0 },
   statusPillAbierta: { backgroundColor: '#e9f2d8', color: '#3f6510', borderColor: '#dbe8c2' },
   statusPillCerrada: { backgroundColor: '#f4f4ee', color: '#6b6b60', borderColor: '#e9ece0' },
   statusDot: { width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0 },
-  breadcrumbRow: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem', color: '#9a9a90' },
+  breadcrumbRow: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', color: '#9a9a90' },
   breadcrumbId: { fontWeight: 500, color: '#4d7a13' },
   headerActions: { display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 },
   btnPill: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.1rem', border: '1px solid #e5e7eb', borderRadius: '12px', color: '#33342a', fontWeight: 600, fontSize: '0.84375rem', cursor: 'pointer', whiteSpace: 'nowrap' as const, flexShrink: 0 },
@@ -3604,7 +4068,9 @@ const styles: Record<string, React.CSSProperties> = {
   btnDanger: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.1rem', border: '1px solid #fecaca', borderRadius: '8px', backgroundColor: '#fff', color: '#dc2626', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', whiteSpace: 'nowrap' as const, flexShrink: 0 },
   btnDangerHover: { backgroundColor: '#fef2f2', borderColor: '#fca5a5' },
   compactHeaderPositioner: {
-    position: 'fixed' as const, top: '60px', left: 0, right: 0, zIndex: 50,
+    // top: '62px' (en vez de pegado a los 60px del header fijo) para que se note que esta
+    // tarjeta flota, ahora que sus 4 esquinas están redondeadas en vez de solo las de abajo.
+    position: 'fixed' as const, top: '62px', left: 0, right: 0, zIndex: 50,
     maxWidth: '1400px', margin: '0 auto',
     padding: '0 1.5rem',
     pointerEvents: 'none' as const,
@@ -3616,8 +4082,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0.75rem 1.5rem',
     boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
     border: '1px solid #e5e7eb',
-    borderTop: 'none',
-    borderRadius: '0 0 12px 12px',
+    borderRadius: '12px',
     pointerEvents: 'auto' as const,
   },
   compactTitle: { fontSize: '1rem', fontWeight: 700, color: '#333', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
@@ -3691,6 +4156,7 @@ const styles: Record<string, React.CSSProperties> = {
   comisionScrollBody: { minHeight: '110px', maxHeight: '220px', overflowY: 'auto' as const, backgroundColor: '#f9fafb' },
   requisicionRow: { display: 'grid', gridTemplateColumns: '110px 145px 1fr 90px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '620px' },
   notaCreditoRow: { display: 'grid', gridTemplateColumns: '140px 130px 1fr 130px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '680px' },
+  cotizacionRow: { display: 'grid', gridTemplateColumns: '160px 110px minmax(0, 1fr) 130px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff' },
   gastoRow: { display: 'grid', gridTemplateColumns: '110px 100px 1fr 180px 110px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '780px' },
   fuenteRow: { display: 'grid', gridTemplateColumns: '140px 120px 1fr 150px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '680px' },
   documentoRow: { display: 'grid', gridTemplateColumns: '100px 1fr 1fr 150px 180px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '900px' },
@@ -3747,9 +4213,20 @@ const styles: Record<string, React.CSSProperties> = {
   sedeGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' },
   sedeBtn: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 0.75rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', color: '#374151', fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const },
   sedeBtnActive: { backgroundColor: '#6b8c1f', border: '1px solid #6b8c1f', color: '#fff' },
-  ciudadPill: { display: 'inline-flex', alignSelf: 'flex-start' as const, padding: '0.4rem 0.85rem', borderRadius: '999px', border: '1px solid #e5e7eb', backgroundColor: '#f9fafb', fontSize: '0.85rem', fontWeight: 600, color: '#374151' },
+  // Variante usada solo en el modal Editar Programación, para que coincida con el verde suave
+  // de Nueva Programación (ProgramacionesPage.tsx) sin tocar sedeBtnActive/medicoTag, que
+  // comparten los demás modales de esta página (Comisión, Requisición, Remisión, etc.).
+  editSedeBtnActive: { backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' },
+  editMedicoTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510', fontSize: '0.8rem', fontWeight: 600 },
+  // Mismo verde que usa Nueva Programación para "Ciudad QX" — antes era gris acá.
+  ciudadPill: { display: 'inline-flex', alignSelf: 'flex-start' as const, padding: '0.4rem 0.85rem', borderRadius: '999px', border: '1px solid #dbe8c2', backgroundColor: '#e9f2d8', fontSize: '0.85rem', fontWeight: 600, color: '#3f6510' },
   medicoTagsWrap: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.5rem' },
   medicoTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#f3f4f6', color: '#333', fontSize: '0.8rem', fontWeight: 600 },
+  // Mismo chip/botón que usa el campo Cotización en Nueva Programación (ProgramacionesPage.tsx).
+  cotizacionChip: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '8px', backgroundColor: '#f4f8ea', border: '1px solid #dbe8c2', color: '#3f6510', fontSize: '0.8rem', fontWeight: 700 },
+  addFromCatalogBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.35rem 0.65rem', border: '1.5px solid #dbe8c2', borderRadius: '999px', backgroundColor: '#f4f8ea', color: '#3f6510', fontSize: '0.75rem', fontWeight: 400, cursor: 'pointer' },
+  consumoPanel: { position: 'absolute' as const, bottom: 'calc(100% + 0.4rem)', right: 0, width: '280px', maxWidth: '90vw', backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '10px', boxShadow: '0 12px 30px rgba(0,0,0,0.15)', padding: '0.85rem', zIndex: 25, display: 'flex', flexDirection: 'column' as const, gap: '0.6rem' },
+  consumoPanelTitle: { fontSize: '0.75rem', fontWeight: 700, color: '#555', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
   medicoDropdown: { position: 'absolute' as const, top: 'calc(100% + 0.35rem)', left: 0, right: 0, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', maxHeight: '220px', overflowY: 'auto' as const, zIndex: 20 },
   medicoDropdownItem: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#333', cursor: 'pointer' },
   addComisionBtn: { display: 'flex', alignItems: 'center', gap: '0.35rem', marginLeft: 'auto', padding: '0.4rem 0.85rem', border: 'none', borderRadius: '8px', backgroundColor: '#6b8c1f', color: '#fff', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' },

@@ -28,7 +28,7 @@ function esErrorBloqueoIntentos(err: unknown): boolean {
 // El usuario de login es un nombre corto (ej. "ccahum"), no un correo ni texto libre — se filtran
 // caracteres especiales al escribir en vez de solo validar al enviar, para que quede claro de
 // inmediato qué se acepta.
-const limpiarUsuario = (value: string): string => value.replace(/[^a-zA-Z0-9._-]/g, '');
+const limpiarUsuario = (value: string): string => value.toLowerCase().replace(/[^a-z._-]/g, '');
 
 // Un cuadro por dígito, con auto-focus al primero y avance/retroceso automático entre casillas
 // para que el usuario no tenga que hacer click — solo escribir.
@@ -114,6 +114,16 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Si se llega acá con una sesión todavía activa (ej. el usuario le da "atrás" en el navegador
+  // después de iniciar sesión), esa sesión se da por terminada — así, si después le da "adelante",
+  // PrivateShell (App.tsx) ya no encuentra token y vuelve a pedir credenciales en vez de dejarlo
+  // entrar directo con la sesión vieja. Se ejecuta una sola vez al montar, así que no interfiere
+  // con el token que finalizarSesion() guarda más abajo al completar un login nuevo.
+  useEffect(() => {
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('usuario');
+  }, []);
+
   // Después de usuario/contraseña (o de cambiar la contraseña inicial), decide a qué pantalla
   // sigue según lo que responda el backend — se reutiliza en ambos casos porque el flujo de
   // ahí en adelante es idéntico.
@@ -136,7 +146,9 @@ export default function LoginPage() {
     localStorage.setItem('accessToken', res.accessToken);
     localStorage.setItem('usuario', JSON.stringify(res.usuario));
     // El Header revisa esto al montar (una sola vez, se borra apenas lo muestra) para saber si
-    // debe mostrar el toast de bienvenida — así no aparece de nuevo en cada navegación.
+    // debe mostrar el toast de bienvenida — así no aparece de nuevo en cada navegación. También
+    // decide ahí si toca ofrecer configurar la firma personal (ver FirmaSetupModal), ya en la
+    // pantalla principal en vez de como parte del login.
     sessionStorage.setItem('tspine_mostrar_bienvenida', '1');
     setStep('EXITO');
     setTimeout(() => navigate('/dashboard'), REDIRECT_DELAY_MS);

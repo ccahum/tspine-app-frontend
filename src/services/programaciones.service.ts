@@ -3,6 +3,7 @@ import { api } from '../lib/axios';
 export interface ProgramacionItem {
   id: string;
   numProgram: string | null;
+  createdAt: string;
   fechaQx: string | null;
   horaQx: string | null;
   sede: string | null;
@@ -35,6 +36,9 @@ export interface ProgramacionListResponse {
   totalPages: number;
 }
 
+export const PROGRAMACION_SORT_FIELDS = ['numProgram', 'createdAt', 'fechaQx', 'horaQx', 'sede', 'hospital', 'observaciones'] as const;
+export type ProgramacionSortField = (typeof PROGRAMACION_SORT_FIELDS)[number];
+
 export interface ProgramacionQuery {
   page?: number;
   limit?: number;
@@ -47,6 +51,8 @@ export interface ProgramacionQuery {
   sinComision?: boolean;
   consumoNoValidado?: boolean;
   conRequisicion?: boolean;
+  sortBy?: ProgramacionSortField;
+  sortOrder?: 'asc' | 'desc';
 }
 
 export interface ProgramacionStats {
@@ -74,6 +80,7 @@ export interface ProgramacionDetail {
   tecnicos: Array<{ tecnico: { id: string; nombreCompleto: string } }>;
   observaciones: string | null;
   consumo: string | null;
+  cotizaciones: CotizacionOption[];
   total: number | null;
   descuentos: number | null;
   nc: number | null;
@@ -110,6 +117,16 @@ export interface MedicoOption {
   nombreCompleto: string;
 }
 
+export interface CotizacionOption {
+  id: string;
+  numCotizacion: string | null;
+  medico: string | null;
+  fecha: string | null;
+  cirugia: string | null;
+  hospital: { nombreCompleto: string } | null;
+  total: number;
+}
+
 export interface UpdateProgramacionPayload {
   fechaQx?: string;
   horaQx?: string;
@@ -118,6 +135,7 @@ export interface UpdateProgramacionPayload {
   observaciones?: string;
   consumo?: string;
   medicoIds?: string[];
+  cotizacionIds?: string[];
 }
 
 export interface MonthComparison {
@@ -146,8 +164,8 @@ export const programacionesService = {
     return res.data;
   },
 
-  findAllForCalendar: async (): Promise<ProgramacionCalendarItem[]> => {
-    const res = await api.get<ProgramacionCalendarItem[]>('/operacion/programaciones/calendario');
+  findAllForCalendar: async (dateFrom?: string, dateTo?: string): Promise<ProgramacionCalendarItem[]> => {
+    const res = await api.get<ProgramacionCalendarItem[]>('/operacion/programaciones/calendario', { params: { dateFrom, dateTo } });
     return res.data;
   },
 
@@ -187,6 +205,18 @@ export const programacionesService = {
 
   searchMedicos: async (search?: string): Promise<MedicoOption[]> => {
     const res = await api.get<MedicoOption[]>('/operacion/programaciones/medicos', { params: { search } });
+    return res.data;
+  },
+
+  searchCotizaciones: async (search?: string, medicos?: string[]): Promise<CotizacionOption[]> => {
+    const res = await api.get<CotizacionOption[]>('/operacion/programaciones/cotizaciones', {
+      params: { search, medicos: medicos && medicos.length > 0 ? medicos.join(',') : undefined },
+    });
+    return res.data;
+  },
+
+  getConsumosDeCotizaciones: async (ids: string[]): Promise<string[]> => {
+    const res = await api.get<string[]>('/operacion/programaciones/cotizaciones/items', { params: { ids: ids.join(',') } });
     return res.data;
   },
 

@@ -133,7 +133,7 @@ export default function AutorizacionConsumosPage() {
       <div style={styles.pageWrapper}>
         <button
           type="button"
-          onClick={() => navigate('/operacion')}
+          onClick={() => navigate(-1)}
           style={styles.backLink}
           onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
           onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}

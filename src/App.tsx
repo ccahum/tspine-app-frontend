@@ -27,7 +27,6 @@ const ListasPrecioPage = lazy(routeImports['/operacion/listas-precio'] as any);
 const PreciosEspecialesPage = lazy(routeImports['/operacion/precios-especiales'] as any);
 const CotizacionesPage = lazy(routeImports['/operacion/cotizaciones'] as any);
 const AutorizacionConsumosPage = lazy(routeImports['/operacion/autorizacion-consumos'] as any);
-const SolicitudProgramacionPage = lazy(routeImports['/operacion/solicitud-programacion'] as any);
 const AdministracionPage = lazy(routeImports['/administracion'] as any);
 const UsuariosAdminPage = lazy(routeImports['/administracion/usuarios'] as any);
 const TercerosAdminPage = lazy(routeImports['/administracion/terceros'] as any);
@@ -88,7 +87,6 @@ export default function App() {
           <Route path="/operacion/precios-especiales" element={<PreciosEspecialesPage />} />
           <Route path="/operacion/cotizaciones" element={<CotizacionesPage />} />
           <Route path="/operacion/autorizacion-consumos" element={<AutorizacionConsumosPage />} />
-          <Route path="/operacion/solicitud-programacion" element={<SolicitudProgramacionPage />} />
           <Route path="/vehicular" element={<VehicularPage />} />
           <Route path="/vehicular/catalogo" element={<CatalogoVehicularPage />} />
           <Route path="/vehicular/control-viajes" element={<ControlViajesPage />} />

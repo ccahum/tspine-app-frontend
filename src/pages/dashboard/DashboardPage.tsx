@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Wrench, ShoppingCart, Archive, Landmark,
   TrendingUp, ClipboardList, Users, Truck,
@@ -50,29 +50,46 @@ export default function DashboardPage() {
   // Administración solo se ofrece a superadmins — mismo criterio que Sidebar.tsx.
   const modulosVisibles = modules.filter(mod => mod.path !== '/administracion' || esSuperAdmin());
 
+  // Mismo patrón que OperacionPage/CotizacionesPage: pageWrapper anclado al viewport +
+  // scroll del body bloqueado mientras esta página está montada, para que todos los módulos
+  // den completos en una sola pantalla sin barra de scroll de la página.
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
+
   return (
-      <div style={{ ...styles.container, paddingLeft: isMobile ? '1rem' : '2rem', paddingRight: isMobile ? '1rem' : '2rem' }}>
+      <div style={{ ...styles.pageWrapper, left: isMobile ? 0 : '60px', paddingLeft: isMobile ? '1rem' : '2rem', paddingRight: isMobile ? '1rem' : '2rem' }}>
         <div style={styles.welcome}>
           <h2 style={styles.welcomeTitle}>Inicio</h2>
           <p style={styles.welcomeSub}>Selecciona un módulo para continuar</p>
         </div>
 
-        <div style={{ ...styles.grid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(240px, 1fr))' }}>
-          {modulosVisibles.map((mod) => (
-            <ModuleCard key={mod.path} {...mod} />
-          ))}
+        <div style={styles.gridWrap}>
+          <div style={{ ...styles.grid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(240px, 1fr))' }}>
+            {modulosVisibles.map((mod) => (
+              <ModuleCard key={mod.path} {...mod} />
+            ))}
+          </div>
         </div>
       </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {
-    paddingLeft: '2rem',
-    paddingRight: '2rem',
+  // Anclado directo a los bordes del viewport (en vez de calc(100vh - Npx)) para que el alto
+  // disponible salga siempre correcto. Mismo patrón que pageWrapper en OperacionPage.tsx.
+  pageWrapper: {
+    position: 'fixed', top: '60px', right: 0, bottom: 0,
+    paddingTop: '1.5rem', paddingBottom: '1.5rem', boxSizing: 'border-box',
+    display: 'flex', flexDirection: 'column', gap: '1rem', overflow: 'hidden',
   },
+  // paddingTop: sin esto, el translateY(-2px) + boxShadow del hover en la primera fila queda
+  // recortado por el propio overflowY:auto de este contenedor.
+  gridWrap: { flex: 1, minHeight: 0, overflowY: 'auto', paddingTop: '6px' },
   welcome: {
     marginBottom: '1.5rem',
+    flexShrink: 0,
   },
   welcomeTitle: {
     fontSize: '1.5rem',

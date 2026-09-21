@@ -52,6 +52,7 @@ export interface TercerosCatalogos {
   regimenesFiscales: { id: string; descripcion: string }[];
   usosCfdi: { id: string; descripcion: string }[];
   bancos: { id: string; nombre: string }[];
+  grupos: string[];
 }
 
 export interface DatosFiscalesPayload {
@@ -98,7 +99,7 @@ export interface TerceroDetail {
   creadoPor: string | null;
   creadoEn: string | null;
   mir: boolean | null;
-  grupo: boolean;
+  grupo: string | null;
   ciudadId: string | null;
   estadoId: string | null;
   paisId: string | null;
@@ -158,7 +159,7 @@ export interface CreateTerceroPayload {
   observaciones?: string;
   clasificaciones?: ClasificacionTercero[];
   mir?: boolean;
-  grupo?: boolean;
+  grupo?: string;
   datosFiscales?: DatosFiscalesPayload;
 }
 
@@ -177,7 +178,7 @@ export interface UpdateTerceroPayload {
   observaciones?: string;
   clasificaciones?: ClasificacionTercero[];
   mir?: boolean;
-  grupo?: boolean;
+  grupo?: string;
   activo?: boolean;
   datosFiscales?: DatosFiscalesPayload;
 }

@@ -138,7 +138,7 @@ function detalleToForm(detalle: TerceroDetail): TerceroFormState {
     codigoPostalFiscal: detalle.datosFiscales?.codigoPostalFiscal ?? '',
     usoCfdiId: detalle.datosFiscales?.usoCfdiId ?? '',
     direccionFiscal: detalle.datosFiscales?.direccionFiscal ?? '',
-    grupo: detalle.grupo,
+    grupo: detalle.grupo ?? '',
     activo: detalle.activo,
     agregarFacturacion: !!(
       detalle.datosFiscales?.rfc || detalle.datosFiscales?.razonSocial || detalle.datosFiscales?.regimenFiscalId
@@ -210,7 +210,7 @@ function DetalleModal({ item, onClose, onUpdated }: { item: TerceroItem; onClose
         observaciones: form.observaciones.trim() || undefined,
         clasificaciones: form.clasificaciones,
         mir: form.mir,
-        grupo: form.grupo,
+        grupo: form.grupo.trim(),
         activo: form.activo,
         datosFiscales: datosFiscalesFromForm(form),
       });
@@ -812,7 +812,7 @@ type TerceroFormState = {
   codigoPostalFiscal: string;
   usoCfdiId: string;
   direccionFiscal: string;
-  grupo: boolean;
+  grupo: string;
   activo: boolean;
   agregarFacturacion: boolean;
 };
@@ -824,7 +824,7 @@ const emptyTerceroForm: TerceroFormState = {
   ciudadId: '', estadoId: '', paisId: '', observaciones: '',
   clasificaciones: [], mir: false,
   rfc: '', razonSocial: '', regimenFiscalId: '', codigoPostalFiscal: '', usoCfdiId: '', direccionFiscal: '',
-  grupo: false,
+  grupo: '',
   activo: true,
   agregarFacturacion: false,
 };
@@ -1037,8 +1037,17 @@ function TerceroFormFields({ form, onChange, catalogos, error, extraSections }: 
         </div>
       )}
       <div style={styles.formGroup}>
-        <label style={styles.formLabel}>¿Grupo?</label>
-        <SiNoPicker value={form.grupo} onChange={v => onChange({ grupo: v })} />
+        <label style={styles.formLabel}>Grupo</label>
+        <input
+          style={styles.formInput}
+          list="terceros-grupos-datalist"
+          value={form.grupo}
+          onChange={e => onChange({ grupo: e.target.value })}
+          placeholder="Ej. Operadora de Hospitales Angeles"
+        />
+        <datalist id="terceros-grupos-datalist">
+          {catalogos.grupos.map(g => <option key={g} value={g} />)}
+        </datalist>
       </div>
     </>
   );
@@ -1089,7 +1098,7 @@ function NuevoTerceroModal({ catalogos, onClose, onCreated }: {
         observaciones: form.observaciones.trim() || undefined,
         clasificaciones: form.clasificaciones.length ? form.clasificaciones : undefined,
         mir: form.mir,
-        grupo: form.grupo,
+        grupo: form.grupo.trim() || undefined,
         datosFiscales: datosFiscalesFromForm(form),
       });
       const esEfectivo = cuentaForm.tipo === 'Efectivo';
@@ -1300,7 +1309,7 @@ export default function TercerosAdminPage() {
       <div style={styles.pageWrapper}>
         <button
           type="button"
-          onClick={() => navigate('/administracion')}
+          onClick={() => navigate(-1)}
           style={styles.backLink}
           onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
           onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}

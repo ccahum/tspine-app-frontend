@@ -14,7 +14,7 @@ import { NavigationLoadingContext } from '../../hooks/useNavigateWithLoading';
 // loader mientras carga, sin que el resto de la app parpadee.
 function ContentLoader() {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', minHeight: 'calc(100vh - 60px)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', minHeight: 'calc(100dvh - 60px)' }}>
       <div style={{ display: 'flex', gap: '0.45rem' }}>
         <span className="content-loader-dot" style={{ animationDelay: '0s' }} />
         <span className="content-loader-dot" style={{ animationDelay: '0.15s' }} />
@@ -91,7 +91,11 @@ export default function Layout() {
 
 const styles: Record<string, React.CSSProperties> = {
   root: {
-    minHeight: '100vh',
+    // dvh (no vh): en navegadores móviles 100vh mide como si la barra de herramientas del
+    // navegador estuviera oculta, más alto que lo que en verdad se ve — eso hacía que este alto
+    // se pasara del viewport real, creando una barra de scroll de la ventana aunque la página en
+    // sí (ej. Cotizaciones, ver pageWrapper ahí) ya esté ajustada para no necesitarla.
+    minHeight: '100dvh',
     backgroundColor: '#f4f5f7',
     position: 'relative',
   },
@@ -99,6 +103,6 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: '60px',
     marginLeft: '60px',
     padding: '1rem 0',
-    minHeight: 'calc(100vh - 60px)',
+    minHeight: 'calc(100dvh - 60px)',
   },
 };

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { Search, X, Plus } from 'lucide-react';
+import { Search, X, Plus, Loader, Tags } from 'lucide-react';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
+import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import SuccessToast from '../../../components/SuccessToast';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
@@ -526,19 +527,14 @@ export default function PreciosEspecialesPage() {
   const tableWrapRef = useRef<HTMLDivElement>(null);
   useSmoothWheelScroll(tableWrapRef, [], 3);
 
+  // pageWrapper anclado al viewport (position:fixed) para que solo la tabla scrollee
+  // internamente y el resto de la página (título, botón Volver, paginación) quede siempre
+  // visible — mismo patrón que CotizacionesPage/ListasPrecioPage. Como el scroll del body queda
+  // bloqueado mientras esta página está montada, no hace falta un efecto aparte para los
+  // modales de detalle/creación.
   useEffect(() => {
-    document.body.style.overflow = (selected || showCreateModal) ? 'hidden' : '';
+    document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = ''; };
-  }, [selected, showCreateModal]);
-
-  // Le da sombra a la tarjeta fija (título + toolbar) solo mientras está "pegada" arriba por el
-  // scroll — mismo patrón que Remisiones / Cotizaciones / Listas de Precio.
-  const [isStuck, setIsStuck] = useState(false);
-  useEffect(() => {
-    const handleScroll = () => setIsStuck(window.scrollY > 4);
-    handleScroll();
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
   const query = { page, limit: 200, search: search || undefined };
@@ -553,21 +549,16 @@ export default function PreciosEspecialesPage() {
 
   return (
     <>
-      <div style={styles.pageWrapper}>
-        <button
-          type="button"
-          onClick={() => navigate('/operacion')}
-          style={styles.backLink}
-          onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}
-        >
-          <MaterialIcon name="arrow_back" size={16} />
-          Volver
-        </button>
-
-        <div style={{ ...styles.contentCard, ...(isStuck ? styles.contentCardStuck : {}) }}>
+      <div style={{ ...styles.pageWrapper, left: isMobile ? 0 : '60px' }}>
+        <div style={styles.contentCard}>
           <div style={styles.header}>
-            <h1 style={styles.title}>Precios especiales</h1>
+            <HeaderBackReveal
+              onBack={() => navigate(-1)}
+              icon={<Tags size={20} color="#4d7a13" />}
+              mobileIconAsBack={isMobile}
+            >
+              <h1 style={styles.title}>Precios especiales</h1>
+            </HeaderBackReveal>
           </div>
 
           <div style={styles.toolbar}>
@@ -592,7 +583,10 @@ export default function PreciosEspecialesPage() {
 
         <div ref={tableWrapRef} style={styles.tableWrap}>
           {isLoading && items.length === 0 ? (
-            <div style={styles.empty}>Cargando...</div>
+            <div style={{ ...styles.empty, display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: '0.6rem' }}>
+              <Loader className="spinner" size={26} />
+              Cargando...
+            </div>
           ) : items.length === 0 ? (
             <div style={styles.empty}>Sin registros</div>
           ) : isMobile ? (
@@ -660,17 +654,17 @@ export default function PreciosEspecialesPage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  pageWrapper: { padding: '0.05rem 1.5rem 1.5rem' },
-  backLink: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem', padding: '0.25rem 0.1rem', border: 'none', background: 'transparent', color: '#6b7280', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, transition: 'color 0.15s ease' },
-  contentCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '16px', padding: '1.25rem', marginBottom: '1.5rem', position: 'sticky' as const, top: '60px', zIndex: 10, boxShadow: '0 0 0 rgba(0,0,0,0)', transition: 'box-shadow 0.2s ease, border-color 0.2s ease' },
-  contentCardStuck: { boxShadow: '0 8px 20px rgba(0,0,0,0.08)', border: '1px solid #e5e7eb' },
-  header: { marginBottom: '1.25rem' },
+  // Anclado directo a los bordes del viewport (en vez de calc(100vh - Npx)) para que el alto
+  // disponible salga siempre correcto. Mismo patrón que pageWrapper en CotizacionesPage.tsx.
+  pageWrapper: { position: 'fixed' as const, top: '60px', right: 0, bottom: 0, padding: '1.5rem', boxSizing: 'border-box' as const, display: 'flex', flexDirection: 'column' as const, gap: '1rem', overflow: 'hidden' },
+  contentCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '16px', padding: '1.25rem', flexShrink: 0 },
+  header: { display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' },
   title: { fontSize: '1.4rem', fontWeight: 700, color: '#333', margin: 0 },
   toolbar: { display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' as const },
   searchWrap: { position: 'relative' as const, flex: 1, minWidth: '280px' },
   searchInput: { width: '100%', padding: '0.6rem 0.75rem 0.6rem 2.25rem', border: 'none', backgroundColor: '#f5f5f0', borderRadius: '10px', fontSize: '0.875rem', outline: 'none', boxSizing: 'border-box' as const, color: '#374151' },
   totalLabel: { fontSize: '0.8rem', color: '#9ca3af', whiteSpace: 'nowrap' as const, marginLeft: 'auto' },
-  tableWrap: { backgroundColor: '#fff', borderRadius: '16px', overflowX: 'auto' as const, overflowY: 'auto' as const, maxHeight: 'calc(100vh - 260px)', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #eeeee6' },
+  tableWrap: { backgroundColor: '#fff', borderRadius: '16px', overflowX: 'auto' as const, overflowY: 'auto' as const, flex: 1, minHeight: 0, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #eeeee6' },
   table: { width: '100%', borderCollapse: 'collapse' as const, fontSize: '0.84375rem' },
   thead: { backgroundColor: '#f9fafb' },
   th: { padding: '0.7rem 0.875rem', fontWeight: 500, color: '#9ca3af', fontSize: '0.68rem', textTransform: 'uppercase' as const, letterSpacing: '0.04em', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' as const, position: 'sticky' as const, top: 0, backgroundColor: '#f9fafb', zIndex: 1 },
@@ -690,7 +684,7 @@ const styles: Record<string, React.CSSProperties> = {
   mobileCardFieldLabel: { fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
   mobileCardFieldValue: { fontSize: '0.82rem', fontWeight: 600, color: '#374151' },
   empty: { textAlign: 'center' as const, padding: '3rem', color: '#9ca3af' },
-  pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem', marginTop: '1.5rem' },
+  pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem', flexShrink: 0 },
   pageLabel: { fontSize: '0.875rem', fontWeight: 600, color: '#33342a' },
   pageBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.5rem 1rem', backgroundColor: '#e9f2d8', color: '#3f6510', border: '1px solid #dbe8c2', borderRadius: '10px', cursor: 'pointer', fontWeight: 600, fontSize: '0.84375rem' },
   pageBtnDisabled: { backgroundColor: '#f4f4ee', borderColor: '#eeeee6', color: '#c7c7ba', cursor: 'not-allowed' as const },

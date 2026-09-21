@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CalendarDays, X, ChevronDown } from 'lucide-react';
 import { toLocalDateString } from '../../lib/date.utils';
+import DatePicker from '../DatePicker';
 
 interface Props {
   dateFrom: string;
@@ -22,6 +23,10 @@ export default function DateRangeFilter({ dateFrom, dateTo, onChange }: Props) {
       const target = e.target as Node;
       if (triggerRef.current?.contains(target)) return;
       if (menuRef.current?.contains(target)) return;
+      // El calendario de DatePicker (Desde/Hasta) se porta a document.body por fuera de este
+      // popover — sin este chequeo, elegir un día se veía como "clic afuera" y cerraba todo el
+      // filtro antes de poder aplicar la fecha.
+      if ((target as HTMLElement).closest?.('[data-datepicker-portal]')) return;
       setOpen(false);
     };
     document.addEventListener('mousedown', handler);
@@ -63,16 +68,27 @@ export default function DateRangeFilter({ dateFrom, dateTo, onChange }: Props) {
   };
 
   const handleApply = () => {
+    if (!tempFrom || !tempTo) return;
     onChange(tempFrom, tempTo);
     setOpen(false);
   };
 
+  // Usado por la X del botón colapsado — ahí sí tiene sentido cerrar, no hay recuadro abierto que
+  // conservar.
   const handleClear = (e: React.MouseEvent) => {
     e.stopPropagation();
     setTempFrom('');
     setTempTo('');
     onChange('', '');
     setOpen(false);
+  };
+
+  // Usado por "Limpiar" DENTRO del recuadro abierto — solo borra las fechas elegidas, sin cerrar,
+  // para poder seguir eligiendo otra fecha ahí mismo.
+  const handleClearInMenu = () => {
+    setTempFrom('');
+    setTempTo('');
+    onChange('', '');
   };
 
   const setPreset = (from: string, to: string) => {
@@ -148,7 +164,12 @@ export default function DateRangeFilter({ dateFrom, dateTo, onChange }: Props) {
           {/* Presets */}
           <div style={presetsRow}>
             {presets.map(p => (
-              <button key={p.label} onClick={() => setPreset(p.from, p.to)} style={presetBtn}>
+              <button
+                key={p.label}
+                className="datepicker-cell-hover"
+                onClick={() => setPreset(p.from, p.to)}
+                style={{ ...presetBtn, ...(p.from === tempFrom && p.to === tempTo ? presetBtnActive : {}) }}
+              >
                 {p.label}
               </button>
             ))}
@@ -160,19 +181,19 @@ export default function DateRangeFilter({ dateFrom, dateTo, onChange }: Props) {
           <div style={inputsRow}>
             <div style={inputGroup}>
               <label style={inputLabel}>Desde</label>
-              <input type="date" value={tempFrom} onChange={e => setTempFrom(e.target.value)} style={dateInput} />
+              <DatePicker value={tempFrom} onChange={setTempFrom} style={dateInput} />
             </div>
             <span style={{ color: '#999', paddingTop: '1.2rem' }}>–</span>
             <div style={inputGroup}>
               <label style={inputLabel}>Hasta</label>
-              <input type="date" value={tempTo} min={tempFrom} onChange={e => setTempTo(e.target.value)} style={dateInput} />
+              <DatePicker value={tempTo} min={tempFrom} onChange={setTempTo} style={dateInput} />
             </div>
           </div>
 
           {/* Actions */}
           <div style={actions}>
             <button
-              onClick={handleClear}
+              onClick={handleClearInMenu}
               style={clearBtn}
               onMouseEnter={e => {
                 e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)';
@@ -187,12 +208,15 @@ export default function DateRangeFilter({ dateFrom, dateTo, onChange }: Props) {
             </button>
             <button
               onClick={handleApply}
-              style={applyBtn}
+              disabled={!tempFrom || !tempTo}
+              style={{ ...applyBtn, ...(!tempFrom || !tempTo ? applyBtnDisabled : {}) }}
               onMouseEnter={e => {
+                if (!tempFrom || !tempTo) return;
                 e.currentTarget.style.boxShadow = '0 4px 12px rgba(107,140,31,0.2)';
                 e.currentTarget.style.backgroundColor = '#5a7318';
               }}
               onMouseLeave={e => {
+                if (!tempFrom || !tempTo) return;
                 e.currentTarget.style.boxShadow = 'none';
                 e.currentTarget.style.backgroundColor = '#6b8c1f';
               }}
@@ -218,12 +242,17 @@ const presetBtn: React.CSSProperties = {
   padding: '0.25rem 0.6rem', border: '1px solid #e5e7eb', borderRadius: '20px',
   cursor: 'pointer', backgroundColor: '#f9fafb', fontSize: '0.78rem', color: '#555',
 };
+// Mismo verde suave que usa el DatePicker para el día seleccionado — así el preset activo queda
+// marcado en vez de volver siempre a su estado neutro después de elegirlo.
+const presetBtnActive: React.CSSProperties = {
+  backgroundColor: '#e9f2d8', borderColor: '#c3dba0', color: '#3f6510', fontWeight: 700,
+};
 const inputsRow: React.CSSProperties = { display: 'flex', gap: '0.5rem', alignItems: 'flex-start', marginBottom: '0.75rem' };
 const inputGroup: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: 1, minWidth: 0 };
 const inputLabel: React.CSSProperties = { fontSize: '0.75rem', fontWeight: 600, color: '#666' };
 const dateInput: React.CSSProperties = {
   padding: '0.4rem 0.5rem', border: '1.5px solid #e5e7eb', borderRadius: '8px',
-  fontSize: '0.825rem', outline: 'none', width: '100%', boxSizing: 'border-box',
+  fontSize: '0.78rem', outline: 'none', width: '100%', boxSizing: 'border-box',
 };
 const actions: React.CSSProperties = { display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' };
 const clearBtn: React.CSSProperties = {
@@ -234,4 +263,7 @@ const applyBtn: React.CSSProperties = {
   padding: '0.4rem 0.875rem', border: 'none', borderRadius: '8px',
   cursor: 'pointer', backgroundColor: '#6b8c1f', color: '#fff',
   fontSize: '0.825rem', fontWeight: 700, transition: 'all 0.2s ease',
+};
+const applyBtnDisabled: React.CSSProperties = {
+  backgroundColor: '#e5e7eb', color: '#9ca3af', cursor: 'not-allowed',
 };

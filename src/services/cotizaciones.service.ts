@@ -4,6 +4,7 @@ export interface CotizacionListItem {
   id: string;
   numCotizacion: string | null;
   fecha: string | null;
+  marcaDeTiempo: string | null;
   medico: string | null;
   cirugia: string | null;
   status: string | null;
@@ -25,6 +26,7 @@ export interface CotizacionItem {
   valorUnitario: number | null;
   valor: number | null;
   observaciones: string | null;
+  esEspecial: boolean;
 }
 
 export interface RemisionAsociada {
@@ -33,8 +35,19 @@ export interface RemisionAsociada {
   estado: string | null;
 }
 
+// Una cotización se enlaza a lo más a una programación (Cotizacion.programacionId es un único
+// FK) — no a varias, aunque una misma programación sí pueda tener varias cotizaciones.
+export interface ProgramacionAsociada {
+  id: string;
+  numProgram: string | null;
+  fechaQx: string | null;
+  horaQx: string | null;
+  sede: string | null;
+  hospital: string | null;
+  medicos: string[];
+}
+
 export interface CotizacionDetail extends CotizacionListItem {
-  marcaDeTiempo: string | null;
   dirigidoA: string | null;
   hospitalId: string | null;
   empresaId: string | null;
@@ -62,6 +75,7 @@ export interface CotizacionDetail extends CotizacionListItem {
   firma: string | null;
   items: CotizacionItem[];
   remisionesAsociadas: RemisionAsociada[];
+  programacionAsociada: ProgramacionAsociada | null;
 }
 
 export interface TerceroOption {
@@ -135,6 +149,8 @@ export interface ProductoOption {
   referencia: string | null;
   sistema: string | null;
   precioSugerido: number | null;
+  referenciaEspecial: string | null;
+  nombreEspecial: string | null;
 }
 
 export interface PaqueteConsumoOption extends ProductoOption {
@@ -162,12 +178,16 @@ export interface CotizacionListResponse {
   totalPages: number;
 }
 
+export type CotizacionSortField = 'numCotizacion' | 'fecha' | 'marcaDeTiempo' | 'usuario' | 'hospital' | 'medico' | 'cirugia' | 'sede';
+
 export interface CotizacionQuery {
   page?: number;
   limit?: number;
   search?: string;
   dateFrom?: string;
   dateTo?: string;
+  sortBy?: CotizacionSortField;
+  sortOrder?: 'asc' | 'desc';
 }
 
 export const cotizacionesService = {
@@ -182,8 +202,8 @@ export const cotizacionesService = {
   createCotizacion: (payload: CreateCotizacionPayload): Promise<CotizacionDetail> =>
     api.post('/operacion/cotizaciones', payload).then(r => r.data),
 
-  searchProductos: (search?: string, cotizacionId?: string, tarifaId?: string): Promise<ProductoOption[]> =>
-    api.get('/operacion/cotizaciones/productos', { params: { ...(search ? { search } : {}), ...(cotizacionId ? { cotizacionId } : {}), ...(tarifaId ? { tarifaId } : {}) } }).then(r => r.data),
+  searchProductos: (search?: string, cotizacionId?: string, tarifaId?: string, hospitalId?: string): Promise<ProductoOption[]> =>
+    api.get('/operacion/cotizaciones/productos', { params: { ...(search ? { search } : {}), ...(cotizacionId ? { cotizacionId } : {}), ...(tarifaId ? { tarifaId } : {}), ...(hospitalId ? { hospitalId } : {}) } }).then(r => r.data),
 
   createItem: (cotizacionId: string, payload: CreateDetCotizaPayload) =>
     api.post(`/operacion/cotizaciones/${cotizacionId}/items`, payload).then(r => r.data),

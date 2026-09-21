@@ -23,10 +23,14 @@ export interface ListaPrecioListResponse {
   totalPages: number;
 }
 
+export type ListaPrecioSortField = 'subtarifa' | 'producto' | 'costoUtilidad' | 'porcentajeGanancia' | 'precio' | 'dependeDe' | 'formaActualizacion';
+
 export interface ListaPrecioQuery {
   page?: number;
   limit?: number;
   search?: string;
+  sortBy?: ListaPrecioSortField;
+  sortOrder?: 'asc' | 'desc';
 }
 
 export interface SubtarifaOption {

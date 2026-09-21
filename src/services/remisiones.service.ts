@@ -376,6 +376,7 @@ export interface UpdateRemisionPayload {
 
 export interface TecnicoSugeridoItem {
   id: string;
+  tecnicoId: string;
   fechaRegistro: string | null;
   tecnico: string | null;
   registradoPor: string | null;

@@ -1,16 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { Search, Bell, ChevronDown, LogOut, ClipboardList, FileText, Receipt, Loader, UserRound, Menu } from 'lucide-react';
+import { Search, Bell, ChevronDown, LogOut, ClipboardList, FileText, Receipt, Loader, UserRound, Menu, PenTool } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../../services/auth.service';
 import { busquedaGlobalService, type BusquedaGlobalResult } from '../../services/busquedaGlobal.service';
 import { notificacionesService, NOTIFICACIONES_PAGE_SIZE, type Notificacion } from '../../services/notificaciones.service';
 import SuccessToast from '../SuccessToast';
+import FirmaModal from './FirmaModal';
 import logo from '../../assets/luminar-logo-v1.png';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 
 // Cuánto se ve el toast de "Sesión cerrada" antes de mandar a /login — corto a propósito,
 // es solo una confirmación visual rápida, no hay nada más que esperar en esta pantalla.
 const LOGOUT_REDIRECT_DELAY_MS = 500;
+
+// Deja que la pantalla principal se termine de ver un momento antes de abrir el modal de firma
+// encima — si aparece apenas se monta el Header, se siente como un corte brusco justo llegando.
+const FIRMA_SETUP_DELAY_MS = 1100;
 
 const getInitials = (name: string): string => name.trim().slice(0, 2).toUpperCase();
 
@@ -25,13 +30,8 @@ const getShortName = (usuario: { nombreCompleto?: string; primerNombre?: string 
   return (usuario.nombreCompleto ?? '').trim().split(/\s+/).slice(0, 2).join(' ');
 };
 
-// Color del punto/tinte según el tipo de notificación — rojo si algo se rechazó, verde si se
-// aprobó, ámbar para lo pendiente/informativo. Los tipos nuevos que no estén aquí caen en gris.
-const NOTIF_TIPO_COLOR: Record<string, string> = {
-  SOLICITUD_PROGRAMACION_APROBADA: '#6b8c1f',
-  SOLICITUD_PROGRAMACION_RECHAZADA: '#dc2626',
-  SOLICITUD_PROGRAMACION_PENDIENTE: '#d97706',
-};
+// Color del punto/tinte según el tipo de notificación — los tipos que no estén aquí caen en gris.
+const NOTIF_TIPO_COLOR: Record<string, string> = {};
 const getNotifColor = (tipo: string): string => NOTIF_TIPO_COLOR[tipo] ?? '#6b7280';
 
 interface HeaderProps {
@@ -49,6 +49,8 @@ export default function Header({ onMenuClick }: HeaderProps) {
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [showLogoutToast, setShowLogoutToast] = useState(false);
   const [showWelcomeToast, setShowWelcomeToast] = useState(false);
+  const [firmaModal, setFirmaModal] = useState<'setup' | 'editar' | null>(null);
+  const [showFirmaGuardadaToast, setShowFirmaGuardadaToast] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchWrapRef = useRef<HTMLDivElement>(null);
@@ -68,12 +70,22 @@ export default function Header({ onMenuClick }: HeaderProps) {
 
   // Solo se muestra justo después de iniciar sesión (LoginPage deja la marca) — se borra apenas
   // se lee. El Header es parte del shell fijo (ver App.tsx/Layout.tsx) y monta una sola vez por
-  // sesión, así que este efecto corre una única vez, no en cada navegación.
+  // sesión, así que este efecto corre una única vez, no en cada navegación. Aprovecha esa misma
+  // marca para decidir si, además, toca ofrecer configurar la firma personal (ver
+  // FirmaModal) — así tampoco insiste en cada recarga de página, solo justo tras el login.
   useEffect(() => {
     if (sessionStorage.getItem('tspine_mostrar_bienvenida')) {
       sessionStorage.removeItem('tspine_mostrar_bienvenida');
       setShowWelcomeToast(true);
+      // Sin cleanup a propósito: en StrictMode (dev) React monta este efecto, lo limpia y lo
+      // vuelve a montar de inmediato para detectar bugs — si este timer se cancelara en esa
+      // limpieza simulada, nunca se reprogramaría en el segundo montaje real, porque para
+      // entonces la marca de sessionStorage ya se consumió (la quitó el primer paso). Vive con
+      // el riesgo mínimo de un setState sobre un Header ya desmontado de verdad (solo pasaría si
+      // el usuario cierra sesión en el primer segundo, y es inofensivo en producción).
+      if (!usuario.tieneFirma) setTimeout(() => setFirmaModal('setup'), FIRMA_SETUP_DELAY_MS);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // El contador (para el punto rojo) se revisa cada 60s sin importar si el desplegable está
@@ -428,14 +440,24 @@ export default function Header({ onMenuClick }: HeaderProps) {
                   </div>
                 </div>
               ) : (
-                <button
-                  style={styles.dropdownItem}
-                  onClick={() => setConfirmLogout(true)}
-                  onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#fef2f2'; }}
-                  onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-                >
-                  <LogOut size={16} /> Cerrar sesión
-                </button>
+                <>
+                  <button
+                    style={{ ...styles.dropdownItem, color: '#6a7c09' }}
+                    onClick={() => { closeMenu(); setFirmaModal('editar'); }}
+                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#e9f2d8'; }}
+                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                  >
+                    <PenTool size={16} /> Editar mi firma
+                  </button>
+                  <button
+                    style={styles.dropdownItem}
+                    onClick={() => setConfirmLogout(true)}
+                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#fef2f2'; }}
+                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                  >
+                    <LogOut size={16} /> Cerrar sesión
+                  </button>
+                </>
               )}
             </div>
           )}
@@ -456,6 +478,20 @@ export default function Header({ onMenuClick }: HeaderProps) {
         message={`¡Hola, ${getShortName(usuario)}!`}
         icon={<UserRound size={26} strokeWidth={2.2} />}
         onClose={() => setShowWelcomeToast(false)}
+      />
+      {firmaModal && (
+        <FirmaModal
+          modoEdicion={firmaModal === 'editar'}
+          onDone={guardada => {
+            setFirmaModal(null);
+            if (guardada) setShowFirmaGuardadaToast(true);
+          }}
+        />
+      )}
+      <SuccessToast
+        show={showFirmaGuardadaToast}
+        message="Firma guardada"
+        onClose={() => setShowFirmaGuardadaToast(false)}
       />
     </header>
   );
