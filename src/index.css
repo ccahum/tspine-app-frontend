@@ -42,6 +42,20 @@ button, input, select, textarea {
   font-family: inherit;
 }
 
+/* iOS/Android hacen zoom automático de toda la pantalla al enfocar un campo con font-size menor
+   a 16px — es lo que hacía "crecer" la pantalla en el buscador del header en móvil. En vez de
+   repetir el ajuste campo por campo en cada formulario de la app, se cubre una sola vez acá para
+   todos los inputs/selects/textareas. !important porque los campos siempre traen su font-size en
+   línea (style={{...}}), que le gana a cualquier regla externa sin !important. Se excluyen los
+   tipos donde el font-size no define el tamaño visible (checkbox, radio, range, color, file). */
+@media (max-width: 767px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 /* Los campos numéricos con stepper propio (botones +/-) no necesitan las flechas nativas del navegador. */
 input[type='number']::-webkit-inner-spin-button,
 input[type='number']::-webkit-outer-spin-button {

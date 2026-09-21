@@ -269,7 +269,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
               ref={searchInputRef}
               type="text"
               placeholder={isMobile ? 'Buscar...' : 'Buscar programación, remisión o técnico...'}
-              style={{ ...styles.searchInput, paddingRight: isMobile ? '2rem' : '3.25rem', ...(isMobile ? { fontSize: '16px' } : {}) }}
+              style={{ ...styles.searchInput, paddingRight: isMobile ? '2rem' : '3.25rem' }}
               value={query}
               onChange={e => setQuery(e.target.value)}
               onFocus={() => { if (query.trim().length >= 2) setSearchOpen(true); }}
