@@ -6,6 +6,32 @@ import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 import { validarPassword, evaluarPassword } from '../../lib/password.utils';
 import logo from '../../assets/luminar-logo-v1.png';
 import portada from '../../assets/luminar-login-wallpaper.jpg';
+import portada2 from '../../assets/luminar-login-wallpaper2.jpeg';
+import portada3 from '../../assets/luminar-login-wallpaper3.jpeg';
+
+// Carrusel del panel del login: una imagen + frase a la vez, con crossfade automático (ver
+// SLIDE_INTERVAL_MS más abajo) — se le agrega una entrada acá para sumar otra, sin quitar las que
+// ya había.
+const LOGIN_SLIDES = [
+  {
+    image: portada,
+    headline: 'Control total de tu operación quirúrgica.',
+    subtext: 'Programaciones, remisiones, inventario y finanzas en un solo lugar.',
+  },
+  {
+    image: portada2,
+    headline: 'Cada instrumento, cada consumo, con trazabilidad total.',
+    subtext: 'Del quirófano a la facturación, sin perder el rastro de nada.',
+  },
+  {
+    image: portada3,
+    headline: 'Menos papeleo, más cirugías atendidas.',
+    subtext: 'Automatiza remisiones, cotizaciones y cobros en minutos, no en días.',
+  },
+];
+const DEFAULT_SLIDE_INTERVAL_MS = 5000;
+const configuredSlideIntervalMs = Number(import.meta.env.LUMINAR_LOGIN_SLIDE_INTERVAL_MS);
+const SLIDE_INTERVAL_MS = configuredSlideIntervalMs > 0 ? configuredSlideIntervalMs : DEFAULT_SLIDE_INTERVAL_MS;
 
 type Step = 'CREDENCIALES' | 'CAMBIAR_PASSWORD' | 'CONFIGURAR_2FA' | 'VERIFICAR_2FA' | 'EXITO' | 'OLVIDE_PASSWORD';
 
@@ -113,6 +139,14 @@ export default function LoginPage() {
   const [verConfirmarPassword, setVerConfirmarPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [slideIndex, setSlideIndex] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setSlideIndex(i => (i + 1) % LOGIN_SLIDES.length);
+    }, SLIDE_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, []);
 
   // Si se llega acá con una sesión todavía activa (ej. el usuario le da "atrás" en el navegador
   // después de iniciar sesión), esa sesión se da por terminada — así, si después le da "adelante",
@@ -287,13 +321,26 @@ export default function LoginPage() {
       <div style={styles.card}>
         {!isMobile && (
           <div style={styles.imagePanel}>
+            {LOGIN_SLIDES.map((slide, i) => (
+              <div
+                key={slide.image}
+                style={{
+                  ...styles.imageBgLayer,
+                  backgroundImage: `linear-gradient(180deg, rgba(10,20,15,0.22) 0%, rgba(10,20,15,0.3) 45%, rgba(6,14,10,0.88) 100%), url(${slide.image})`,
+                  opacity: i === slideIndex ? 1 : 0,
+                }}
+              />
+            ))}
             <div style={styles.imageTextWrap}>
-              <div style={styles.imageTextBlock}>
-                <h2 style={styles.imageHeadline}>Control total de tu operación quirúrgica.</h2>
-                <p style={styles.imageSubtext}>
-                  Programaciones, remisiones, inventario y finanzas en un solo lugar.
-                </p>
+              <div key={slideIndex} className="login-slide-text-anim" style={styles.imageTextBlock}>
+                <h2 style={styles.imageHeadline}>{LOGIN_SLIDES[slideIndex].headline}</h2>
+                <p style={styles.imageSubtext}>{LOGIN_SLIDES[slideIndex].subtext}</p>
               </div>
+            </div>
+            <div style={styles.imageSlideDots}>
+              {LOGIN_SLIDES.map((slide, i) => (
+                <span key={slide.image} style={{ ...styles.imageSlideDot, ...(i === slideIndex ? styles.imageSlideDotActive : {}) }} />
+              ))}
             </div>
             <p style={styles.imageFooter}>© {new Date().getFullYear()} LUMINAR</p>
           </div>
@@ -561,22 +608,48 @@ const styles: Record<string, React.CSSProperties> = {
   imagePanel: {
     flex: '1 1 63%',
     position: 'relative' as const,
-    backgroundImage: `linear-gradient(180deg, rgba(10,20,15,0.22) 0%, rgba(10,20,15,0.3) 45%, rgba(6,14,10,0.88) 100%), url(${portada})`,
-    backgroundSize: 'cover',
-    // Todo el contenido de la foto está pegado al borde derecho (el resto es fondo negro) —
-    // ancla el recorte a la derecha para que "cover" nunca le quite nada a eso, solo recorte
-    // el negro vacío de la izquierda.
-    backgroundPosition: 'right center',
+    overflow: 'hidden' as const,
     display: 'flex',
     flexDirection: 'column' as const,
     justifyContent: 'space-between',
     padding: '2.25rem',
+  },
+  // Una capa por foto del carrusel, todas apiladas — el crossfade es solo animar su opacity
+  // (nunca hay que esperar a que una imagen nueva cargue de golpe, ambas ya están en el DOM).
+  imageBgLayer: {
+    position: 'absolute' as const,
+    inset: 0,
+    backgroundSize: 'cover',
+    // Todo el contenido de las fotos está pegado al borde derecho (el resto es fondo negro) —
+    // ancla el recorte a la derecha para que "cover" nunca le quite nada a eso, solo recorte
+    // el negro vacío de la izquierda.
+    backgroundPosition: 'right center',
+    transition: 'opacity 1.4s ease',
+  },
+  imageSlideDots: {
+    position: 'relative' as const,
+    zIndex: 1,
+    display: 'flex',
+    gap: '0.4rem',
+  },
+  imageSlideDot: {
+    width: '6px',
+    height: '6px',
+    borderRadius: '999px',
+    backgroundColor: 'rgba(255,255,255,0.35)',
+    transition: 'background-color 0.3s ease, width 0.3s ease',
+  },
+  imageSlideDotActive: {
+    width: '18px',
+    backgroundColor: '#fff',
   },
   imageLogo: {
     width: '150px',
     filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.35))',
   },
   imageTextWrap: {
+    position: 'relative' as const,
+    zIndex: 1,
     flex: '1 1 auto',
     display: 'flex',
     alignItems: 'center',
@@ -601,6 +674,8 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: '360px',
   },
   imageFooter: {
+    position: 'relative' as const,
+    zIndex: 1,
     fontSize: '0.62rem',
     fontWeight: 400,
     color: 'rgba(255,255,255,0.65)',

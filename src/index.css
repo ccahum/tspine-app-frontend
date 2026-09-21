@@ -258,6 +258,16 @@ body {
   animation: page-content-fade-in 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* Frase del carrusel del login: la key={slideIndex} en LoginPage.tsx remonta este bloque en
+   cada cambio de slide, así que esta animación se dispara de nuevo cada vez (no solo al montar). */
+@keyframes login-slide-text-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.login-slide-text-anim {
+  animation: login-slide-text-in 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 @keyframes app-fade-out {
   to { opacity: 0; }
 }
