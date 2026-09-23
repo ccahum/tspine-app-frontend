@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ThumbsUp, ThumbsDown, ChevronRight } from 'lucide-react';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
+import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import SuccessToast from '../../../components/SuccessToast';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
+import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import {
   autorizacionConsumosService,
   type EstadoAutorizacion,
@@ -77,6 +79,7 @@ function RechazarModal({ item, onCancel, onConfirm, submitting }: {
 
 export default function AutorizacionConsumosPage() {
   const navigate = useNavigateWithLoading();
+  const { isMobile } = useResponsiveStyles();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<TabKey>('PENDIENTE');
   const [page, setPage] = useState(1);
@@ -131,20 +134,17 @@ export default function AutorizacionConsumosPage() {
   return (
     <>
       <div style={styles.pageWrapper}>
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          style={styles.backLink}
-          onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}
-        >
-          <MaterialIcon name="arrow_back" size={16} />
-          Volver
-        </button>
-
         <div style={{ ...styles.contentCard, ...(isStuck ? styles.contentCardStuck : {}) }}>
           <div style={styles.header}>
-            <h1 style={styles.title}>Autorización de Consumos</h1>
+            <HeaderBackReveal
+              onBack={() => navigate(-1)}
+              icon={<MaterialIcon name="fact_check" size={26} color="#4d7a13" />}
+              size={50}
+              badgeRadius={16}
+              mobileIconAsBack={isMobile}
+            >
+              <h1 style={styles.title}>Autorización de Consumos</h1>
+            </HeaderBackReveal>
           </div>
 
           <div style={styles.tabs}>

@@ -543,6 +543,7 @@ export default function UsuariosAdminPage() {
               icon={<MaterialIcon name="person" size={26} color="#4d7a13" />}
               size={50}
               badgeRadius={16}
+              mobileIconAsBack={isMobile}
             >
               <h1 style={styles.title}>Usuarios</h1>
             </HeaderBackReveal>

@@ -1314,6 +1314,7 @@ export default function TercerosAdminPage() {
               icon={<MaterialIcon name="groups" size={26} color="#4d7a13" />}
               size={50}
               badgeRadius={16}
+              mobileIconAsBack={isMobile}
             >
               <h1 style={styles.title}>Terceros</h1>
             </HeaderBackReveal>

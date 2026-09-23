@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, memo } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Search, ChevronDown, Check, Plus, X } from 'lucide-react';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
+import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import DateRangeFilter from '../../../components/filters/DateRangeFilter';
 import { remisionesService, ESTADOS_REMISION, type RemisionListItem, type RemisionListResponse } from '../../../services/remisiones.service';
 import { programacionesService, type ProgramacionItem } from '../../../services/programaciones.service';
@@ -303,20 +304,17 @@ export default function RemisionesPage() {
   return (
     <>
       <div style={styles.pageWrapper}>
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          style={styles.backLink}
-          onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}
-        >
-          <MaterialIcon name="arrow_back" size={16} />
-          Volver
-        </button>
-
         <div style={{ ...styles.contentCard, ...(isStuck ? styles.contentCardStuck : {}) }}>
           <div style={styles.header}>
-            <h1 style={styles.title}>Remisiones</h1>
+            <HeaderBackReveal
+              onBack={() => navigate(-1)}
+              icon={<MaterialIcon name="receipt_long" size={26} color="#4d7a13" />}
+              size={50}
+              badgeRadius={16}
+              mobileIconAsBack={isMobile}
+            >
+              <h1 style={styles.title}>Remisiones</h1>
+            </HeaderBackReveal>
           </div>
 
           <div style={styles.tabsRow}>

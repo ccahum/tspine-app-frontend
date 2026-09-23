@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { UserCog, Users, Contact } from 'lucide-react';
-import { MaterialIcon } from '../../components/icons/MaterialIcon';
+import HeaderBackReveal from '../../components/HeaderBackReveal';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 import { useNavigateWithLoading } from '../../hooks/useNavigateWithLoading';
 
@@ -40,25 +40,19 @@ export default function AdministracionPage() {
 
   return (
       <div style={{ ...styles.container, paddingLeft: isMobile ? '1rem' : '2rem', paddingRight: isMobile ? '1rem' : '2rem' }}>
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          style={styles.backLink}
-          onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}
-        >
-          <MaterialIcon name="arrow_back" size={16} />
-          Volver
-        </button>
-
         <div style={styles.header}>
-          <div style={styles.headerIconWrap}>
-            <UserCog size={30} color={ACCENT} />
-          </div>
-          <div>
-            <h1 style={styles.headerTitle}>Administración</h1>
-            <p style={styles.headerSub}>{submodules.length} submódulos disponibles</p>
-          </div>
+          <HeaderBackReveal
+            onBack={() => navigate(-1)}
+            icon={<UserCog size={30} color={ACCENT} />}
+            size={64}
+            badgeRadius={16}
+            mobileIconAsBack={isMobile}
+          >
+            <div>
+              <h1 style={styles.headerTitle}>Administración</h1>
+              <p style={styles.headerSub}>{submodules.length} submódulos disponibles</p>
+            </div>
+          </HeaderBackReveal>
         </div>
 
         <div style={{ ...styles.grid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(240px, 1fr))' }}>
