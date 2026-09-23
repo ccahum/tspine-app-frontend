@@ -115,15 +115,20 @@ function DetalleModal({ item, onClose, onUpdated, onDeleted }: {
 
   const [productoId, setProductoId] = useState(item.productoId ?? '');
   const [productoLabel, setProductoLabel] = useState(productoLabelOf(item));
+  const [productoReferencia, setProductoReferencia] = useState(item.productoReferencia ?? '');
   const [contactoId, setContactoId] = useState(item.contactoId ?? '');
   const [contactoLabel, setContactoLabel] = useState(item.contacto ?? '');
   const [precio, setPrecio] = useState(item.precio !== null ? String(item.precio) : '');
   const [notas, setNotas] = useState(item.notas ?? '');
   const [error, setError] = useState<{ field: string; message: string } | null>(null);
+  // Igual que BUSCABLE = CONCATENATE([CONTACTO],[PRODUCTO]) en AppSheet — mismo formato que ya
+  // calcula el backend (mapPrecioEspecial), solo que en vivo mientras se edita, antes de guardar.
+  const buscablePreview = `${contactoLabel}${productoReferencia}`;
 
   const startEditing = () => {
     setProductoId(item.productoId ?? '');
     setProductoLabel(productoLabelOf(item));
+    setProductoReferencia(item.productoReferencia ?? '');
     setContactoId(item.contactoId ?? '');
     setContactoLabel(item.contacto ?? '');
     setPrecio(item.precio !== null ? String(item.precio) : '');
@@ -180,7 +185,7 @@ function DetalleModal({ item, onClose, onUpdated, onDeleted }: {
   }, [error]);
 
   return (
-    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
+    <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Precio Especial</h2>
@@ -242,7 +247,7 @@ function DetalleModal({ item, onClose, onUpdated, onDeleted }: {
                 error={error?.field === 'producto'}
                 valueId={productoId}
                 valueLabel={productoLabel}
-                onSelect={(id, label) => { setProductoId(id); setProductoLabel(label); setError(null); }}
+                onSelect={(id, label, referencia) => { setProductoId(id); setProductoLabel(label); setProductoReferencia(referencia ?? ''); setError(null); }}
               />
               {error?.field === 'producto' && <span style={styles.errorText}>{error.message}</span>}
 
@@ -254,6 +259,11 @@ function DetalleModal({ item, onClose, onUpdated, onDeleted }: {
                 onSelect={(id, label) => { setContactoId(id); setContactoLabel(label); setError(null); }}
               />
               {error?.field === 'contacto' && <span style={styles.errorText}>{error.message}</span>}
+
+              <div style={styles.formGroup}>
+                <label style={styles.formLabel}>Buscable</label>
+                <span style={styles.readOnlyField}>{buscablePreview || '-'}</span>
+              </div>
 
               <div style={styles.formGroup} id="precio-especial-field-precio">
                 <label style={styles.formLabel}>Precio *</label>
@@ -295,6 +305,7 @@ function DetalleModal({ item, onClose, onUpdated, onDeleted }: {
                 {item.productoNombre && <> / {item.productoNombre}</>}
               </DetalleRow>
               <DetalleRow label="Contacto">{item.contacto ?? '-'}</DetalleRow>
+              <DetalleRow label="Buscable">{item.buscable || '-'}</DetalleRow>
               <DetalleRow label="Precio">
                 <span style={{ fontWeight: 700 }}>{formatMoney(item.precio)}</span>
               </DetalleRow>
@@ -312,15 +323,19 @@ function DetalleModal({ item, onClose, onUpdated, onDeleted }: {
 function ProductoPicker({ valueId, valueLabel, onSelect, id, error }: {
   valueId: string;
   valueLabel: string;
-  onSelect: (id: string, label: string) => void;
+  // El tercer argumento (referencia cruda, sin combinar con el nombre) es lo que necesita el
+  // padre para armar la vista previa de "Buscable" (= contacto + referencia, igual que en
+  // AppSheet) — valueLabel ya trae "referencia / nombre" combinados, no sirve para eso.
+  onSelect: (id: string, label: string, referencia: string | null) => void;
   id?: string;
   error?: boolean;
 }) {
   const [search, setSearch] = useState('');
+  const [focused, setFocused] = useState(false);
   const { data: results = [] } = useQuery<ProductoOption[]>({
     queryKey: ['precios-especiales-productos', search],
     queryFn: () => preciosEspecialesService.searchProductos(search),
-    enabled: !!search.trim(),
+    enabled: focused,
   });
 
   return (
@@ -329,7 +344,7 @@ function ProductoPicker({ valueId, valueLabel, onSelect, id, error }: {
       {valueId ? (
         <span style={styles.selectedTag}>
           {valueLabel}
-          <X size={12} style={{ cursor: 'pointer' }} onClick={() => onSelect('', '')} />
+          <X size={12} style={{ cursor: 'pointer' }} onClick={() => onSelect('', '', null)} />
         </span>
       ) : (
         <div style={{ position: 'relative' as const }}>
@@ -338,8 +353,10 @@ function ProductoPicker({ valueId, valueLabel, onSelect, id, error }: {
             placeholder="Buscar producto..."
             value={search}
             onChange={e => setSearch(e.target.value)}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setTimeout(() => setFocused(false), 150)}
           />
-          {search.trim() && (
+          {focused && (
             <div style={styles.dropdown}>
               {results.length === 0 ? (
                 <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
@@ -348,7 +365,7 @@ function ProductoPicker({ valueId, valueLabel, onSelect, id, error }: {
                   <div
                     key={p.id}
                     style={styles.dropdownItem}
-                    onClick={() => { onSelect(p.id, [p.referencia, p.nombre].filter(Boolean).join(' / ')); setSearch(''); }}
+                    onClick={() => { onSelect(p.id, [p.referencia, p.nombre].filter(Boolean).join(' / '), p.referencia); setSearch(''); }}
                   >
                     {p.referencia && <span style={styles.productoCode}>{p.referencia}</span>}
                     {p.nombre && <span style={{ marginLeft: p.referencia ? '0.4rem' : 0 }}>{p.nombre}</span>}
@@ -371,10 +388,11 @@ function ContactoPicker({ valueId, valueLabel, onSelect, id, error }: {
   error?: boolean;
 }) {
   const [search, setSearch] = useState('');
+  const [focused, setFocused] = useState(false);
   const { data: results = [] } = useQuery<ContactoOption[]>({
     queryKey: ['precios-especiales-contactos', search],
     queryFn: () => preciosEspecialesService.searchContactos(search),
-    enabled: !!search.trim(),
+    enabled: focused,
   });
 
   return (
@@ -392,8 +410,10 @@ function ContactoPicker({ valueId, valueLabel, onSelect, id, error }: {
             placeholder="Buscar contacto..."
             value={search}
             onChange={e => setSearch(e.target.value)}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setTimeout(() => setFocused(false), 150)}
           />
-          {search.trim() && (
+          {focused && (
             <div style={styles.dropdown}>
               {results.length === 0 ? (
                 <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
@@ -419,11 +439,14 @@ function NuevoPrecioEspecialModal({ onClose, onCreated }: {
   const queryClient = useQueryClient();
   const [productoId, setProductoId] = useState('');
   const [productoLabel, setProductoLabel] = useState('');
+  const [productoReferencia, setProductoReferencia] = useState('');
   const [contactoId, setContactoId] = useState('');
   const [contactoLabel, setContactoLabel] = useState('');
   const [precio, setPrecio] = useState('');
   const [notas, setNotas] = useState('');
   const [error, setError] = useState<{ field: string; message: string } | null>(null);
+  // Igual que BUSCABLE = CONCATENATE([CONTACTO],[PRODUCTO]) en AppSheet.
+  const buscablePreview = `${contactoLabel}${productoReferencia}`;
 
   const createMutation = useMutation({
     mutationFn: () => preciosEspecialesService.createPrecioEspecial({
@@ -452,7 +475,7 @@ function NuevoPrecioEspecialModal({ onClose, onCreated }: {
   }, [error]);
 
   return (
-    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
+    <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Nuevo precio especial</h2>
@@ -466,7 +489,7 @@ function NuevoPrecioEspecialModal({ onClose, onCreated }: {
             error={error?.field === 'producto'}
             valueId={productoId}
             valueLabel={productoLabel}
-            onSelect={(id, label) => { setProductoId(id); setProductoLabel(label); setError(null); }}
+            onSelect={(id, label, referencia) => { setProductoId(id); setProductoLabel(label); setProductoReferencia(referencia ?? ''); setError(null); }}
           />
           {error?.field === 'producto' && <span style={styles.errorText}>{error.message}</span>}
 
@@ -478,6 +501,11 @@ function NuevoPrecioEspecialModal({ onClose, onCreated }: {
             onSelect={(id, label) => { setContactoId(id); setContactoLabel(label); setError(null); }}
           />
           {error?.field === 'contacto' && <span style={styles.errorText}>{error.message}</span>}
+
+          <div style={styles.formGroup}>
+            <label style={styles.formLabel}>Buscable</label>
+            <span style={styles.readOnlyField}>{buscablePreview || '-'}</span>
+          </div>
 
           <div style={styles.formGroup} id="precio-especial-field-precio">
             <label style={styles.formLabel}>Precio *</label>
@@ -701,6 +729,7 @@ const styles: Record<string, React.CSSProperties> = {
   formGroup: { display: 'flex', flexDirection: 'column' as const, gap: '0.4rem' },
   formLabel: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
   formInput: { padding: '0.55rem 0.7rem', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '0.85rem', outline: 'none', fontFamily: 'inherit', backgroundColor: '#fff', width: '100%', boxSizing: 'border-box' as const },
+  readOnlyField: { display: 'block', padding: '0.55rem 0.7rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', fontSize: '0.85rem', color: '#6b7280', width: '100%', boxSizing: 'border-box' as const },
   inputError: { borderColor: '#dc2626' },
   errorText: { fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 },
   formActions: { display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' },
@@ -713,7 +742,10 @@ const styles: Record<string, React.CSSProperties> = {
   moreMenuItem: { display: 'flex', alignItems: 'center', gap: '0.6rem', width: '100%', padding: '0.6rem 0.75rem', border: 'none', borderRadius: '6px', backgroundColor: 'transparent', cursor: 'pointer', fontSize: '0.84375rem', color: '#33342a', fontWeight: 600, textAlign: 'left' as const },
   moreMenuItemDanger: { color: '#c65b3f' },
   moreMenuDivider: { height: '1px', backgroundColor: '#eeeee6', margin: '0.3rem 0' },
-  selectedTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#f3f4f6', color: '#333', fontSize: '0.8rem', fontWeight: 600, width: 'fit-content' as const },
+  // Mismo estilo que medicoTag en Cotizaciones/Programaciones — la píldora verde es el formato
+  // ya establecido en toda la app para un valor elegido en un picker de formulario (con su X para
+  // quitarlo), no el gris genérico que tenía esto antes.
+  selectedTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510', fontSize: '0.8rem', fontWeight: 600, width: 'fit-content' as const },
   dropdown: { position: 'absolute' as const, top: 'calc(100% + 0.35rem)', left: 0, right: 0, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', maxHeight: '220px', overflowY: 'auto' as const, zIndex: 20 },
   dropdownItem: { padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#333', cursor: 'pointer' },
   stepperWrap: { position: 'relative' as const },

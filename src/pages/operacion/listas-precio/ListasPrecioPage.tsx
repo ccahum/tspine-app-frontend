@@ -127,11 +127,16 @@ function SubtarifaPicker({ valueId, valueLabel, onSelect, id, error }: {
   error?: boolean;
 }) {
   const [search, setSearch] = useState('');
+  const [focused, setFocused] = useState(false);
   const { data: results = [] } = useQuery<SubtarifaOption[]>({
     queryKey: ['listas-precio-subtarifas', search],
     queryFn: () => listasPrecioService.searchSubtarifas(search),
-    enabled: !!search.trim(),
+    enabled: focused,
   });
+  // El backend ordena por "orden" (un orden manual propio de otras vistas) — acá se reordena
+  // alfabéticamente porque es justo lo que se necesita al abrir el campo sin haber escrito nada:
+  // ver de un vistazo todas las subtarifas disponibles, de la A a la Z.
+  const resultsOrdenados = [...results].sort((a, b) => (a.nombre ?? '').localeCompare(b.nombre ?? ''));
 
   return (
     <div style={styles.formGroup} id={id}>
@@ -148,13 +153,15 @@ function SubtarifaPicker({ valueId, valueLabel, onSelect, id, error }: {
             placeholder="Buscar subtarifa..."
             value={search}
             onChange={e => setSearch(e.target.value)}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setTimeout(() => setFocused(false), 150)}
           />
-          {search.trim() && (
+          {focused && (
             <div style={styles.dropdown}>
-              {results.length === 0 ? (
+              {resultsOrdenados.length === 0 ? (
                 <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
               ) : (
-                results.map(s => (
+                resultsOrdenados.map(s => (
                   <div key={s.id} style={styles.dropdownItem} onClick={() => { onSelect(s); setSearch(''); }}>
                     {s.nombre}
                   </div>
@@ -176,10 +183,11 @@ function ProductoPicker({ valueId, valueLabel, onSelect, id, error }: {
   error?: boolean;
 }) {
   const [search, setSearch] = useState('');
+  const [focused, setFocused] = useState(false);
   const { data: results = [] } = useQuery<ProductoOption[]>({
     queryKey: ['listas-precio-productos', search],
     queryFn: () => listasPrecioService.searchProductos(search),
-    enabled: !!search.trim(),
+    enabled: focused,
   });
 
   return (
@@ -197,8 +205,10 @@ function ProductoPicker({ valueId, valueLabel, onSelect, id, error }: {
             placeholder="Buscar producto..."
             value={search}
             onChange={e => setSearch(e.target.value)}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setTimeout(() => setFocused(false), 150)}
           />
-          {search.trim() && (
+          {focused && (
             <div style={styles.dropdown}>
               {results.length === 0 ? (
                 <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
@@ -335,7 +345,7 @@ function DetalleModal({ item, onClose, onUpdated, onDeleted }: {
   }, [error]);
 
   return (
-    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
+    <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>{editing ? 'Editar lista de Precio' : 'Lista de Precio'}</h2>
@@ -616,7 +626,7 @@ function NuevaListaPrecioModal({ onClose, onCreated }: {
   }, [error]);
 
   return (
-    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
+    <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Nueva lista de precio</h2>
@@ -1033,7 +1043,9 @@ const styles: Record<string, React.CSSProperties> = {
   saveBtn: { padding: '0.5rem 1.25rem', backgroundColor: '#6b8c1f', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' },
   deleteBtn: { padding: '0.5rem 1.25rem', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' },
   confirmBox: { display: 'flex', flexDirection: 'column' as const, gap: '1rem', padding: '1rem', backgroundColor: '#fdf0ec', border: '1px solid #f3cfc2', borderRadius: '10px' },
-  selectedTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#f3f4f6', color: '#333', fontSize: '0.8rem', fontWeight: 600, width: 'fit-content' as const },
+  // Mismo estilo que medicoTag en Cotizaciones/Programaciones — píldora verde, el formato ya
+  // establecido en toda la app para un valor elegido en un picker de formulario.
+  selectedTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510', fontSize: '0.8rem', fontWeight: 600, width: 'fit-content' as const },
   dropdown: { position: 'absolute' as const, top: 'calc(100% + 0.35rem)', left: 0, right: 0, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', maxHeight: '220px', overflowY: 'auto' as const, zIndex: 20 },
   dropdownItem: { padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#333', cursor: 'pointer' },
   stepperWrap: { position: 'relative' as const },
@@ -1043,7 +1055,10 @@ const styles: Record<string, React.CSSProperties> = {
   pickBtnGrid: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.5rem' },
   pickBtn: { padding: '0.5rem 0.9rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', color: '#374151', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer', outline: 'none' },
   pickBtnActive: { backgroundColor: '#6b8c1f', borderColor: '#6b8c1f', color: '#fff' },
-  readOnlyField: { padding: '0.55rem 0.7rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', fontSize: '0.85rem', color: '#6b7280', width: 'fit-content' as const },
+  // width:100% (en vez de fit-content) para que ocupe el mismo ancho que cualquier input del
+  // formulario — con fit-content, un texto largo como "Selecciona primero la subtarifa" quedaba
+  // en una caja angosta que no alineaba con el resto de los campos, en vez de una fila completa.
+  readOnlyField: { display: 'block', padding: '0.55rem 0.7rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', fontSize: '0.85rem', color: '#6b7280', width: '100%', boxSizing: 'border-box' as const },
   iconMenuBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '34px', height: '34px', border: '1px solid #e5e7eb', borderRadius: '999px', cursor: 'pointer', color: '#33342a', flexShrink: 0, backgroundColor: 'transparent' },
   moreMenu: { position: 'absolute' as const, top: 'calc(100% + 8px)', right: 0, backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: '180px', overflow: 'hidden', zIndex: 200, padding: '0.35rem' },
   moreMenuItem: { display: 'flex', alignItems: 'center', gap: '0.6rem', width: '100%', padding: '0.6rem 0.75rem', border: 'none', borderRadius: '6px', backgroundColor: 'transparent', cursor: 'pointer', fontSize: '0.84375rem', color: '#33342a', fontWeight: 600, textAlign: 'left' as const },
