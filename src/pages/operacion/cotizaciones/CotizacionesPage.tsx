@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, memo } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
@@ -13,6 +14,7 @@ import fondoCotizacionNeurotecUrl from '../../../assets/cotización-neurotec.png
 import fondoCotizacionVermedUrl from '../../../assets/cotización-vermed.png';
 import iso9001Url from '../../../assets/iso9001.jpg';
 import DateRangeFilter from '../../../components/filters/DateRangeFilter';
+import DatePicker from '../../../components/DatePicker';
 import SuccessToast from '../../../components/SuccessToast';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import HeaderBackReveal from '../../../components/HeaderBackReveal';
@@ -72,6 +74,19 @@ const CUBRIMIENTO_TO_CLASIFICACION: Record<string, string> = {
 const sanitizeCirugiaDirigido = (value: string): string =>
   value.replace(/[^A-Za-z0-9À-ÿ .,'-]/g, '').replace(/^ +/, '');
 
+// Igual que sanitizeCirugiaDirigido pero permitiendo saltos de línea — para Observaciones, que a
+// diferencia de esos otros campos sí es un campo de notas libres de varias líneas.
+const sanitizeObservaciones = (value: string): string =>
+  value.replace(/[^A-Za-z0-9À-ÿ .,'\n-]/g, '').replace(/^ +/, '');
+
+// Alto automático según el contenido (sin scrollbar propio) — mismo patrón que ya usan
+// Programaciones/Terceros/Remisiones para sus campos de Observaciones.
+const autoResizeTextarea = (el: HTMLTextAreaElement | null) => {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = `${el.scrollHeight}px`;
+};
+
 /** Input con sanitización (sanitizeCirugiaDirigido/similares) que no interfiere con la
  * composición de teclas muertas de acentos en macOS — chequear `e.nativeEvent.isComposing` en
  * cada tecla no es confiable en Safari (se quedaba bloqueando el acento); acá se rastrea el
@@ -86,6 +101,30 @@ function SanitizedInput({ value, onChange, sanitize, ...rest }: {
     <input
       {...rest}
       value={value}
+      onCompositionStart={() => { composingRef.current = true; }}
+      onCompositionEnd={e => { composingRef.current = false; onChange(sanitize(e.currentTarget.value)); }}
+      onChange={e => { if (composingRef.current) return; onChange(sanitize(e.target.value)); }}
+    />
+  );
+}
+
+/** Igual que SanitizedInput pero para campos de varias líneas (Observaciones) — mismo manejo de
+ * composición de acentos, más el auto-resize según el contenido que ya usan estos campos en el
+ * resto de la app. */
+function SanitizedTextarea({ value, onChange, sanitize, style, ...rest }: {
+  value: string;
+  onChange: (value: string) => void;
+  sanitize: (value: string) => string;
+} & Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange'>) {
+  const composingRef = useRef(false);
+  const elRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => { autoResizeTextarea(elRef.current); }, [value]);
+  return (
+    <textarea
+      {...rest}
+      ref={elRef}
+      value={value}
+      style={{ ...style, minHeight: '44px', resize: 'none' as const, overflow: 'hidden' as const }}
       onCompositionStart={() => { composingRef.current = true; }}
       onCompositionEnd={e => { composingRef.current = false; onChange(sanitize(e.currentTarget.value)); }}
       onChange={e => { if (composingRef.current) return; onChange(sanitize(e.target.value)); }}
@@ -777,7 +816,7 @@ async function enviarCotizacionPorWhatsapp(data: CotizacionDetail): Promise<Resu
   return 'respaldo';
 }
 
-const CotizacionRow = memo(({ item, index, onSelect }: { item: CotizacionListItem; index: number; onSelect: (id: string) => void }) => (
+const CotizacionRow = memo(({ item, index, onSelect, compact }: { item: CotizacionListItem; index: number; onSelect: (id: string) => void; compact?: boolean }) => (
   <tr
     style={styles.tr}
     onClick={() => onSelect(item.id)}
@@ -789,12 +828,12 @@ const CotizacionRow = memo(({ item, index, onSelect }: { item: CotizacionListIte
       <span style={styles.idCode}>{item.numCotizacion || item.id}</span>
     </td>
     <td style={{ ...styles.td, paddingRight: '0.3rem' }}>{formatDate(item.fecha)}</td>
-    <td style={{ ...styles.td, whiteSpace: 'nowrap' as const, color: '#6b6b60' }}>{formatDateTime(item.marcaDeTiempo)}</td>
-    <td style={{ ...styles.td, paddingLeft: '0.3rem' }}>{item.usuario ?? '-'}</td>
+    {!compact && <td style={{ ...styles.td, whiteSpace: 'nowrap' as const, color: '#6b6b60' }}>{formatDateTime(item.marcaDeTiempo)}</td>}
+    {!compact && <td style={{ ...styles.td, paddingLeft: '0.3rem', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.usuario ?? '-'}</td>}
     <td style={{ ...styles.td, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.hospital ?? '-'}</td>
     <td style={{ ...styles.td, maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.medico ?? '-'}</td>
     <td style={{ ...styles.td, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, color: '#6b6b60' }}>{item.cirugia ?? '-'}</td>
-    <td style={styles.td}>{item.sede ?? '-'}</td>
+    {!compact && <td style={styles.td}>{item.sede ?? '-'}</td>}
     <td style={{ ...styles.td, fontWeight: 700, color: '#3f6510', whiteSpace: 'nowrap' as const }}>{formatMoney(item.total)}</td>
   </tr>
 ));
@@ -1030,7 +1069,7 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem,
 
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Observaciones</label>
-              <SanitizedInput style={styles.formInput} value={form.observaciones} sanitize={sanitizeCirugiaDirigido} onChange={observaciones => setForm({ ...form, observaciones })} />
+              <SanitizedTextarea style={styles.formInput} value={form.observaciones} sanitize={sanitizeObservaciones} onChange={observaciones => setForm({ ...form, observaciones })} />
             </div>
 
             {error && <span style={styles.errorText}>{error}</span>}
@@ -1231,7 +1270,7 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, hospitalId, items, onSelectI
 
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Observaciones</label>
-              <SanitizedInput style={styles.formInput} value={form.observaciones} sanitize={sanitizeCirugiaDirigido} onChange={observaciones => setForm({ ...form, observaciones })} />
+              <SanitizedTextarea style={styles.formInput} value={form.observaciones} sanitize={sanitizeObservaciones} onChange={observaciones => setForm({ ...form, observaciones })} />
             </div>
 
             {error && <span style={styles.errorText}>{error}</span>}
@@ -1537,7 +1576,7 @@ function StagedItemDetailModal({ item, tarifaId, hospitalId, onClose, onSave, on
 
               <div style={styles.formGroup}>
                 <label style={styles.formLabel}>Observaciones</label>
-                <SanitizedInput style={styles.formInput} value={form.observaciones} sanitize={sanitizeCirugiaDirigido} onChange={observaciones => setForm({ ...form, observaciones })} />
+                <SanitizedTextarea style={styles.formInput} value={form.observaciones} sanitize={sanitizeObservaciones} onChange={observaciones => setForm({ ...form, observaciones })} />
               </div>
 
               {error && <span style={styles.errorText}>{error}</span>}
@@ -1937,9 +1976,45 @@ function ListPicker({ label, required, options, valueId, valueLabel, onSelect, i
 }) {
   const [search, setSearch] = useState('');
   const [focused, setFocused] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number }>({ top: 0, left: 0, width: 0, maxHeight: 220 });
+  const triggerRef = useRef<HTMLInputElement>(null);
   const filtered = search.trim()
     ? options.filter(o => (o.nombre ?? '').toLowerCase().includes(search.trim().toLowerCase()))
     : options;
+
+  // El dropdown se porta a document.body (mismo patrón que DatePicker) en vez de quedar como
+  // position:absolute dentro del formulario — si no, el overflow:auto del modal lo recortaba.
+  // Pero portarlo sin más lo hacía verse "flotando" fuera de la tarjeta del modal cuando el campo
+  // caía cerca de su borde inferior — acá se limita al área visible de la tarjeta (no del
+  // viewport completo): si no cabe abajo, se abre hacia arriba, y su alto máximo se ajusta al
+  // espacio real disponible para que nunca se salga de la tarjeta en ninguna dirección.
+  useLayoutEffect(() => {
+    if (!focused) return;
+    const reposition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const modalRect = triggerRef.current?.closest<HTMLElement>('.modal-content-anim')?.getBoundingClientRect();
+      const bound = modalRect ?? { top: 0, bottom: window.innerHeight };
+      const spaceBelow = bound.bottom - rect.bottom - 6;
+      const spaceAbove = rect.top - bound.top - 6;
+      const openAbove = spaceBelow < 140 && spaceAbove > spaceBelow;
+      const maxHeight = Math.max(90, Math.min(220, openAbove ? spaceAbove : spaceBelow));
+      setMenuPos({
+        top: openAbove ? undefined : rect.bottom + 6,
+        bottom: openAbove ? window.innerHeight - rect.top + 6 : undefined,
+        left: rect.left,
+        width: rect.width,
+        maxHeight,
+      });
+    };
+    reposition();
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [focused]);
 
   return (
     <div style={styles.formGroup} id={id}>
@@ -1956,6 +2031,7 @@ function ListPicker({ label, required, options, valueId, valueLabel, onSelect, i
       ) : (
         <div style={{ position: 'relative' as const }}>
           <input
+            ref={triggerRef}
             style={{ ...styles.formInput, ...(error ? styles.inputError : {}) }}
             placeholder={`Buscar ${label.toLowerCase()}...`}
             value={search}
@@ -1963,8 +2039,8 @@ function ListPicker({ label, required, options, valueId, valueLabel, onSelect, i
             onFocus={() => setFocused(true)}
             onBlur={() => setTimeout(() => setFocused(false), 150)}
           />
-          {focused && (
-            <div style={styles.medicoDropdown}>
+          {focused && createPortal(
+            <div style={{ ...styles.medicoDropdown, position: 'fixed' as const, top: menuPos.top, bottom: menuPos.bottom, left: menuPos.left, width: menuPos.width, maxHeight: menuPos.maxHeight, right: 'auto' as const, zIndex: 10050 }}>
               {filtered.length === 0 ? (
                 <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
               ) : (
@@ -1974,7 +2050,8 @@ function ListPicker({ label, required, options, valueId, valueLabel, onSelect, i
                   </div>
                 ))
               )}
-            </div>
+            </div>,
+            document.body,
           )}
         </div>
       )}
@@ -2211,7 +2288,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-fecha">
         <label style={styles.formLabel}>Fecha *</label>
-        <input type="date" style={{ ...styles.formInput, ...(error?.field === 'fecha' ? styles.inputError : {}) }} value={form.fecha} onChange={e => { setForm({ ...form, fecha: e.target.value }); setError(null); }} />
+        <DatePicker error={error?.field === 'fecha'} value={form.fecha} onChange={fecha => { setForm({ ...form, fecha }); setError(null); }} />
         {error?.field === 'fecha' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -2340,7 +2417,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup}>
         <label style={styles.formLabel}>Observaciones</label>
-        <SanitizedInput style={styles.formInput} value={form.observaciones} sanitize={sanitizeCirugiaDirigido} onChange={observaciones => setForm({ ...form, observaciones })} />
+        <SanitizedTextarea style={styles.formInput} value={form.observaciones} sanitize={sanitizeObservaciones} onChange={observaciones => setForm({ ...form, observaciones })} />
       </div>
 
       <ListPicker
@@ -2889,7 +2966,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-fecha">
               <label style={styles.formLabel}>Fecha *</label>
-              <input type="date" min={toLocalDateString(new Date())} style={{ ...styles.formInput, ...(error?.field === 'fecha' ? styles.inputError : {}) }} value={form.fecha} onChange={e => { setForm({ ...form, fecha: e.target.value }); setError(null); }} />
+              <DatePicker min={toLocalDateString(new Date())} error={error?.field === 'fecha'} value={form.fecha} onChange={fecha => { setForm({ ...form, fecha }); setError(null); }} />
               {error?.field === 'fecha' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
@@ -3046,7 +3123,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Observaciones</label>
-              <SanitizedInput style={styles.formInput} value={form.observaciones} sanitize={sanitizeCirugiaDirigido} onChange={observaciones => setForm({ ...form, observaciones })} />
+              <SanitizedTextarea style={styles.formInput} value={form.observaciones} sanitize={sanitizeObservaciones} onChange={observaciones => setForm({ ...form, observaciones })} />
             </div>
 
             <ListPicker
@@ -3904,6 +3981,17 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
 
 export default function CotizacionesPage() {
   const { isMobile } = useResponsiveStyles();
+  // Las 10 columnas de la tabla (desktop) no caben con un ancho legible en laptops más chicas
+  // (~1400px o menos, ya con el sidebar descontado) y forzaban scroll horizontal. En vez de bajar
+  // a la vista de tarjetas (pierde el formato de tabla ordenable) se ocultan ahí las 3 columnas
+  // menos críticas para escanear el listado (Marca de Tiempo, Usuario, Sede) — siguen disponibles
+  // abriendo el detalle de la cotización.
+  const [compactCols, setCompactCols] = useState(() => window.innerWidth < 1400);
+  useEffect(() => {
+    const onResize = () => setCompactCols(window.innerWidth < 1400);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const navigate = useNavigateWithLoading();
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
@@ -4057,14 +4145,16 @@ export default function CotizacionesPage() {
                     { label: '#', field: null },
                     { label: 'N° Cotización', field: 'numCotizacion' },
                     { label: 'Fecha', field: 'fecha' },
-                    { label: 'Marca de Tiempo', field: 'marcaDeTiempo' },
-                    { label: 'Usuario', field: 'usuario' },
+                    { label: 'Marca de Tiempo', field: 'marcaDeTiempo', compact: true },
+                    { label: 'Usuario', field: 'usuario', compact: true },
                     { label: 'Hospital', field: 'hospital' },
                     { label: 'Médico', field: 'medico' },
                     { label: 'Cirugía', field: 'cirugia' },
-                    { label: 'Sede', field: 'sede' },
+                    { label: 'Sede', field: 'sede', compact: true },
                     { label: 'Total', field: null },
-                  ] as { label: string; field: CotizacionSortField | null }[]).map((col, i) => (
+                  ] as { label: string; field: CotizacionSortField | null; compact?: boolean }[])
+                    .filter(col => !(compactCols && col.compact))
+                    .map((col, i) => (
                     <th
                       key={i}
                       onClick={col.field ? () => handleSort(col.field as CotizacionSortField) : undefined}
@@ -4085,7 +4175,7 @@ export default function CotizacionesPage() {
               </thead>
               <tbody>
                 {items.map((item, index) => (
-                  <CotizacionRow key={item.id} item={item} index={(page - 1) * 300 + index} onSelect={setSelectedId} />
+                  <CotizacionRow key={item.id} item={item} index={(page - 1) * 300 + index} onSelect={setSelectedId} compact={compactCols} />
                 ))}
               </tbody>
             </table>

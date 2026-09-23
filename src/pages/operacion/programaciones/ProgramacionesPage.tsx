@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, memo, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, memo, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { PieChart, Pie, Cell, Legend, Tooltip, ResponsiveContainer } from 'recharts';
 import { Search, Lock, AlertCircle, CircleX, DollarSign, Plus, X, Calendar, BarChart3, Activity, MapPin, ArrowDown, ArrowUp, ArrowRight, FileText, ChevronDown } from 'lucide-react';
@@ -101,7 +102,7 @@ function StatusBadges({ item }: { item: ProgramacionItem }) {
   );
 }
 
-const ProgramacionRow = memo(({ item, navigate, index }: { item: ProgramacionItem; navigate: (path: string, routeKey?: string) => void; index: number }) => {
+const ProgramacionRow = memo(({ item, navigate, index, compact }: { item: ProgramacionItem; navigate: (path: string, routeKey?: string) => void; index: number; compact?: boolean }) => {
   const today = isFechaHoy(item.fechaQx);
   const baseBg = today ? 'rgba(107, 140, 31, 0.14)' : '#fff';
   return (
@@ -137,9 +138,11 @@ const ProgramacionRow = memo(({ item, navigate, index }: { item: ProgramacionIte
     <td style={{ ...styles.td, maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
       {item.hospital ?? '-'}
     </td>
-    <td style={{ ...styles.td, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#666', fontSize: '0.82rem' }}>
-      {item.observaciones ?? '-'}
-    </td>
+    {!compact && (
+      <td style={{ ...styles.td, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#666', fontSize: '0.82rem' }}>
+        {item.observaciones ?? '-'}
+      </td>
+    )}
   </tr>
   );
 });
@@ -188,6 +191,15 @@ export default function ProgramacionesPage() {
   const navigate = useNavigateWithLoading();
   const queryClient = useQueryClient();
   const { isMobile } = useResponsiveStyles();
+  // Mismo ajuste que en Cotizaciones: en laptops más chicas (~1400px o menos, ya con el sidebar
+  // descontado) las 11 columnas no caben y forzaban scroll horizontal. Se oculta la menos crítica
+  // para escanear el listado (Observaciones) — sigue disponible abriendo el detalle.
+  const [compactCols, setCompactCols] = useState(() => window.innerWidth < 1400);
+  useEffect(() => {
+    const onResize = () => setCompactCols(window.innerWidth < 1400);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -253,6 +265,11 @@ export default function ProgramacionesPage() {
   const [newConsumoProductoFocused, setNewConsumoProductoFocused] = useState(false);
   const [importandoConsumos, setImportandoConsumos] = useState(false);
   const consumoPanelRef = useRef<HTMLDivElement>(null);
+  // El panel se porta a document.body (ver panelPos/useLayoutEffect abajo) para que no lo recorte
+  // el overflow del modal — necesita su propio ref porque, portado, ya no es descendiente de
+  // consumoPanelRef, y el clic-afuera de más abajo necesita reconocerlo como "adentro" igual.
+  const consumoPanelMenuRef = useRef<HTMLDivElement>(null);
+  const [consumoPanelPos, setConsumoPanelPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number }>({ left: 0, width: 280, maxHeight: 320 });
 
   // Al cerrar el panel (clic afuera, X, o volver a pulsar el botón) se limpia la búsqueda a medias.
   const closeConsumoPanel = () => {
@@ -260,11 +277,45 @@ export default function ProgramacionesPage() {
     setNewConsumoProductoSearch('');
   };
 
+  // Mismo criterio que el picker de Paquete en Cotizaciones: se mide el espacio disponible
+  // dentro de la tarjeta del modal (no del viewport completo) y se abre hacia el lado que sí
+  // tenga espacio, con un alto máximo ajustado — así nunca queda cortado a la mitad.
+  useLayoutEffect(() => {
+    if (!newConsumoPanelOpen) return;
+    const reposition = () => {
+      const rect = consumoPanelRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const modalRect = consumoPanelRef.current?.closest<HTMLElement>('.modal-content-anim')?.getBoundingClientRect();
+      const bound = modalRect ?? { top: 0, bottom: window.innerHeight, left: 0, right: window.innerWidth };
+      const width = Math.min(280, bound.right - bound.left - 16);
+      const spaceBelow = bound.bottom - rect.bottom - 8;
+      const spaceAbove = rect.top - bound.top - 8;
+      const openAbove = spaceAbove >= spaceBelow;
+      const maxHeight = Math.max(140, Math.min(320, openAbove ? spaceAbove : spaceBelow));
+      const left = Math.min(Math.max(bound.left + 8, rect.right - width), bound.right - width - 8);
+      setConsumoPanelPos({
+        top: openAbove ? undefined : rect.bottom + 6,
+        bottom: openAbove ? window.innerHeight - rect.top + 6 : undefined,
+        left,
+        width,
+        maxHeight,
+      });
+    };
+    reposition();
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [newConsumoPanelOpen]);
+
   // Cierra el panel "Agregar del catálogo" al hacer clic afuera (mismo patrón que DatePicker).
   useEffect(() => {
     if (!newConsumoPanelOpen) return;
     const handler = (e: MouseEvent) => {
       if (consumoPanelRef.current?.contains(e.target as Node)) return;
+      if (consumoPanelMenuRef.current?.contains(e.target as Node)) return;
       closeConsumoPanel();
     };
     document.addEventListener('mousedown', handler);
@@ -904,8 +955,23 @@ export default function ProgramacionesPage() {
                       >
                         <Plus size={12} /> Agregar del catálogo
                       </button>
-                    {newConsumoPanelOpen && (
-                      <div style={styles.consumoPanel}>
+                    {newConsumoPanelOpen && createPortal(
+                      <div
+                        ref={consumoPanelMenuRef}
+                        style={{
+                          ...styles.consumoPanel,
+                          position: 'fixed' as const,
+                          top: consumoPanelPos.top,
+                          bottom: consumoPanelPos.bottom,
+                          left: consumoPanelPos.left,
+                          right: 'auto' as const,
+                          width: consumoPanelPos.width,
+                          maxWidth: 'none' as const,
+                          maxHeight: consumoPanelPos.maxHeight,
+                          overflowY: 'auto' as const,
+                          zIndex: 10050,
+                        }}
+                      >
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <span style={styles.consumoPanelTitle}>Agregar producto</span>
                           <X size={14} style={{ cursor: 'pointer', color: '#9ca3af' }} onClick={closeConsumoPanel} />
@@ -944,7 +1010,8 @@ export default function ProgramacionesPage() {
                             </div>
                           )}
                         </div>
-                      </div>
+                      </div>,
+                      document.body,
                     )}
                     </div>
                   </div>
@@ -1298,8 +1365,10 @@ export default function ProgramacionesPage() {
                   { label: 'Ciudad QX', field: null },
                   { label: 'Médico', field: null },
                   { label: 'Hospital', field: 'hospital' },
-                  { label: 'Observaciones', field: 'observaciones' },
-                ] as { label: string; field: ProgramacionSortField | null }[]).map((col, i) => (
+                  { label: 'Observaciones', field: 'observaciones', compact: true },
+                ] as { label: string; field: ProgramacionSortField | null; compact?: boolean }[])
+                  .filter(col => !(compactCols && col.compact))
+                  .map((col, i) => (
                   <th
                     key={i}
                     onClick={col.field ? () => handleSort(col.field as ProgramacionSortField) : undefined}
@@ -1325,6 +1394,7 @@ export default function ProgramacionesPage() {
                   item={item}
                   index={(page - 1) * 300 + index}
                   navigate={navigate}
+                  compact={compactCols}
                 />
               ))}
             </tbody>
