@@ -221,6 +221,30 @@ body {
 
 .modal-content-anim {
   animation: modal-content-fade-in 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db transparent;
+}
+
+.modal-content-anim::-webkit-scrollbar {
+  width: 8px;
+}
+
+.modal-content-anim::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 16px 0;
+}
+
+.modal-content-anim::-webkit-scrollbar-button {
+  display: none;
+}
+
+.modal-content-anim::-webkit-scrollbar-thumb {
+  background-color: #d1d5db;
+  border-radius: 999px;
+}
+
+.modal-content-anim::-webkit-scrollbar-thumb:hover {
+  background-color: #b0b5bd;
 }
 
 @keyframes modal-overlay-fade-out {

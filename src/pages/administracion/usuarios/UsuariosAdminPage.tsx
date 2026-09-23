@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Search, Plus, X } from 'lucide-react';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
+import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import SuccessToast from '../../../components/SuccessToast';
 import {
   usuariosAdminService,
@@ -72,18 +73,33 @@ function NuevoUsuarioModal({
   const [terceroQuery, setTerceroQuery] = useState('');
   const [terceroOpciones, setTerceroOpciones] = useState<TerceroDisponible[]>([]);
   const [terceroSeleccionado, setTerceroSeleccionado] = useState<TerceroDisponible | null>(null);
+  const [terceroFocused, setTerceroFocused] = useState(false);
   const [buscandoTerceros, setBuscandoTerceros] = useState(false);
   const [usuario, setUsuario] = useState('');
   const [password, setPassword] = useState('');
   const [perfilId, setPerfilId] = useState('');
+  const [perfilQuery, setPerfilQuery] = useState('');
+  const [perfilFocused, setPerfilFocused] = useState(false);
   const [sedeId, setSedeId] = useState('');
+  const [sedeQuery, setSedeQuery] = useState('');
+  const [sedeFocused, setSedeFocused] = useState(false);
   const [error, setError] = useState<{ field: string; message: string } | null>(null);
 
+  const perfilSeleccionado = perfiles.find(p => p.id === perfilId) ?? null;
+  const perfilesFiltrados = perfilQuery.trim()
+    ? perfiles.filter(p => p.nombre.toLowerCase().includes(perfilQuery.trim().toLowerCase()))
+    : perfiles;
+  const sedeSeleccionada = sedes.find(s => s.id === sedeId) ?? null;
+  const sedesFiltradas = sedeQuery.trim()
+    ? sedes.filter(s => s.nombre.toLowerCase().includes(sedeQuery.trim().toLowerCase()))
+    : sedes;
+
   // Busca con debounce mientras el admin escribe, solo si todavía no ha seleccionado un tercero.
+  // Sin texto (recién enfocado el campo) igual se dispara — el backend ya devuelve los primeros 20
+  // empleados sin cuenta ordenados alfabéticamente, así se ven opciones desde el primer click.
   useEffect(() => {
-    if (terceroSeleccionado) { setTerceroOpciones([]); return; }
+    if (terceroSeleccionado || !terceroFocused) { setTerceroOpciones([]); return; }
     const term = terceroQuery.trim();
-    if (term.length < 2) { setTerceroOpciones([]); return; }
     setBuscandoTerceros(true);
     const timer = setTimeout(() => {
       usuariosAdminService.findTercerosDisponibles(term)
@@ -92,7 +108,7 @@ function NuevoUsuarioModal({
         .finally(() => setBuscandoTerceros(false));
     }, 300);
     return () => clearTimeout(timer);
-  }, [terceroQuery, terceroSeleccionado]);
+  }, [terceroQuery, terceroSeleccionado, terceroFocused]);
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -151,10 +167,12 @@ function NuevoUsuarioModal({
                   style={{ ...styles.formInput, ...(error?.field === 'tercero' ? styles.inputError : {}) }}
                   value={terceroQuery}
                   onChange={e => { setTerceroQuery(e.target.value); setError(null); }}
+                  onFocus={() => setTerceroFocused(true)}
+                  onBlur={() => setTimeout(() => setTerceroFocused(false), 150)}
                   placeholder="Escribe el nombre..."
                   autoFocus
                 />
-                {terceroQuery.trim().length >= 2 && (
+                {terceroFocused && (
                   <div style={styles.terceroDropdown}>
                     {buscandoTerceros ? (
                       <div style={styles.terceroDropdownEmpty}>Buscando...</div>
@@ -223,23 +241,93 @@ function NuevoUsuarioModal({
 
           <div style={styles.formGroup}>
             <label style={styles.formLabel}>Perfil *</label>
-            <select
-              style={{ ...styles.formInput, ...(error?.field === 'perfilId' ? styles.inputError : {}) }}
-              value={perfilId}
-              onChange={e => { setPerfilId(e.target.value); setError(null); }}
-            >
-              <option value="">Selecciona un perfil</option>
-              {perfiles.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-            </select>
+            {perfilSeleccionado ? (
+              <div style={styles.terceroSeleccionadoBox}>
+                <span>{perfilSeleccionado.nombre}</span>
+                <button
+                  type="button"
+                  style={styles.terceroQuitarBtn}
+                  onClick={() => { setPerfilId(''); setPerfilQuery(''); }}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ) : (
+              <>
+                <input
+                  style={{ ...styles.formInput, ...(error?.field === 'perfilId' ? styles.inputError : {}) }}
+                  value={perfilQuery}
+                  onChange={e => { setPerfilQuery(e.target.value); setError(null); }}
+                  onFocus={() => setPerfilFocused(true)}
+                  onBlur={() => setTimeout(() => setPerfilFocused(false), 150)}
+                  placeholder="Buscar perfil..."
+                />
+                {perfilFocused && (
+                  <div style={styles.terceroDropdown}>
+                    {perfilesFiltrados.length === 0 ? (
+                      <div style={styles.terceroDropdownEmpty}>Sin resultados</div>
+                    ) : (
+                      perfilesFiltrados.map(p => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          style={styles.terceroDropdownItem}
+                          onClick={() => { setPerfilId(p.id); setPerfilQuery(''); setError(null); }}
+                        >
+                          {p.nombre}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </>
+            )}
             {error?.field === 'perfilId' && <span style={styles.errorText}>{error.message}</span>}
           </div>
 
           <div style={styles.formGroup}>
             <label style={styles.formLabel}>Sede</label>
-            <select style={styles.formInput} value={sedeId} onChange={e => setSedeId(e.target.value)}>
-              <option value="">Sin sede asignada</option>
-              {sedes.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
-            </select>
+            {sedeSeleccionada ? (
+              <div style={styles.terceroSeleccionadoBox}>
+                <span>{sedeSeleccionada.nombre}</span>
+                <button
+                  type="button"
+                  style={styles.terceroQuitarBtn}
+                  onClick={() => { setSedeId(''); setSedeQuery(''); }}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ) : (
+              <>
+                <input
+                  style={styles.formInput}
+                  value={sedeQuery}
+                  onChange={e => setSedeQuery(e.target.value)}
+                  onFocus={() => setSedeFocused(true)}
+                  onBlur={() => setTimeout(() => setSedeFocused(false), 150)}
+                  placeholder="Buscar sede... (opcional)"
+                />
+                {sedeFocused && (
+                  <div style={styles.terceroDropdown}>
+                    {sedesFiltradas.length === 0 ? (
+                      <div style={styles.terceroDropdownEmpty}>Sin resultados</div>
+                    ) : (
+                      sedesFiltradas.map(s => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          style={styles.terceroDropdownItem}
+                          onClick={() => { setSedeId(s.id); setSedeQuery(''); }}
+                        >
+                          {s.nombre}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           <p style={styles.helpText}>
@@ -448,20 +536,16 @@ export default function UsuariosAdminPage() {
   return (
     <>
       <div style={styles.pageWrapper}>
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          style={styles.backLink}
-          onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}
-        >
-          <MaterialIcon name="arrow_back" size={16} />
-          Volver
-        </button>
-
         <div style={styles.contentCard}>
           <div style={styles.header}>
-            <h1 style={styles.title}>Usuarios</h1>
+            <HeaderBackReveal
+              onBack={() => navigate(-1)}
+              icon={<MaterialIcon name="person" size={26} color="#4d7a13" />}
+              size={50}
+              badgeRadius={16}
+            >
+              <h1 style={styles.title}>Usuarios</h1>
+            </HeaderBackReveal>
           </div>
 
           <div style={styles.toolbar}>
@@ -551,7 +635,6 @@ export default function UsuariosAdminPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   pageWrapper: { padding: '0.05rem 1.5rem 1.5rem' },
-  backLink: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem', padding: '0.25rem 0.1rem', border: 'none', background: 'transparent', color: '#6b7280', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, transition: 'color 0.15s ease' },
   contentCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '16px', padding: '1.25rem', marginBottom: '1.5rem' },
   header: { marginBottom: '1.25rem' },
   title: { fontSize: '1.4rem', fontWeight: 700, color: '#333', margin: 0 },

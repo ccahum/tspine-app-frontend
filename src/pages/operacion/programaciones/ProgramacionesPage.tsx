@@ -1,11 +1,11 @@
-import { useState, useEffect, useLayoutEffect, useRef, memo, useMemo } from 'react';
-import { createPortal } from 'react-dom';
+import { useState, useEffect, useRef, memo, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { PieChart, Pie, Cell, Legend, Tooltip, ResponsiveContainer } from 'recharts';
 import { Search, Lock, AlertCircle, CircleX, DollarSign, Plus, X, Calendar, BarChart3, Activity, MapPin, ArrowDown, ArrowUp, ArrowRight, FileText, ChevronDown } from 'lucide-react';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import DatePicker from '../../../components/DatePicker';
+import OptionDropdown from '../../../components/OptionDropdown';
 import DateRangeFilter from '../../../components/filters/DateRangeFilter';
 import StatusFilter from '../../../components/filters/StatusFilter';
 import ProgramacionesStats from './ProgramacionesStats';
@@ -265,11 +265,6 @@ export default function ProgramacionesPage() {
   const [newConsumoProductoFocused, setNewConsumoProductoFocused] = useState(false);
   const [importandoConsumos, setImportandoConsumos] = useState(false);
   const consumoPanelRef = useRef<HTMLDivElement>(null);
-  // El panel se porta a document.body (ver panelPos/useLayoutEffect abajo) para que no lo recorte
-  // el overflow del modal — necesita su propio ref porque, portado, ya no es descendiente de
-  // consumoPanelRef, y el clic-afuera de más abajo necesita reconocerlo como "adentro" igual.
-  const consumoPanelMenuRef = useRef<HTMLDivElement>(null);
-  const [consumoPanelPos, setConsumoPanelPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number }>({ left: 0, width: 280, maxHeight: 320 });
 
   // Al cerrar el panel (clic afuera, X, o volver a pulsar el botón) se limpia la búsqueda a medias.
   const closeConsumoPanel = () => {
@@ -277,45 +272,11 @@ export default function ProgramacionesPage() {
     setNewConsumoProductoSearch('');
   };
 
-  // Mismo criterio que el picker de Paquete en Cotizaciones: se mide el espacio disponible
-  // dentro de la tarjeta del modal (no del viewport completo) y se abre hacia el lado que sí
-  // tenga espacio, con un alto máximo ajustado — así nunca queda cortado a la mitad.
-  useLayoutEffect(() => {
-    if (!newConsumoPanelOpen) return;
-    const reposition = () => {
-      const rect = consumoPanelRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const modalRect = consumoPanelRef.current?.closest<HTMLElement>('.modal-content-anim')?.getBoundingClientRect();
-      const bound = modalRect ?? { top: 0, bottom: window.innerHeight, left: 0, right: window.innerWidth };
-      const width = Math.min(280, bound.right - bound.left - 16);
-      const spaceBelow = bound.bottom - rect.bottom - 8;
-      const spaceAbove = rect.top - bound.top - 8;
-      const openAbove = spaceAbove >= spaceBelow;
-      const maxHeight = Math.max(140, Math.min(320, openAbove ? spaceAbove : spaceBelow));
-      const left = Math.min(Math.max(bound.left + 8, rect.right - width), bound.right - width - 8);
-      setConsumoPanelPos({
-        top: openAbove ? undefined : rect.bottom + 6,
-        bottom: openAbove ? window.innerHeight - rect.top + 6 : undefined,
-        left,
-        width,
-        maxHeight,
-      });
-    };
-    reposition();
-    window.addEventListener('scroll', reposition, true);
-    window.addEventListener('resize', reposition);
-    return () => {
-      window.removeEventListener('scroll', reposition, true);
-      window.removeEventListener('resize', reposition);
-    };
-  }, [newConsumoPanelOpen]);
-
   // Cierra el panel "Agregar del catálogo" al hacer clic afuera (mismo patrón que DatePicker).
   useEffect(() => {
     if (!newConsumoPanelOpen) return;
     const handler = (e: MouseEvent) => {
       if (consumoPanelRef.current?.contains(e.target as Node)) return;
-      if (consumoPanelMenuRef.current?.contains(e.target as Node)) return;
       closeConsumoPanel();
     };
     document.addEventListener('mousedown', handler);
@@ -670,36 +631,30 @@ export default function ProgramacionesPage() {
               <div style={styles.formGroup} id="programacion-new-field-horaQx">
                 <label style={styles.label}>Hora QX *</label>
                 <div style={styles.horaGrid}>
-                  <select
+                  <OptionDropdown
                     disabled={!newFechaQxListo}
-                    style={{ ...styles.input, ...(newProgramacionError?.field === 'horaQx' ? styles.inputError : {}), ...(!newFechaQxListo ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                    error={newProgramacionError?.field === 'horaQx'}
+                    placeholder="HH"
                     value={newForm.horaQx.split(':')[0] ?? ''}
-                    onChange={e => {
+                    options={Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).filter(h => Number(h) >= minHour).map(h => ({ id: h, label: h }))}
+                    onChange={h => {
                       const minuto = newForm.horaQx.split(':')[1] ?? '00';
-                      setNewForm({ ...newForm, horaQx: `${e.target.value}:${minuto}` });
+                      setNewForm({ ...newForm, horaQx: `${h}:${minuto}` });
                       setNewProgramacionError(null);
                     }}
-                  >
-                    <option value="">HH</option>
-                    {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).filter(h => Number(h) >= minHour).map(h => (
-                      <option key={h} value={h}>{h}</option>
-                    ))}
-                  </select>
-                  <select
+                  />
+                  <OptionDropdown
                     disabled={!newFechaQxListo}
-                    style={{ ...styles.input, ...(newProgramacionError?.field === 'horaQx' ? styles.inputError : {}), ...(!newFechaQxListo ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                    error={newProgramacionError?.field === 'horaQx'}
+                    placeholder="MM"
                     value={newForm.horaQx.split(':')[1] ?? ''}
-                    onChange={e => {
+                    options={Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).filter(m => Number(m) >= minMinute).map(m => ({ id: m, label: m }))}
+                    onChange={m => {
                       const hora = newForm.horaQx.split(':')[0] ?? '00';
-                      setNewForm({ ...newForm, horaQx: `${hora}:${e.target.value}` });
+                      setNewForm({ ...newForm, horaQx: `${hora}:${m}` });
                       setNewProgramacionError(null);
                     }}
-                  >
-                    <option value="">MM</option>
-                    {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).filter(m => Number(m) >= minMinute).map(m => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
+                  />
                 </div>
                 {!newFechaQxListo && <span style={{ fontSize: '0.78rem', color: '#9ca3af' }}>Selecciona primero la fecha QX</span>}
                 {newProgramacionError?.field === 'horaQx' && <span style={styles.errorText}>{newProgramacionError.message}</span>}
@@ -955,23 +910,8 @@ export default function ProgramacionesPage() {
                       >
                         <Plus size={12} /> Agregar del catálogo
                       </button>
-                    {newConsumoPanelOpen && createPortal(
-                      <div
-                        ref={consumoPanelMenuRef}
-                        style={{
-                          ...styles.consumoPanel,
-                          position: 'fixed' as const,
-                          top: consumoPanelPos.top,
-                          bottom: consumoPanelPos.bottom,
-                          left: consumoPanelPos.left,
-                          right: 'auto' as const,
-                          width: consumoPanelPos.width,
-                          maxWidth: 'none' as const,
-                          maxHeight: consumoPanelPos.maxHeight,
-                          overflowY: 'auto' as const,
-                          zIndex: 10050,
-                        }}
-                      >
+                    {newConsumoPanelOpen && (
+                      <div style={{ ...styles.consumoPanel, ...(isMobile ? { right: 'auto' as const, left: 0 } : {}) }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <span style={styles.consumoPanelTitle}>Agregar producto</span>
                           <X size={14} style={{ cursor: 'pointer', color: '#9ca3af' }} onClick={closeConsumoPanel} />
@@ -1010,8 +950,7 @@ export default function ProgramacionesPage() {
                             </div>
                           )}
                         </div>
-                      </div>,
-                      document.body,
+                      </div>
                     )}
                     </div>
                   </div>

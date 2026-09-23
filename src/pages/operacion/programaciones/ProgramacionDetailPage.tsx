@@ -7,6 +7,7 @@ import { SiGmail } from 'react-icons/si';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import DatePicker from '../../../components/DatePicker';
+import OptionDropdown from '../../../components/OptionDropdown';
 import SignaturePad from '../../../components/SignaturePad';
 import SuccessToast from '../../../components/SuccessToast';
 import { programacionesService, type ProgramacionDetail, type SedeOption, type HospitalOption, type MedicoOption, type CotizacionOption } from '../../../services/programaciones.service';
@@ -483,6 +484,7 @@ export default function ProgramacionDetailPage() {
   const [documentoCargadoEl, setDocumentoCargadoEl] = useState<Date>(new Date());
   const [documentoError, setDocumentoError] = useState<{ field: string; message: string } | null>(null);
   const [showDocumentoSuccess, setShowDocumentoSuccess] = useState(false);
+  const [showInsumoSuccess, setShowInsumoSuccess] = useState(false);
 
   const usuarioActual = useMemo(() => {
     try {
@@ -496,6 +498,8 @@ export default function ProgramacionDetailPage() {
   const [requisicionFecha, setRequisicionFecha] = useState('');
   const [requisicionCubrimiento, setRequisicionCubrimiento] = useState<CubrimientoOption | null>(null);
   const [requisicionTarifaId, setRequisicionTarifaId] = useState('');
+  const [requisicionTarifaSearch, setRequisicionTarifaSearch] = useState('');
+  const [requisicionTarifaFocused, setRequisicionTarifaFocused] = useState(false);
   const [requisicionError, setRequisicionError] = useState<{ field: string; message: string } | null>(null);
   const [showRequisicionSuccess, setShowRequisicionSuccess] = useState(false);
   const [requisicionCreatedId, setRequisicionCreatedId] = useState<string | null>(null);
@@ -513,8 +517,10 @@ export default function ProgramacionDetailPage() {
   const [showInsumoSubModal, setShowInsumoSubModal] = useState(false);
   const [insumoLote, setInsumoLote] = useState<LoteOption | null>(null);
   const [insumoLoteSearch, setInsumoLoteSearch] = useState('');
+  const [insumoLoteFocused, setInsumoLoteFocused] = useState(false);
   const [insumoProducto, setInsumoProducto] = useState<ProductoOption | null>(null);
   const [insumoProductoSearch, setInsumoProductoSearch] = useState('');
+  const [insumoProductoFocused, setInsumoProductoFocused] = useState(false);
   const [insumoCantidad, setInsumoCantidad] = useState('');
   const [insumoPrecio, setInsumoPrecio] = useState('');
   const [insumoSubError, setInsumoSubError] = useState<{ field: string; message: string } | null>(null);
@@ -939,6 +945,11 @@ export default function ProgramacionDetailPage() {
     queryFn: () => remisionesService.findTarifasByCubrimiento(requisicionCubrimiento!.id),
     enabled: !!requisicionCubrimiento,
   });
+  // Sin texto se muestran todas las opciones (normalmente pocas por cubrimiento) — mismo criterio
+  // que los demás buscadores de este formulario.
+  const requisicionTarifaResults = requisicionTarifaSearch.trim()
+    ? tarifasCubrimiento.filter(t => (t.nombre ?? '').toLowerCase().includes(requisicionTarifaSearch.trim().toLowerCase()))
+    : tarifasCubrimiento;
 
   const { data: insumoLoteResults = [] } = useQuery<LoteOption[]>({
     queryKey: ['lotes', insumoLoteSearch],
@@ -947,8 +958,8 @@ export default function ProgramacionDetailPage() {
   });
 
   const { data: insumoProductoResults = [] } = useQuery<ProductoOption[]>({
-    queryKey: ['productos', insumoProductoSearch],
-    queryFn: () => remisionesService.searchProductos(insumoProductoSearch),
+    queryKey: ['productos', insumoProductoSearch, requisicionTarifaId],
+    queryFn: () => remisionesService.searchProductos(insumoProductoSearch, requisicionTarifaId || undefined),
     enabled: showInsumoSubModal,
   });
 
@@ -984,6 +995,7 @@ export default function ProgramacionDetailPage() {
     setRequisicionFecha(toLocalDateString(new Date()));
     setRequisicionCubrimiento(null);
     setRequisicionTarifaId('');
+    setRequisicionTarifaSearch('');
     setRequisicionError(null);
     setRequisicionInsumos([]);
     setShowRequisicionModal(true);
@@ -1024,6 +1036,8 @@ export default function ProgramacionDetailPage() {
   };
 
   const handleAgregarInsumoDraft = () => {
+    if (!insumoLote) { setInsumoSubError({ field: 'lote', message: 'Selecciona un lote válido de la lista.' }); return; }
+    if (!insumoProducto) { setInsumoSubError({ field: 'producto', message: 'Selecciona un producto válido de la lista.' }); return; }
     if (!insumoCantidad || Number(insumoCantidad) <= 0) { setInsumoSubError({ field: 'cantidad', message: 'La cantidad debe ser mayor a cero.' }); return; }
     if (!insumoPrecio || Number(insumoPrecio) <= 0) { setInsumoSubError({ field: 'precio', message: 'El precio debe ser mayor a cero.' }); return; }
     setInsumoSubError(null);
@@ -1038,6 +1052,7 @@ export default function ProgramacionDetailPage() {
     }]);
     setShowInsumoSubModal(false);
     setRequisicionError(null);
+    setShowInsumoSuccess(true);
   };
 
   const handleQuitarInsumoDraft = (tempId: string) => {
@@ -1732,7 +1747,10 @@ export default function ProgramacionDetailPage() {
 
         {/* ── Cotizaciones + Requisiciones + Remisiones + Documentos + Notas de Crédito ── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginBottom: '2rem' }}>
-        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, gap: '1.5rem' }}>
+        {/* Mismas proporciones de columna que desgloseSection (1.2fr/1fr) — antes era un flex 50/50
+            que no alineaba con Técnicos asociados/sugeridos arriba (esas ocupan 1fr de un total de
+            2.2fr, es decir ~45.5%, no 50%). */}
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : 'minmax(0, 1.2fr) minmax(0, 1fr)', gap: '1.5rem' }}>
           {/* ── Cotizaciones ───────────────────────────────────────── */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={styles.remisionesTitleRow}>
@@ -1817,6 +1835,7 @@ export default function ProgramacionDetailPage() {
                 <div ref={requisicionesScrollRef} style={styles.comisionScrollBody}>
                   {requisiciones.map((req, i) => {
                     const hoverStyle = hoveredRequisicionId === req.id ? styles.consumoCellHover : {};
+                    const statusCerrado = (req.status ?? '').trim().toLowerCase() === 'cerrada';
                     return (
                       <div
                         key={req.id}
@@ -1825,10 +1844,17 @@ export default function ProgramacionDetailPage() {
                         onMouseEnter={() => setHoveredRequisicionId(req.id)}
                         onMouseLeave={() => setHoveredRequisicionId(null)}
                       >
-                        <span style={styles.requisicionCodigo}>{req.id}</span>
+                        <div style={styles.remRowLeft}>
+                          <FileText size={13} color="#6b8c1f" style={{ flexShrink: 0 }} />
+                          <span style={{ ...styles.remRowCode, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{req.id}</span>
+                        </div>
                         <span style={styles.requisicionCellText}>{formatDateTime(req.marcaDeTiempo)}</span>
                         <span style={styles.requisicionCellText}>{req.usuario ?? '-'}</span>
-                        <span style={styles.requisicionCellText}>{req.status ?? '-'}</span>
+                        {req.status ? (
+                          <span style={{ ...styles.estadoBadge, ...(statusCerrado ? styles.estadoDefinitiva : styles.estadoOtro), justifySelf: 'start' as const }}>
+                            {req.status}
+                          </span>
+                        ) : <span style={{ color: '#9ca3af' }}>-</span>}
                       </div>
                     );
                   })}
@@ -1841,7 +1867,7 @@ export default function ProgramacionDetailPage() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, gap: '1.5rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : 'minmax(0, 1.2fr) minmax(0, 1fr)', gap: '1.5rem' }}>
           {/* ── Remisiones ─────────────────────────────────────────── */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={styles.remisionesTitleRow}>
@@ -1920,8 +1946,7 @@ export default function ProgramacionDetailPage() {
                   <span style={styles.colHeaderText}>ID</span>
                   <span style={styles.colHeaderText}>Nombre</span>
                   <span style={styles.colHeaderText}>Documento</span>
-                  <span style={styles.colHeaderText}>Cargado el</span>
-                  <span style={styles.colHeaderText}>Cargado por</span>
+                  <span style={styles.colHeaderText}>Cargado el / por</span>
                 </div>
                 <div ref={documentosScrollRef} style={styles.tabScrollBody}>
                   {documentos.map((d, i) => {
@@ -1934,13 +1959,18 @@ export default function ProgramacionDetailPage() {
                         onMouseEnter={() => setHoveredDocumentoId(d.id)}
                         onMouseLeave={() => setHoveredDocumentoId(null)}
                       >
-                        <span style={styles.requisicionCodigo}>{d.id}</span>
+                        <div style={styles.remRowLeft}>
+                          <FileText size={13} color="#6b8c1f" style={{ flexShrink: 0 }} />
+                          <span style={{ ...styles.remRowCode, whiteSpace: 'nowrap' as const }}>{d.id}</span>
+                        </div>
                         <span style={styles.requisicionCellText}>{d.nombre ?? '-'}</span>
                         <span style={{ ...styles.requisicionCellText, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                           {d.archivoDisponible ? (<><FileText size={14} color="#6b8c1f" /> PDF</>) : <span style={{ color: '#9ca3af', fontStyle: 'italic' as const }}>No disponible</span>}
                         </span>
-                        <span style={styles.requisicionCellText}>{formatDateTime(d.cargadoEl)}</span>
-                        <span style={styles.requisicionCellText}>{d.cargadoPor?.nombreCompleto ?? '-'}</span>
+                        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.05rem', minWidth: 0 }}>
+                          <span style={{ ...styles.requisicionCellText, fontSize: '0.8rem' }}>{formatDateTime(d.cargadoEl)}</span>
+                          <span style={{ ...styles.requisicionCellText, fontSize: '0.7rem', color: '#9ca3af' }}>{d.cargadoPor?.nombreCompleto ?? '-'}</span>
+                        </div>
                       </div>
                     );
                   })}
@@ -2494,34 +2524,28 @@ export default function ProgramacionDetailPage() {
               <div style={styles.formGroup} id="programacion-edit-field-horaQx">
                 <label style={styles.label}>Hora QX *</label>
                 <div style={styles.horaGrid}>
-                  <select
-                    style={{ ...styles.input, ...(editProgramacionError?.field === 'horaQx' ? styles.inputError : {}) }}
+                  <OptionDropdown
+                    error={editProgramacionError?.field === 'horaQx'}
+                    placeholder="HH"
                     value={editForm.horaQx.split(':')[0] ?? ''}
-                    onChange={e => {
+                    options={Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).map(h => ({ id: h, label: h }))}
+                    onChange={h => {
                       const minuto = editForm.horaQx.split(':')[1] ?? '00';
-                      setEditForm({ ...editForm, horaQx: `${e.target.value}:${minuto}` });
+                      setEditForm({ ...editForm, horaQx: `${h}:${minuto}` });
                       setEditProgramacionError(null);
                     }}
-                  >
-                    <option value="">HH</option>
-                    {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).map(h => (
-                      <option key={h} value={h}>{h}</option>
-                    ))}
-                  </select>
-                  <select
-                    style={{ ...styles.input, ...(editProgramacionError?.field === 'horaQx' ? styles.inputError : {}) }}
+                  />
+                  <OptionDropdown
+                    error={editProgramacionError?.field === 'horaQx'}
+                    placeholder="MM"
                     value={editForm.horaQx.split(':')[1] ?? ''}
-                    onChange={e => {
+                    options={Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).map(m => ({ id: m, label: m }))}
+                    onChange={m => {
                       const hora = editForm.horaQx.split(':')[0] ?? '00';
-                      setEditForm({ ...editForm, horaQx: `${hora}:${e.target.value}` });
+                      setEditForm({ ...editForm, horaQx: `${hora}:${m}` });
                       setEditProgramacionError(null);
                     }}
-                  >
-                    <option value="">MM</option>
-                    {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).map(m => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
+                  />
                 </div>
                 {editProgramacionError?.field === 'horaQx' && <span style={styles.errorText}>{editProgramacionError.message}</span>}
               </div>
@@ -2734,9 +2758,9 @@ export default function ProgramacionDetailPage() {
               </div>
 
               <div style={styles.formGroup} id="programacion-edit-field-consumo">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: isMobile ? 'flex-start' : 'center', justifyContent: 'space-between', flexDirection: isMobile ? 'column' as const : 'row' as const, gap: isMobile ? '0.5rem' : 0 }}>
                   <label style={styles.label}>Consumo *</label>
-                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' as const, width: isMobile ? '100%' : 'auto' }}>
                     {editCotizaciones.length > 0 && (
                       <button
                         type="button"
@@ -2758,7 +2782,7 @@ export default function ProgramacionDetailPage() {
                         <Plus size={12} /> Agregar del catálogo
                       </button>
                       {editConsumoPanelOpen && (
-                        <div style={styles.consumoPanel}>
+                        <div style={{ ...styles.consumoPanel, ...(isMobile ? { right: 'auto' as const, left: 0 } : {}) }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                             <span style={styles.consumoPanelTitle}>Agregar producto</span>
                             <X size={14} style={{ cursor: 'pointer', color: '#9ca3af' }} onClick={closeEditConsumoPanel} />
@@ -3299,32 +3323,35 @@ export default function ProgramacionDetailPage() {
 
               <div style={styles.formGroup} id="requisicion-field-fecha">
                 <label style={styles.label}>Fecha *</label>
-                <input
-                  type="date"
-                  style={{ ...styles.input, ...(requisicionError?.field === 'fecha' ? styles.inputError : {}) }}
+                <DatePicker
+                  error={requisicionError?.field === 'fecha'}
                   value={requisicionFecha}
-                  onChange={e => { setRequisicionFecha(e.target.value); setRequisicionError(null); }}
+                  onChange={fecha => { setRequisicionFecha(fecha); setRequisicionError(null); }}
                 />
                 {requisicionError?.field === 'fecha' && <span style={styles.errorText}>{requisicionError.message}</span>}
               </div>
 
               <div style={styles.formGroup} id="requisicion-field-cubrimiento">
                 <label style={styles.label}>Cubrimiento *</label>
-                <div style={styles.sedeGrid}>
+                <div style={styles.pickBtnGrid}>
                   {cubrimientos.map(c => (
                     <button
                       key={c.id}
                       type="button"
-                      style={{ ...styles.sedeBtn, ...(requisicionCubrimiento?.id === c.id ? styles.sedeBtnActive : {}), ...(requisicionError?.field === 'cubrimiento' ? styles.inputError : {}) }}
+                      style={{ ...styles.pickBtn, ...(requisicionCubrimiento?.id === c.id ? styles.pickBtnActive : {}), ...(requisicionError?.field === 'cubrimiento' ? styles.inputError : {}) }}
                       onMouseDown={e => e.preventDefault()}
                       onClick={e => {
                         setRequisicionCubrimiento(c);
-                        setRequisicionTarifaId('');
+                        // La tarifa "base" de un cubrimiento tiene el mismo id que el cubrimiento
+                        // (findTarifasByCubrimiento la incluye a ella misma junto con las
+                        // sub-tarifas más específicas) — se preselecciona como default razonable,
+                        // pero el usuario sigue pudiendo cambiarla desde el select de abajo, que
+                        // ya solo lista las tarifas válidas para este cubrimiento.
+                        setRequisicionTarifaId(c.id);
                         setRequisicionError(null);
                         e.currentTarget.blur();
                       }}
                     >
-                      {requisicionCubrimiento?.id === c.id ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
                       {c.nombre}
                     </button>
                   ))}
@@ -3334,17 +3361,59 @@ export default function ProgramacionDetailPage() {
 
               <div style={styles.formGroup} id="requisicion-field-tarifa">
                 <label style={styles.label}>Tarifa *</label>
-                <select
-                  style={{ ...styles.input, ...(requisicionError?.field === 'tarifa' ? styles.inputError : {}) }}
-                  value={requisicionTarifaId}
-                  disabled={!requisicionCubrimiento}
-                  onChange={e => { setRequisicionTarifaId(e.target.value); setRequisicionError(null); }}
-                >
-                  <option value="" disabled>{requisicionCubrimiento ? 'Seleccionar tarifa' : 'Selecciona primero un cubrimiento'}</option>
-                  {tarifasCubrimiento.map(t => (
-                    <option key={t.id} value={t.id}>{t.nombre}</option>
-                  ))}
-                </select>
+                {requisicionTarifaId ? (
+                  // width:fit-content porque este span es hijo directo de formGroup (flex-column,
+                  // align-items:stretch por default) — sin eso, la píldora se estiraba a casi todo
+                  // el ancho del modal en vez de ajustarse al texto. editMedicoTag (verde) en vez
+                  // de medicoTag (gris): es el color que ya usamos para un valor elegido en un
+                  // campo editable con X para quitarlo, en vez del gris genérico.
+                  <span style={{ ...styles.editMedicoTag, width: 'fit-content' as const }}>
+                    {/* Mientras tarifasCubrimiento todavía está cargando tras elegir el cubrimiento
+                        (requisicionTarifaId ya quedó en c.id, pero la lista aún no llega), se
+                        muestra el nombre del cubrimiento en vez del id crudo (ej. "1A1") — la
+                        tarifa raíz de un cubrimiento siempre se llama igual que él, así que no se
+                        alcanza a notar el cambio cuando la lista sí carga. */}
+                    {tarifasCubrimiento.find(t => t.id === requisicionTarifaId)?.nombre ?? requisicionCubrimiento?.nombre ?? requisicionTarifaId}
+                    <X size={12} style={{ cursor: 'pointer' }} onClick={() => { setRequisicionTarifaId(''); setRequisicionTarifaSearch(''); }} />
+                  </span>
+                ) : !requisicionCubrimiento ? (
+                  <span style={{ ...styles.input, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>
+                    Selecciona primero un cubrimiento
+                  </span>
+                ) : (
+                  <div style={{ position: 'relative' as const }}>
+                    <input
+                      style={{ ...styles.input, ...(requisicionError?.field === 'tarifa' ? styles.inputError : {}) }}
+                      placeholder="Buscar tarifa..."
+                      value={requisicionTarifaSearch}
+                      onChange={e => setRequisicionTarifaSearch(e.target.value)}
+                      onFocus={() => setRequisicionTarifaFocused(true)}
+                      onBlur={() => setTimeout(() => setRequisicionTarifaFocused(false), 150)}
+                    />
+                    {requisicionTarifaFocused && (
+                      <div style={styles.medicoDropdown}>
+                        {requisicionTarifaResults.length === 0 ? (
+                          <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
+                        ) : (
+                          requisicionTarifaResults.map(t => (
+                            <div
+                              key={t.id}
+                              className="dropdown-item-hover"
+                              style={styles.medicoDropdownItem}
+                              onClick={() => {
+                                setRequisicionTarifaId(t.id);
+                                setRequisicionTarifaSearch('');
+                                setRequisicionError(null);
+                              }}
+                            >
+                              {t.nombre}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {requisicionError?.field === 'tarifa' && <span style={styles.errorText}>{requisicionError.message}</span>}
               </div>
 
@@ -3365,11 +3434,19 @@ export default function ProgramacionDetailPage() {
                 )}
                 <button
                   type="button"
-                  style={{ ...styles.addComisionBtnBelow, ...(requisicionError?.field === 'insumos' ? styles.inputError : {}) }}
+                  style={{
+                    ...styles.addComisionBtnBelow,
+                    ...(requisicionError?.field === 'insumos' ? styles.inputError : {}),
+                    ...(!requisicionTarifaId ? { opacity: 0.5, cursor: 'not-allowed' as const } : {}),
+                  }}
+                  disabled={!requisicionTarifaId}
                   onClick={openInsumoSubModal}
                 >
                   <Plus size={14} /> Nuevo
                 </button>
+                {!requisicionTarifaId && (
+                  <span style={{ fontSize: '0.78rem', color: '#9ca3af' }}>Selecciona primero el cubrimiento y la tarifa</span>
+                )}
                 {requisicionError?.field === 'insumos' && <span style={styles.errorText}>{requisicionError.message}</span>}
               </div>
             </div>
@@ -3395,16 +3472,16 @@ export default function ProgramacionDetailPage() {
               <button style={styles.closeBtn} onClick={() => setShowInsumoSubModal(false)}>
                 <X size={18} />
               </button>
-              <h2 style={styles.modalTitle}>Nuevo Insumo</h2>
+              <h2 style={styles.modalTitle}>Nuevo insumo</h2>
             </div>
 
             <div style={styles.editModalBody}>
 
-              <div style={styles.formGroup}>
+              <div style={styles.formGroup} id="insumo-field-lote">
                 <label style={styles.label}>Lote</label>
                 {insumoLote ? (
                   <div style={styles.medicoTagsWrap}>
-                    <span style={styles.medicoTag}>
+                    <span style={styles.editMedicoTag}>
                       {insumoLote.lote}
                       <X size={12} style={{ cursor: 'pointer' }} onClick={() => setInsumoLote(null)} />
                     </span>
@@ -3412,18 +3489,20 @@ export default function ProgramacionDetailPage() {
                 ) : (
                   <div style={{ position: 'relative' as const }}>
                     <input
-                      style={styles.input}
+                      style={{ ...styles.input, ...(insumoSubError?.field === 'lote' ? styles.inputError : {}) }}
                       placeholder="Buscar lote..."
                       value={insumoLoteSearch}
-                      onChange={e => setInsumoLoteSearch(e.target.value)}
+                      onChange={e => { setInsumoLoteSearch(e.target.value); setInsumoSubError(null); }}
+                      onFocus={() => setInsumoLoteFocused(true)}
+                      onBlur={() => setTimeout(() => setInsumoLoteFocused(false), 150)}
                     />
-                    {insumoLoteSearch.trim() && (
+                    {insumoLoteFocused && (
                       <div style={styles.medicoDropdown}>
                         {insumoLoteResults.length === 0 ? (
                           <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
                         ) : (
                           insumoLoteResults.map(l => (
-                            <div key={l.id} style={styles.medicoDropdownItem} onClick={() => { setInsumoLote(l); setInsumoLoteSearch(''); }}>
+                            <div key={l.id} className="dropdown-item-hover" style={styles.medicoDropdownItem} onClick={() => { setInsumoLote(l); setInsumoLoteSearch(''); }}>
                               <Plus size={14} /> {l.lote}
                             </div>
                           ))
@@ -3432,13 +3511,16 @@ export default function ProgramacionDetailPage() {
                     )}
                   </div>
                 )}
+                {insumoSubError?.field === 'lote' && <span style={styles.errorText}>{insumoSubError.message}</span>}
               </div>
 
-              <div style={styles.formGroup}>
+              <div style={styles.formGroup} id="insumo-field-producto">
                 <label style={styles.label}>Producto</label>
-                {insumoProducto ? (
+                {!insumoLote ? (
+                  <span style={{ ...styles.input, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>Selecciona primero un lote</span>
+                ) : insumoProducto ? (
                   <div style={styles.medicoTagsWrap}>
-                    <span style={styles.medicoTag}>
+                    <span style={styles.editMedicoTag}>
                       {formatProductoLabel(insumoProducto)}
                       <X size={12} style={{ cursor: 'pointer' }} onClick={() => setInsumoProducto(null)} />
                     </span>
@@ -3446,18 +3528,20 @@ export default function ProgramacionDetailPage() {
                 ) : (
                   <div style={{ position: 'relative' as const }}>
                     <input
-                      style={styles.input}
+                      style={{ ...styles.input, ...(insumoSubError?.field === 'producto' ? styles.inputError : {}) }}
                       placeholder="Buscar producto..."
                       value={insumoProductoSearch}
-                      onChange={e => setInsumoProductoSearch(e.target.value)}
+                      onChange={e => { setInsumoProductoSearch(e.target.value); setInsumoSubError(null); }}
+                      onFocus={() => setInsumoProductoFocused(true)}
+                      onBlur={() => setTimeout(() => setInsumoProductoFocused(false), 150)}
                     />
-                    {insumoProductoSearch.trim() && (
+                    {insumoProductoFocused && (
                       <div style={styles.medicoDropdown}>
                         {insumoProductoResults.length === 0 ? (
                           <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
                         ) : (
                           insumoProductoResults.map(p => (
-                            <div key={p.id} style={styles.medicoDropdownItem} onClick={() => handleSelectInsumoProducto(p)}>
+                            <div key={p.id} className="dropdown-item-hover" style={styles.medicoDropdownItem} onClick={() => handleSelectInsumoProducto(p)}>
                               <Plus size={14} /> {formatProductoLabel(p)}
                             </div>
                           ))
@@ -3466,6 +3550,7 @@ export default function ProgramacionDetailPage() {
                     )}
                   </div>
                 )}
+                {insumoSubError?.field === 'producto' && <span style={styles.errorText}>{insumoSubError.message}</span>}
               </div>
 
               {insumoProducto && (
@@ -3491,44 +3576,35 @@ export default function ProgramacionDetailPage() {
 
               <div style={styles.formGroup} id="insumo-field-cantidad">
                 <label style={styles.label}>Cantidad *</label>
-                <div style={styles.stepperWrap}>
-                  <input
-                    type="number"
-                    style={{ ...styles.input, paddingRight: '5rem', ...(insumoSubError?.field === 'cantidad' ? styles.inputError : {}) }}
-                    placeholder="0"
-                    value={insumoCantidad}
-                    onChange={e => { setInsumoCantidad(e.target.value); setInsumoSubError(null); }}
-                  />
-                  <div style={styles.stepperBtns}>
-                    <button type="button" style={styles.stepperBtn} onClick={() => { setInsumoCantidad(String((Number(insumoCantidad) || 0) - 1)); setInsumoSubError(null); }}>−</button>
-                    <button type="button" style={styles.stepperBtn} onClick={() => { setInsumoCantidad(String((Number(insumoCantidad) || 0) + 1)); setInsumoSubError(null); }}>+</button>
+                {!insumoProducto ? (
+                  <span style={{ ...styles.input, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>Selecciona primero un producto</span>
+                ) : (
+                  <div style={styles.stepperWrap}>
+                    <input
+                      type="number"
+                      style={{ ...styles.input, paddingRight: '5rem', ...(insumoSubError?.field === 'cantidad' ? styles.inputError : {}) }}
+                      placeholder="0"
+                      value={insumoCantidad}
+                      onChange={e => { setInsumoCantidad(e.target.value); setInsumoSubError(null); }}
+                    />
+                    <div style={styles.stepperBtns}>
+                      <button type="button" style={styles.stepperBtn} onClick={() => { setInsumoCantidad(String((Number(insumoCantidad) || 0) - 1)); setInsumoSubError(null); }}>−</button>
+                      <button type="button" style={styles.stepperBtn} onClick={() => { setInsumoCantidad(String((Number(insumoCantidad) || 0) + 1)); setInsumoSubError(null); }}>+</button>
+                    </div>
                   </div>
-                </div>
+                )}
                 {insumoSubError?.field === 'cantidad' && <span style={styles.errorText}>{insumoSubError.message}</span>}
               </div>
 
               <div style={styles.formGroup} id="insumo-field-precio">
                 <label style={styles.label}>Precio *</label>
-                <div style={styles.stepperWrap}>
-                  <input
-                    type="number"
-                    step="0.01"
-                    style={{ ...styles.input, paddingRight: '5rem', ...(insumoSubError?.field === 'precio' ? styles.inputError : {}) }}
-                    placeholder="$ 0.00"
-                    value={insumoPrecio}
-                    onChange={e => { setInsumoPrecio(e.target.value); setInsumoSubError(null); }}
-                  />
-                  <div style={styles.stepperBtns}>
-                    <button type="button" style={styles.stepperBtn} onClick={() => { setInsumoPrecio(String((Number(insumoPrecio) || 0) - 100)); setInsumoSubError(null); }}>−</button>
-                    <button type="button" style={styles.stepperBtn} onClick={() => { setInsumoPrecio(String((Number(insumoPrecio) || 0) + 100)); setInsumoSubError(null); }}>+</button>
-                  </div>
-                </div>
+                <span style={styles.readOnlyField}>{insumoPrecio ? formatMoney(Number(insumoPrecio)) : '-'}</span>
                 {insumoSubError?.field === 'precio' && <span style={styles.errorText}>{insumoSubError.message}</span>}
               </div>
 
               <div style={styles.formGroup}>
                 <label style={styles.label}>Tarifa Asociada</label>
-                <span style={styles.medicoTag}>
+                <span style={styles.readOnlyField}>
                   {tarifasCubrimiento.find(t => t.id === requisicionTarifaId)?.nombre ?? requisicionCubrimiento?.nombre ?? '-'}
                 </span>
               </div>
@@ -3987,6 +4063,7 @@ export default function ProgramacionDetailPage() {
         </div>
       )}
       <SuccessToast show={showDocumentoSuccess} message="Documento agregado" onClose={() => setShowDocumentoSuccess(false)} />
+      <SuccessToast show={showInsumoSuccess} message="Insumo agregado" onClose={() => setShowInsumoSuccess(false)} />
       <SuccessToast show={showGmailSuccess} message="PDF enviado al chat de Google" onClose={() => setShowGmailSuccess(false)} />
       <SuccessToast show={!!whatsappCopiedMessage} message={whatsappCopiedMessage ?? ''} onClose={() => setWhatsappCopiedMessage(null)} />
       {selectedCotizacionId && (
@@ -4197,8 +4274,13 @@ const styles: Record<string, React.CSSProperties> = {
   remisionesGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1rem' },
   remList: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', overflowX: 'auto' as const, overflowY: 'hidden' as const },
   emptyState: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', padding: '2rem', textAlign: 'center' as const, color: '#9ca3af', fontSize: '0.875rem' },
-  scrollBody: { height: '135px', overflowY: 'auto' as const, backgroundColor: '#f9fafb' },
-  tecnicoScrollBody: { height: '135px', overflowY: 'auto' as const, backgroundColor: '#f9fafb' },
+  // overflowX explícito porque dejar overflow-x en su valor por defecto ("visible") mientras
+  // overflow-y es "auto" hace que el navegador lo compute también como "auto" (así lo pide el
+  // spec de CSS) — esto creaba una SEGUNDA barra de scroll horizontal propia de este contenedor,
+  // además de la que ya pone remList por fuera (header + body juntos). Con overflowX:'hidden' acá,
+  // solo queda la barra externa de remList.
+  scrollBody: { height: '135px', overflowY: 'auto' as const, overflowX: 'hidden' as const, backgroundColor: '#f9fafb' },
+  tecnicoScrollBody: { height: '135px', overflowY: 'auto' as const, overflowX: 'hidden' as const, backgroundColor: '#f9fafb' },
   remRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem 1.25rem', backgroundColor: '#fff' },
   remGridRow: { display: 'grid', gridTemplateColumns: '1fr 110px 130px', alignItems: 'center', padding: '0.75rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff', minWidth: '420px' },
   remRowBorder: { borderTop: '1px solid #f3f4f6' },
@@ -4236,8 +4318,10 @@ const styles: Record<string, React.CSSProperties> = {
   comisionCategoriaCell: { position: 'sticky' as const, top: 0, zIndex: 1, alignSelf: 'start', display: 'flex', alignItems: 'center', padding: '0.6rem 0', backgroundColor: '#fff', boxShadow: '0 1px 0 #f3f4f6', fontSize: '0.85rem', fontWeight: 700, color: '#374151' },
   comisionTecnicoCell: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 0 0.6rem 0.75rem', overflow: 'hidden', fontSize: '0.85rem', color: '#374151' },
   comisionMontoCell: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0.6rem 1.25rem 0.6rem 0', margin: '0 -1.25rem 0 0', fontSize: '0.85rem', fontWeight: 600, color: '#333' },
-  comisionScrollBody: { minHeight: '110px', maxHeight: '220px', overflowY: 'auto' as const, backgroundColor: '#f9fafb' },
-  requisicionRow: { display: 'grid', gridTemplateColumns: '110px 145px 1fr 90px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '620px' },
+  comisionScrollBody: { minHeight: '110px', maxHeight: '220px', overflowY: 'auto' as const, overflowX: 'hidden' as const, backgroundColor: '#f9fafb' },
+  // 190px porque el id se debe ver completo sin truncar (a diferencia de Usuario, que sí trunca
+  // con "...") — el formato actual es "REQ_0000123_0000001" (~19 caracteres), no un hash largo.
+  requisicionRow: { display: 'grid', gridTemplateColumns: '190px 120px 1fr 90px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '540px' },
   notaCreditoRow: { display: 'grid', gridTemplateColumns: '140px 130px 1fr 130px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '680px' },
   cotizacionRow: { display: 'grid', gridTemplateColumns: '160px 110px minmax(0, 1fr) 130px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff' },
   // En móvil, las 4 columnas de cotizacionRow (160+110+130px fijos) no caben en pantalla y
@@ -4246,8 +4330,12 @@ const styles: Record<string, React.CSSProperties> = {
   cotizacionCardMobile: { display: 'flex', flexDirection: 'column' as const, padding: '0.65rem 1rem', backgroundColor: '#fff' },
   gastoRow: { display: 'grid', gridTemplateColumns: '110px 100px 1fr 180px 110px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '780px' },
   fuenteRow: { display: 'grid', gridTemplateColumns: '140px 120px 1fr 150px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '680px' },
-  documentoRow: { display: 'grid', gridTemplateColumns: '100px 1fr 1fr 150px 180px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '900px' },
-  tabScrollBody: { maxHeight: '320px', overflowY: 'auto' as const },
+  // Antes eran 5 columnas (900px de minWidth) porque "Cargado el" y "Cargado por" iban cada una en
+  // su propia columna — se combinan en una sola celda apilada (fecha arriba, usuario chico abajo,
+  // mismo patrón que mobileCardFechaHora) para que la tarjeta quepa en el ancho normal de media
+  // pantalla sin necesitar scroll horizontal.
+  documentoRow: { display: 'grid', gridTemplateColumns: '110px 1fr 100px 150px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '540px' },
+  tabScrollBody: { maxHeight: '320px', overflowY: 'auto' as const, overflowX: 'hidden' as const },
   requisicionCodigo: { fontSize: '0.78rem', fontWeight: 700, color: '#6b8c1f', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   requisicionCellText: { fontSize: '0.85rem', color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   consumoCellValorUnit: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0.6rem 0', fontSize: '0.85rem', color: '#555' },
@@ -4298,6 +4386,13 @@ const styles: Record<string, React.CSSProperties> = {
   saveBtn: { padding: '0.5rem 1.5rem', backgroundColor: '#6b8c1f', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.875rem' },
   horaGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' },
   sedeGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' },
+  // Mismo estilo que Cubrimiento en Cotizaciones (pickBtnGrid/pickBtn/pickBtnActive): fila que
+  // envuelve (flex-wrap) en vez de una cuadrícula rígida de 3 columnas — esa cuadrícula (sedeGrid,
+  // reusada por muchos otros campos de este archivo, no se toca) no se adapta bien en móvil, las
+  // opciones de Cubrimiento quedaban muy angostas/apretadas.
+  pickBtnGrid: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.5rem' },
+  pickBtn: { padding: '0.5rem 0.9rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', color: '#6b7280', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, display: 'flex', alignItems: 'center', gap: '0.5rem' },
+  pickBtnActive: { backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' },
   sedeBtn: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 0.75rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', color: '#374151', fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const },
   sedeBtnActive: { backgroundColor: '#6b8c1f', border: '1px solid #6b8c1f', color: '#fff' },
   // Variante usada solo en el modal Editar Programación, para que coincida con el verde suave

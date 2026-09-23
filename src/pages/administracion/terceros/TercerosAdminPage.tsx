@@ -1,9 +1,11 @@
-import { useState, useEffect, useRef, memo } from 'react';
+﻿import { useState, useEffect, useRef, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { Search, X, Plus, CheckCircle, Circle } from 'lucide-react';
+import { Search, X, Plus } from 'lucide-react';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
+import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import SuccessToast from '../../../components/SuccessToast';
+import OptionDropdown from '../../../components/OptionDropdown';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import {
@@ -58,9 +60,10 @@ const CLASIFICACION_LABEL: Record<ClasificacionTercero, string> = {
   PROVEEDOR: 'Proveedor', SEDE: 'Sede', ALMACEN: 'Almacén', GRUPO: 'Grupo', OTROS: 'Otros',
 };
 
-// Solo letras/acentos/espacios y puntuación básica de nombres — sin números.
-const sanitizeText = (value: string): string => value.replace(/[^A-Za-zÀ-ÿ\s.,'-]/g, '');
 const sanitizeInt = (value: string): string => value.replace(/[^\d]/g, '');
+// Nombre/apellidos/persona de contacto no pueden traer números, pero sí se permite cualquier otro
+// carácter especial.
+const stripDigits = (value: string): string => value.replace(/[0-9]/g, '');
 
 const autoResizeTextarea = (el: HTMLTextAreaElement | null) => {
   if (!el) return;
@@ -164,6 +167,7 @@ function DetalleModal({ item, onClose, onUpdated }: { item: TerceroItem; onClose
     queryKey: ['tercero-detalle', item.id],
     queryFn: () => tercerosAdminService.findOne(item.id),
   });
+
 
   const { data: catalogos } = useQuery<TercerosCatalogos>({
     queryKey: ['terceros-catalogos'],
@@ -508,18 +512,18 @@ function DetalleModal({ item, onClose, onUpdated }: { item: TerceroItem; onClose
 
 function ClasificacionPicker({ value, onToggle }: { value: ClasificacionTercero[]; onToggle: (c: ClasificacionTercero) => void }) {
   return (
-    <div style={styles.pillGrid}>
+    <div style={styles.pickBtnGrid}>
       {CLASIFICACIONES_TERCERO.map(c => {
         const active = value.includes(c);
         return (
           <button
             key={c}
             type="button"
-            style={{ ...styles.pillBtn, ...(active ? styles.pillBtnActive : {}) }}
+            style={{ ...styles.pickBtn, ...(active ? styles.pickBtnActive : {}) }}
             onMouseDown={e => e.preventDefault()}
             onClick={e => { onToggle(c); e.currentTarget.blur(); }}
           >
-            {active ? <CheckCircle size={14} /> : <Circle size={14} />} {CLASIFICACION_LABEL[c]}
+            {CLASIFICACION_LABEL[c]}
           </button>
         );
       })}
@@ -529,22 +533,22 @@ function ClasificacionPicker({ value, onToggle }: { value: ClasificacionTercero[
 
 function SiNoPicker({ value, onChange, siLabel = 'Sí', noLabel = 'No' }: { value: boolean; onChange: (v: boolean) => void; siLabel?: string; noLabel?: string }) {
   return (
-    <div style={styles.pillGrid}>
+    <div style={styles.pickBtnGrid}>
       <button
         type="button"
-        style={{ ...styles.pillBtn, ...(!value ? styles.pillBtnActive : {}) }}
+        style={{ ...styles.pickBtn, ...(!value ? styles.pickBtnActive : {}) }}
         onMouseDown={e => e.preventDefault()}
         onClick={e => { onChange(false); e.currentTarget.blur(); }}
       >
-        {!value ? <CheckCircle size={14} /> : <Circle size={14} />} {noLabel}
+        {noLabel}
       </button>
       <button
         type="button"
-        style={{ ...styles.pillBtn, ...(value ? styles.pillBtnActive : {}) }}
+        style={{ ...styles.pickBtn, ...(value ? styles.pickBtnActive : {}) }}
         onMouseDown={e => e.preventDefault()}
         onClick={e => { onChange(true); e.currentTarget.blur(); }}
       >
-        {value ? <CheckCircle size={14} /> : <Circle size={14} />} {siLabel}
+        {siLabel}
       </button>
     </div>
   );
@@ -577,16 +581,11 @@ function ContactoFields({ value, onChange, error, idPrefix = '' }: {
     <div style={styles.optionalBox}>
       <div style={styles.formGroup}>
         <label style={styles.formLabel}>Tipo *</label>
-        <select
-          style={styles.formInput}
+        <OptionDropdown
           value={value.tipo}
-          onChange={e => {
-            const tipo = e.target.value as TipoContacto;
-            onChange({ tipo, dato: sanitizeDatoContacto(tipo, value.dato) });
-          }}
-        >
-          {TIPOS_CONTACTO.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
+          options={TIPOS_CONTACTO.map(t => ({ id: t, label: t }))}
+          onChange={tipo => onChange({ tipo: tipo as TipoContacto, dato: sanitizeDatoContacto(tipo as TipoContacto, value.dato) })}
+        />
       </div>
       <div style={styles.formGroup} id={`${idPrefix}tercero-field-contactoDato`}>
         <label style={styles.formLabel}>{DATO_CONTACTO_LABEL[value.tipo]} *</label>
@@ -601,7 +600,7 @@ function ContactoFields({ value, onChange, error, idPrefix = '' }: {
       </div>
       <div style={styles.formGroup} id={`${idPrefix}tercero-field-personaContacto`}>
         <label style={styles.formLabel}>Persona de contacto *</label>
-        <input style={{ ...styles.formInput, ...(error?.field === 'personaContacto' ? styles.inputError : {}) }} value={value.personaContacto ?? ''} onChange={e => onChange({ personaContacto: sanitizeText(e.target.value) })} />
+        <input style={{ ...styles.formInput, ...(error?.field === 'personaContacto' ? styles.inputError : {}) }} value={value.personaContacto ?? ''} onChange={e => onChange({ personaContacto: stripDigits(e.target.value) })} />
         {error?.field === 'personaContacto' && <span style={styles.errorText}>{error.message}</span>}
       </div>
       <div style={styles.formGroup}>
@@ -633,9 +632,11 @@ function CuentaFields({ value, catalogos, onChange, error, idPrefix = '' }: {
       </div>
       <div style={styles.formGroup} id={`${idPrefix}tercero-field-cuentaTipo`}>
         <label style={styles.formLabel}>Tipo *</label>
-        <select style={styles.formInput} value={value.tipo} onChange={e => onChange({ tipo: e.target.value as TipoCuenta })}>
-          {TIPOS_CUENTA.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
+        <OptionDropdown
+          value={value.tipo}
+          options={TIPOS_CUENTA.map(t => ({ id: t, label: t }))}
+          onChange={tipo => onChange({ tipo: tipo as TipoCuenta })}
+        />
       </div>
       {!esEfectivo && (
         <>
@@ -881,7 +882,7 @@ function TerceroFormFields({ form, onChange, catalogos, error, extraSections }: 
         <input
           style={{ ...styles.formInput, ...(error?.field === 'primerNombre' ? styles.inputError : {}) }}
           value={form.primerNombre}
-          onChange={e => onChange({ primerNombre: sanitizeText(e.target.value) })}
+          onChange={e => onChange({ primerNombre: form.tipoPersona ? e.target.value : stripDigits(e.target.value) })}
         />
         {error?.field === 'primerNombre' && <span style={styles.errorText}>{error.message}</span>}
       </div>
@@ -893,7 +894,7 @@ function TerceroFormFields({ form, onChange, catalogos, error, extraSections }: 
             <input
               style={{ ...styles.formInput, ...(error?.field === 'segundoNombre' ? styles.inputError : {}) }}
               value={form.segundoNombre}
-              onChange={e => onChange({ segundoNombre: sanitizeText(e.target.value) })}
+              onChange={e => onChange({ segundoNombre: stripDigits(e.target.value) })}
             />
             {error?.field === 'segundoNombre' && <span style={styles.errorText}>{error.message}</span>}
           </div>
@@ -903,7 +904,7 @@ function TerceroFormFields({ form, onChange, catalogos, error, extraSections }: 
             <input
               style={{ ...styles.formInput, ...(error?.field === 'primerApellido' ? styles.inputError : {}) }}
               value={form.primerApellido}
-              onChange={e => onChange({ primerApellido: sanitizeText(e.target.value) })}
+              onChange={e => onChange({ primerApellido: stripDigits(e.target.value) })}
             />
             {error?.field === 'primerApellido' && <span style={styles.errorText}>{error.message}</span>}
           </div>
@@ -913,7 +914,7 @@ function TerceroFormFields({ form, onChange, catalogos, error, extraSections }: 
             <input
               style={{ ...styles.formInput, ...(error?.field === 'segundoApellido' ? styles.inputError : {}) }}
               value={form.segundoApellido}
-              onChange={e => onChange({ segundoApellido: sanitizeText(e.target.value) })}
+              onChange={e => onChange({ segundoApellido: stripDigits(e.target.value) })}
             />
             {error?.field === 'segundoApellido' && <span style={styles.errorText}>{error.message}</span>}
           </div>
@@ -932,40 +933,37 @@ function TerceroFormFields({ form, onChange, catalogos, error, extraSections }: 
 
       <div style={styles.formGroup} id="tercero-field-paisId">
         <label style={styles.formLabel}>País *</label>
-        <select
-          style={{ ...styles.formInput, ...(error?.field === 'paisId' ? styles.inputError : {}) }}
+        <OptionDropdown
+          searchable
+          error={error?.field === 'paisId'}
           value={form.paisId}
-          onChange={e => onChange({ paisId: e.target.value, estadoId: '', ciudadId: '' })}
-        >
-          <option value="">Selecciona...</option>
-          {catalogos.paises.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-        </select>
+          options={catalogos.paises.map(p => ({ id: p.id, label: p.nombre }))}
+          onChange={paisId => onChange({ paisId, estadoId: '', ciudadId: '' })}
+        />
         {error?.field === 'paisId' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
       <div style={styles.formGroup} id="tercero-field-estadoId">
         <label style={styles.formLabel}>Estado *</label>
-        <select
-          style={{ ...styles.formInput, ...(error?.field === 'estadoId' ? styles.inputError : {}) }}
+        <OptionDropdown
+          searchable
+          error={error?.field === 'estadoId'}
           value={form.estadoId}
-          onChange={e => onChange({ estadoId: e.target.value, ciudadId: '' })}
-        >
-          <option value="">Selecciona...</option>
-          {estadosFiltrados.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}
-        </select>
+          options={estadosFiltrados.map(e => ({ id: e.id, label: e.nombre }))}
+          onChange={estadoId => onChange({ estadoId, ciudadId: '' })}
+        />
         {error?.field === 'estadoId' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
       <div style={styles.formGroup} id="tercero-field-ciudadId">
         <label style={styles.formLabel}>Ciudad *</label>
-        <select
-          style={{ ...styles.formInput, ...(error?.field === 'ciudadId' ? styles.inputError : {}) }}
+        <OptionDropdown
+          searchable
+          error={error?.field === 'ciudadId'}
           value={form.ciudadId}
-          onChange={e => onChange({ ciudadId: e.target.value })}
-        >
-          <option value="">Selecciona...</option>
-          {ciudadesFiltradas.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-        </select>
+          options={ciudadesFiltradas.map(c => ({ id: c.id, label: c.nombre }))}
+          onChange={ciudadId => onChange({ ciudadId })}
+        />
         {error?.field === 'ciudadId' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -1010,10 +1008,13 @@ function TerceroFormFields({ form, onChange, catalogos, error, extraSections }: 
           </div>
           <div style={styles.formGroup} id="tercero-field-regimenFiscalId">
             <label style={styles.formLabel}>Régimen fiscal *</label>
-            <select style={{ ...styles.formInput, ...(error?.field === 'regimenFiscalId' ? styles.inputError : {}) }} value={form.regimenFiscalId} onChange={e => onChange({ regimenFiscalId: e.target.value })}>
-              <option value="">Selecciona...</option>
-              {catalogos.regimenesFiscales.map(r => <option key={r.id} value={r.id}>{r.descripcion}</option>)}
-            </select>
+            <OptionDropdown
+              searchable
+              error={error?.field === 'regimenFiscalId'}
+              value={form.regimenFiscalId}
+              options={catalogos.regimenesFiscales.map(r => ({ id: r.id, label: r.descripcion }))}
+              onChange={regimenFiscalId => onChange({ regimenFiscalId })}
+            />
             {error?.field === 'regimenFiscalId' && <span style={styles.errorText}>{error.message}</span>}
           </div>
           <div style={styles.formGroup} id="tercero-field-codigoPostalFiscal">
@@ -1023,10 +1024,13 @@ function TerceroFormFields({ form, onChange, catalogos, error, extraSections }: 
           </div>
           <div style={styles.formGroup} id="tercero-field-usoCfdiId">
             <label style={styles.formLabel}>Uso CFDI *</label>
-            <select style={{ ...styles.formInput, ...(error?.field === 'usoCfdiId' ? styles.inputError : {}) }} value={form.usoCfdiId} onChange={e => onChange({ usoCfdiId: e.target.value })}>
-              <option value="">Selecciona...</option>
-              {catalogos.usosCfdi.map(u => <option key={u.id} value={u.id}>{u.descripcion}</option>)}
-            </select>
+            <OptionDropdown
+              searchable
+              error={error?.field === 'usoCfdiId'}
+              value={form.usoCfdiId}
+              options={catalogos.usosCfdi.map(u => ({ id: u.id, label: u.descripcion }))}
+              onChange={usoCfdiId => onChange({ usoCfdiId })}
+            />
             {error?.field === 'usoCfdiId' && <span style={styles.errorText}>{error.message}</span>}
           </div>
           <div style={styles.formGroup} id="tercero-field-direccionFiscal">
@@ -1038,16 +1042,13 @@ function TerceroFormFields({ form, onChange, catalogos, error, extraSections }: 
       )}
       <div style={styles.formGroup}>
         <label style={styles.formLabel}>Grupo</label>
-        <input
-          style={styles.formInput}
-          list="terceros-grupos-datalist"
+        <OptionDropdown
           value={form.grupo}
-          onChange={e => onChange({ grupo: e.target.value })}
-          placeholder="Ej. Operadora de Hospitales Angeles"
+          options={catalogos.grupos.map(g => ({ id: g, label: g }))}
+          onChange={grupo => onChange({ grupo })}
+          searchable
+          placeholder="Selecciona..."
         />
-        <datalist id="terceros-grupos-datalist">
-          {catalogos.grupos.map(g => <option key={g} value={g} />)}
-        </datalist>
       </div>
     </>
   );
@@ -1178,7 +1179,6 @@ function NuevoTerceroModal({ catalogos, onClose, onCreated }: {
           </button>
         </div>
         <div style={styles.modalBody}>
-          <span style={styles.sectionHeader}>Registro</span>
           <div style={styles.formGroup}>
             <label style={styles.formLabel}>Registrado por *</label>
             <span style={styles.selectedTag}>{usuarioActual().correo ?? '-'}</span>
@@ -1307,20 +1307,16 @@ export default function TercerosAdminPage() {
   return (
     <>
       <div style={styles.pageWrapper}>
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          style={styles.backLink}
-          onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}
-        >
-          <MaterialIcon name="arrow_back" size={16} />
-          Volver
-        </button>
-
         <div style={{ ...styles.contentCard, ...(isStuck ? styles.contentCardStuck : {}) }}>
           <div style={styles.header}>
-            <h1 style={styles.title}>Terceros</h1>
+            <HeaderBackReveal
+              onBack={() => navigate(-1)}
+              icon={<MaterialIcon name="groups" size={26} color="#4d7a13" />}
+              size={50}
+              badgeRadius={16}
+            >
+              <h1 style={styles.title}>Terceros</h1>
+            </HeaderBackReveal>
           </div>
 
           <div style={styles.toolbar}>
@@ -1425,7 +1421,6 @@ export default function TercerosAdminPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   pageWrapper: { padding: '0.05rem 1.5rem 1.5rem' },
-  backLink: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem', padding: '0.25rem 0.1rem', border: 'none', background: 'transparent', color: '#6b7280', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, transition: 'color 0.15s ease' },
   contentCard: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '16px', padding: '1.25rem', marginBottom: '1.5rem', position: 'sticky' as const, top: '60px', zIndex: 10, boxShadow: '0 0 0 rgba(0,0,0,0)', transition: 'box-shadow 0.2s ease, border-color 0.2s ease' },
   contentCardStuck: { boxShadow: '0 8px 20px rgba(0,0,0,0.08)', border: '1px solid #e5e7eb' },
   header: { marginBottom: '1.25rem' },
@@ -1497,9 +1492,11 @@ const styles: Record<string, React.CSSProperties> = {
   inputError: { borderColor: '#dc2626' },
   errorText: { fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 },
   selectedTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#f3f4f6', color: '#333', fontSize: '0.8rem', fontWeight: 600, width: 'fit-content' as const },
-  pillGrid: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.5rem' },
-  pillBtn: { display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.4rem 0.75rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', color: '#374151', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const },
-  pillBtnActive: { backgroundColor: '#6b8c1f', border: '1px solid #6b8c1f', color: '#fff' },
+  // Formato compartido por SiNoPicker y ClasificacionPicker — mismo estilo que Cubrimiento en
+  // Cotizaciones (pill suave, sin ícono).
+  pickBtnGrid: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.5rem' },
+  pickBtn: { padding: '0.4rem 0.75rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', color: '#6b7280', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const },
+  pickBtnActive: { backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' },
   formActions: { display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' },
   cancelBtn: { padding: '0.5rem 1.25rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', color: '#333' },
   saveBtn: { padding: '0.5rem 1.25rem', backgroundColor: '#6b8c1f', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' },

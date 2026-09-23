@@ -56,8 +56,19 @@ export default function DatePicker({ value, onChange, min, max, error, placehold
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
       const menuWidth = 280;
+      // Alto aproximado del calendario (header + fila de días de la semana + hasta 6 filas de
+      // días) — antes siempre se abría pegado justo debajo del campo sin importar cuánto espacio
+      // quedara, así que en campos cerca del borde inferior de la pantalla (común en formularios
+      // largos en móvil, ej. Fecha QX) se salía por abajo. Simplemente "abrir hacia arriba" en ese
+      // caso no alcanza si tampoco hay espacio arriba (pantallas cortas) — en vez de elegir un
+      // lado, se prefiere pegado debajo del campo pero deslizándolo hacia arriba lo necesario para
+      // que quepa completo en la pantalla, nunca más arriba de 8px del borde superior.
+      const menuHeightEstimate = 340;
       const left = Math.min(rect.left, window.innerWidth - menuWidth - 12);
-      setMenuPos({ top: rect.bottom + 6, left: Math.max(12, left) });
+      const idealTop = rect.bottom + 6;
+      const maxTop = window.innerHeight - menuHeightEstimate - 8;
+      const top = Math.max(8, Math.min(idealTop, maxTop));
+      setMenuPos({ top, left: Math.max(12, left) });
     };
     reposition();
     window.addEventListener('scroll', reposition, true);
@@ -255,6 +266,9 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: '#fff', borderRadius: '12px', padding: '0.85rem',
     boxShadow: '0 8px 32px rgba(0,0,0,0.14)', border: '1px solid #e5e7eb',
     width: '280px', boxSizing: 'border-box',
+    // Último resguardo para pantallas muy cortas donde ni deslizándolo hacia arriba cabe entero
+    // (ver el clamp de "top" en reposition): en vez de cortarse, scrollea internamente.
+    maxHeight: 'calc(100dvh - 16px)', overflowY: 'auto' as const,
   },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.6rem' },
   navBtn: {

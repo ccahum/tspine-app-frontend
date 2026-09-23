@@ -692,8 +692,8 @@ export const remisionesService = {
   searchLotes: (search?: string): Promise<LoteOption[]> =>
     api.get('/operacion/remisiones/lotes', { params: { search } }).then(r => r.data),
 
-  searchProductos: (search?: string): Promise<ProductoOption[]> =>
-    api.get('/operacion/remisiones/productos', { params: { search } }).then(r => r.data),
+  searchProductos: (search?: string, tarifaId?: string): Promise<ProductoOption[]> =>
+    api.get('/operacion/remisiones/productos', { params: { search, tarifaId } }).then(r => r.data),
 
   findNotasCreditoByProgramacion: (programacionId: string): Promise<NotaCreditoItem[]> =>
     api.get('/operacion/remisiones/notas-credito', { params: { programacionId } }).then(r => r.data),

@@ -1,5 +1,4 @@
 import { useState, useEffect, useLayoutEffect, useRef, memo } from 'react';
-import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
@@ -1976,45 +1975,9 @@ function ListPicker({ label, required, options, valueId, valueLabel, onSelect, i
 }) {
   const [search, setSearch] = useState('');
   const [focused, setFocused] = useState(false);
-  const [menuPos, setMenuPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number }>({ top: 0, left: 0, width: 0, maxHeight: 220 });
-  const triggerRef = useRef<HTMLInputElement>(null);
   const filtered = search.trim()
     ? options.filter(o => (o.nombre ?? '').toLowerCase().includes(search.trim().toLowerCase()))
     : options;
-
-  // El dropdown se porta a document.body (mismo patrón que DatePicker) en vez de quedar como
-  // position:absolute dentro del formulario — si no, el overflow:auto del modal lo recortaba.
-  // Pero portarlo sin más lo hacía verse "flotando" fuera de la tarjeta del modal cuando el campo
-  // caía cerca de su borde inferior — acá se limita al área visible de la tarjeta (no del
-  // viewport completo): si no cabe abajo, se abre hacia arriba, y su alto máximo se ajusta al
-  // espacio real disponible para que nunca se salga de la tarjeta en ninguna dirección.
-  useLayoutEffect(() => {
-    if (!focused) return;
-    const reposition = () => {
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const modalRect = triggerRef.current?.closest<HTMLElement>('.modal-content-anim')?.getBoundingClientRect();
-      const bound = modalRect ?? { top: 0, bottom: window.innerHeight };
-      const spaceBelow = bound.bottom - rect.bottom - 6;
-      const spaceAbove = rect.top - bound.top - 6;
-      const openAbove = spaceBelow < 140 && spaceAbove > spaceBelow;
-      const maxHeight = Math.max(90, Math.min(220, openAbove ? spaceAbove : spaceBelow));
-      setMenuPos({
-        top: openAbove ? undefined : rect.bottom + 6,
-        bottom: openAbove ? window.innerHeight - rect.top + 6 : undefined,
-        left: rect.left,
-        width: rect.width,
-        maxHeight,
-      });
-    };
-    reposition();
-    window.addEventListener('scroll', reposition, true);
-    window.addEventListener('resize', reposition);
-    return () => {
-      window.removeEventListener('scroll', reposition, true);
-      window.removeEventListener('resize', reposition);
-    };
-  }, [focused]);
 
   return (
     <div style={styles.formGroup} id={id}>
@@ -2031,7 +1994,6 @@ function ListPicker({ label, required, options, valueId, valueLabel, onSelect, i
       ) : (
         <div style={{ position: 'relative' as const }}>
           <input
-            ref={triggerRef}
             style={{ ...styles.formInput, ...(error ? styles.inputError : {}) }}
             placeholder={`Buscar ${label.toLowerCase()}...`}
             value={search}
@@ -2039,8 +2001,8 @@ function ListPicker({ label, required, options, valueId, valueLabel, onSelect, i
             onFocus={() => setFocused(true)}
             onBlur={() => setTimeout(() => setFocused(false), 150)}
           />
-          {focused && createPortal(
-            <div style={{ ...styles.medicoDropdown, position: 'fixed' as const, top: menuPos.top, bottom: menuPos.bottom, left: menuPos.left, width: menuPos.width, maxHeight: menuPos.maxHeight, right: 'auto' as const, zIndex: 10050 }}>
+          {focused && (
+            <div style={styles.medicoDropdown}>
               {filtered.length === 0 ? (
                 <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
               ) : (
@@ -2050,8 +2012,7 @@ function ListPicker({ label, required, options, valueId, valueLabel, onSelect, i
                   </div>
                 ))
               )}
-            </div>,
-            document.body,
+            </div>
           )}
         </div>
       )}
@@ -2294,7 +2255,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-dirigidoA">
         <label style={styles.formLabel}>Dirigido a *</label>
-        <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} sanitize={sanitizeCirugiaDirigido} onChange={dirigidoA => { setForm({ ...form, dirigidoA }); setError(null); }} />
+        <input style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} onChange={e => { setForm({ ...form, dirigidoA: e.target.value }); setError(null); }} />
         {error?.field === 'dirigidoA' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -2327,7 +2288,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-cirugia">
         <label style={styles.formLabel}>Cirugía *</label>
-        <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} sanitize={sanitizeCirugiaDirigido} onChange={cirugia => { setForm({ ...form, cirugia }); setError(null); }} />
+        <input style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} onChange={e => { setForm({ ...form, cirugia: e.target.value }); setError(null); }} />
         {error?.field === 'cirugia' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -2383,16 +2344,19 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-sede">
         <label style={styles.formLabel}>Sede *</label>
-        <select
-          style={{ ...styles.formInput, ...(error?.field === 'sede' ? styles.inputError : {}) }}
-          value={form.sedeId}
-          onChange={e => { setForm({ ...form, sedeId: e.target.value }); setError(null); }}
-        >
-          <option value="" disabled hidden>Selecciona...</option>
+        <div style={styles.pickBtnGrid}>
           {sedeOptions.map(s => (
-            <option key={s.id} value={s.id}>{s.nombre}</option>
+            <button
+              key={s.id}
+              type="button"
+              style={{ ...styles.pickBtn, ...(form.sedeId === s.id ? styles.pickBtnActive : {}), ...(error?.field === 'sede' ? styles.inputError : {}) }}
+              onMouseDown={e => e.preventDefault()}
+              onClick={e => { setForm({ ...form, sedeId: s.id }); setError(null); e.currentTarget.blur(); }}
+            >
+              {s.nombre}
+            </button>
           ))}
-        </select>
+        </div>
         {error?.field === 'sede' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -2411,13 +2375,18 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-tiempoEntrega">
         <label style={styles.formLabel}>Tiempo de Entrega{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
-        <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'tiempoEntrega' ? styles.inputError : {}) }} value={form.tiempoEntrega} sanitize={sanitizeCirugiaDirigido} onChange={tiempoEntrega => { setForm({ ...form, tiempoEntrega }); setError(null); }} />
+        <input style={{ ...styles.formInput, ...(error?.field === 'tiempoEntrega' ? styles.inputError : {}) }} value={form.tiempoEntrega} onChange={e => { setForm({ ...form, tiempoEntrega: e.target.value }); setError(null); }} />
         {error?.field === 'tiempoEntrega' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
       <div style={styles.formGroup}>
         <label style={styles.formLabel}>Observaciones</label>
-        <SanitizedTextarea style={styles.formInput} value={form.observaciones} sanitize={sanitizeObservaciones} onChange={observaciones => setForm({ ...form, observaciones })} />
+        <textarea
+          ref={autoResizeTextarea}
+          style={{ ...styles.formInput, minHeight: '44px', resize: 'none' as const, overflow: 'hidden' as const }}
+          value={form.observaciones}
+          onChange={e => { setForm({ ...form, observaciones: e.target.value }); autoResizeTextarea(e.target); }}
+        />
       </div>
 
       <ListPicker
@@ -2604,9 +2573,10 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
       <div style={styles.formGroup}>
         <label style={styles.formLabel}>¿Tiene Descuento? *</label>
         <div style={styles.pickBtnGrid}>
-          <button type="button" style={{ ...styles.pickBtn, ...(!form.tieneDcto ? styles.pickBtnActive : {}) }} onMouseDown={e => e.preventDefault()} onClick={e => { setForm({ ...form, tieneDcto: false }); e.currentTarget.blur(); }}>No</button>
-          <button type="button" style={{ ...styles.pickBtn, ...(form.tieneDcto ? styles.pickBtnActive : {}) }} onMouseDown={e => e.preventDefault()} onClick={e => { setForm({ ...form, tieneDcto: true }); e.currentTarget.blur(); }}>Sí</button>
+          <button type="button" disabled={subtotal <= 0} style={{ ...styles.pickBtn, ...(!form.tieneDcto ? styles.pickBtnActive : {}), ...(subtotal <= 0 ? styles.pickBtnDisabled : {}) }} onMouseDown={e => e.preventDefault()} onClick={e => { setForm({ ...form, tieneDcto: false }); e.currentTarget.blur(); }}>No</button>
+          <button type="button" disabled={subtotal <= 0} style={{ ...styles.pickBtn, ...(form.tieneDcto ? styles.pickBtnActive : {}), ...(subtotal <= 0 ? styles.pickBtnDisabled : {}) }} onMouseDown={e => e.preventDefault()} onClick={e => { setForm({ ...form, tieneDcto: true }); e.currentTarget.blur(); }}>Sí</button>
         </div>
+        {subtotal <= 0 && <span style={{ fontSize: '0.78rem', color: '#9ca3af' }}>Agrega productos con un valor mayor a $0.00 para poder elegir.</span>}
       </div>
 
       {form.tieneDcto && (
@@ -2674,7 +2644,8 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
             <button
               key={opt}
               type="button"
-              style={{ ...styles.pickBtn, ...(form.impuestos === opt ? styles.pickBtnActive : {}), ...(error?.field === 'impuestos' ? styles.inputError : {}) }}
+              disabled={subtotal <= 0}
+              style={{ ...styles.pickBtn, ...(form.impuestos === opt ? styles.pickBtnActive : {}), ...(subtotal <= 0 ? styles.pickBtnDisabled : {}), ...(error?.field === 'impuestos' ? styles.inputError : {}) }}
               onMouseDown={e => e.preventDefault()}
               onClick={e => { setForm({ ...form, impuestos: opt }); setError(null); e.currentTarget.blur(); }}
             >
@@ -2682,6 +2653,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
             </button>
           ))}
         </div>
+        {subtotal <= 0 && <span style={{ fontSize: '0.78rem', color: '#9ca3af' }}>Agrega productos con un valor mayor a $0.00 para poder elegir.</span>}
         {error?.field === 'impuestos' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -2972,7 +2944,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-dirigidoA">
               <label style={styles.formLabel}>Dirigido a *</label>
-              <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} sanitize={sanitizeCirugiaDirigido} onChange={dirigidoA => { setForm({ ...form, dirigidoA }); setError(null); }} />
+              <input style={{ ...styles.formInput, ...(error?.field === 'dirigidoA' ? styles.inputError : {}) }} value={form.dirigidoA} onChange={e => { setForm({ ...form, dirigidoA: e.target.value }); setError(null); }} />
               {error?.field === 'dirigidoA' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
@@ -3021,7 +2993,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                   Selecciona primero el hospital
                 </span>
               ) : (
-                <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} sanitize={sanitizeCirugiaDirigido} onChange={cirugia => { setForm({ ...form, cirugia }); setError(null); }} />
+                <input style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} onChange={e => { setForm({ ...form, cirugia: e.target.value }); setError(null); }} />
               )}
               {error?.field === 'cirugia' && <span style={styles.errorText}>{error.message}</span>}
             </div>
@@ -3089,16 +3061,19 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-sede">
               <label style={styles.formLabel}>Sede *</label>
-              <select
-                style={{ ...styles.formInput, ...(error?.field === 'sede' ? styles.inputError : {}) }}
-                value={form.sedeId}
-                onChange={e => { setForm({ ...form, sedeId: e.target.value }); setError(null); }}
-              >
-                <option value="" disabled hidden>Selecciona...</option>
+              <div style={styles.pickBtnGrid}>
                 {sedeOptions.map(s => (
-                  <option key={s.id} value={s.id}>{s.nombre}</option>
+                  <button
+                    key={s.id}
+                    type="button"
+                    style={{ ...styles.pickBtn, ...(form.sedeId === s.id ? styles.pickBtnActive : {}), ...(error?.field === 'sede' ? styles.inputError : {}) }}
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={e => { setForm({ ...form, sedeId: s.id }); setError(null); e.currentTarget.blur(); }}
+                  >
+                    {s.nombre}
+                  </button>
                 ))}
-              </select>
+              </div>
               {error?.field === 'sede' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
@@ -3117,13 +3092,18 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-tiempoEntrega">
               <label style={styles.formLabel}>Tiempo de Entrega{form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID ? ' *' : ''}</label>
-              <SanitizedInput style={{ ...styles.formInput, ...(error?.field === 'tiempoEntrega' ? styles.inputError : {}) }} value={form.tiempoEntrega} sanitize={sanitizeCirugiaDirigido} onChange={tiempoEntrega => { setForm({ ...form, tiempoEntrega }); setError(null); }} />
+              <input style={{ ...styles.formInput, ...(error?.field === 'tiempoEntrega' ? styles.inputError : {}) }} value={form.tiempoEntrega} onChange={e => { setForm({ ...form, tiempoEntrega: e.target.value }); setError(null); }} />
               {error?.field === 'tiempoEntrega' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Observaciones</label>
-              <SanitizedTextarea style={styles.formInput} value={form.observaciones} sanitize={sanitizeObservaciones} onChange={observaciones => setForm({ ...form, observaciones })} />
+              <textarea
+                ref={autoResizeTextarea}
+                style={{ ...styles.formInput, minHeight: '44px', resize: 'none' as const, overflow: 'hidden' as const }}
+                value={form.observaciones}
+                onChange={e => { setForm({ ...form, observaciones: e.target.value }); autoResizeTextarea(e.target); }}
+              />
             </div>
 
             <ListPicker
@@ -3306,9 +3286,10 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>¿Tiene Descuento? *</label>
               <div style={styles.pickBtnGrid}>
-                <button type="button" style={{ ...styles.pickBtn, ...(!form.tieneDcto ? styles.pickBtnActive : {}) }} onMouseDown={e => e.preventDefault()} onClick={e => { setForm({ ...form, tieneDcto: false }); e.currentTarget.blur(); }}>No</button>
-                <button type="button" style={{ ...styles.pickBtn, ...(form.tieneDcto ? styles.pickBtnActive : {}) }} onMouseDown={e => e.preventDefault()} onClick={e => { setForm({ ...form, tieneDcto: true }); e.currentTarget.blur(); }}>Sí</button>
+                <button type="button" disabled={subtotal <= 0} style={{ ...styles.pickBtn, ...(!form.tieneDcto ? styles.pickBtnActive : {}), ...(subtotal <= 0 ? styles.pickBtnDisabled : {}) }} onMouseDown={e => e.preventDefault()} onClick={e => { setForm({ ...form, tieneDcto: false }); e.currentTarget.blur(); }}>No</button>
+                <button type="button" disabled={subtotal <= 0} style={{ ...styles.pickBtn, ...(form.tieneDcto ? styles.pickBtnActive : {}), ...(subtotal <= 0 ? styles.pickBtnDisabled : {}) }} onMouseDown={e => e.preventDefault()} onClick={e => { setForm({ ...form, tieneDcto: true }); e.currentTarget.blur(); }}>Sí</button>
               </div>
+              {subtotal <= 0 && <span style={{ fontSize: '0.78rem', color: '#9ca3af' }}>Agrega productos con un valor mayor a $0.00 para poder elegir.</span>}
             </div>
 
             {form.tieneDcto && (
@@ -3376,7 +3357,8 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                   <button
                     key={opt}
                     type="button"
-                    style={{ ...styles.pickBtn, ...(form.impuestos === opt ? styles.pickBtnActive : {}), ...(error?.field === 'impuestos' ? styles.inputError : {}) }}
+                    disabled={subtotal <= 0}
+                    style={{ ...styles.pickBtn, ...(form.impuestos === opt ? styles.pickBtnActive : {}), ...(subtotal <= 0 ? styles.pickBtnDisabled : {}), ...(error?.field === 'impuestos' ? styles.inputError : {}) }}
                     onMouseDown={e => e.preventDefault()}
                     onClick={e => { setForm({ ...form, impuestos: opt }); setError(null); e.currentTarget.blur(); }}
                   >
@@ -3384,6 +3366,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                   </button>
                 ))}
               </div>
+              {subtotal <= 0 && <span style={{ fontSize: '0.78rem', color: '#9ca3af' }}>Agrega productos con un valor mayor a $0.00 para poder elegir.</span>}
               {error?.field === 'impuestos' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
