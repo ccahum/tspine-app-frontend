@@ -195,7 +195,7 @@ function ProgramacionPickerModal({ onClose, onSelect }: { onClose: () => void; o
   };
 
   return (
-    <div className={closing ? 'modal-overlay-closing' : 'modal-overlay-anim'} style={styles.modalOverlay} onClick={closing ? undefined : onClose}>
+    <div className={closing ? 'modal-overlay-closing' : 'modal-overlay-anim'} style={styles.modalOverlay}>
       <div className="modal-content-anim" style={styles.modalBox} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <div>

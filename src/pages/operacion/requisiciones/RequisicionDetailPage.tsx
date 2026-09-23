@@ -385,7 +385,7 @@ export default function RequisicionDetailPage() {
       </div>
 
       {selectedInsumo && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setSelectedInsumo(null)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setSelectedInsumo(null)}>
@@ -414,7 +414,7 @@ export default function RequisicionDetailPage() {
       )}
 
       {showDeleteConfirm && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => { if (!deleteRequisicionMutation.isPending) setShowDeleteConfirm(false); }}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={{ ...styles.editModalContent, maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <h2 style={styles.modalTitle}>Eliminar Requisición</h2>
@@ -447,7 +447,7 @@ export default function RequisicionDetailPage() {
       )}
 
       {showEditModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowEditModal(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setShowEditModal(false)}>
@@ -548,7 +548,7 @@ export default function RequisicionDetailPage() {
       <SuccessToast show={showEditSuccess} message="Requisición editada" onClose={() => setShowEditSuccess(false)} />
 
       {showInsumoModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowInsumoModal(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setShowInsumoModal(false)}>

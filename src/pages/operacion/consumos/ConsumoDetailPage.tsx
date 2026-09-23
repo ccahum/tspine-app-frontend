@@ -194,7 +194,7 @@ export default function ConsumoDetailPage() {
       </div>
 
       {selectedPv && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setSelectedPv(null)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <h2 style={styles.modalTitle}>Producto Validado</h2>
@@ -237,7 +237,7 @@ export default function ConsumoDetailPage() {
       )}
 
       {selectedLote && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setSelectedLote(null)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <h2 style={styles.modalTitle}>Lote Validado</h2>

@@ -216,7 +216,7 @@ export default function ProductoValidadoDetailPage() {
       </div>
 
       {selectedLote && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setSelectedLote(null)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <h2 style={styles.modalTitle}>Lote Validado</h2>
@@ -241,7 +241,7 @@ export default function ProductoValidadoDetailPage() {
       )}
 
       {showAddLoteModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowAddLoteModal(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <h2 style={styles.modalTitle}>Agregar lote validado</h2>

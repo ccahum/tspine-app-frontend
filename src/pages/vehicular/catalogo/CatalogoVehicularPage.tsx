@@ -398,7 +398,7 @@ function DetalleModal({ item, sedes, onClose, onUpdated, onDeleted }: {
   }, [error]);
 
   return (
-    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
+    <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Vehículo</h2>
@@ -561,7 +561,7 @@ function NuevoVehiculoModal({ sedes, onClose, onCreated }: {
   }, [error]);
 
   return (
-    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
+    <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Nuevo vehículo</h2>

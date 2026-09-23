@@ -49,7 +49,7 @@ function RechazarModal({ item, onCancel, onConfirm, submitting }: {
   };
 
   return (
-    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onCancel}>
+    <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div className="modal-content-anim" style={styles.modalBox} onClick={e => e.stopPropagation()}>
         <h3 style={styles.modalTitle}>Rechazar consumo</h3>
         <p style={styles.modalSubtitle}>{item.proVal ?? 'Producto validado'}</p>

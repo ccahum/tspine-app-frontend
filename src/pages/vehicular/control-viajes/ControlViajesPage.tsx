@@ -95,7 +95,7 @@ function DetalleRow({ label, children }: { label: string; children: React.ReactN
 
 function DetalleModal({ item, onClose }: { item: ViajeVehiculoItem; onClose: () => void }) {
   return (
-    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
+    <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Viaje {item.id}</h2>
@@ -290,7 +290,7 @@ function NuevoViajeModal({ vehiculos, sedes, onClose, onCreated }: {
   }, [error]);
 
   return (
-    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
+    <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Nuevo viaje</h2>

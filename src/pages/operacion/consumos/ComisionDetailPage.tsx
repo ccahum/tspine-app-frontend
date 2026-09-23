@@ -205,7 +205,7 @@ export default function ComisionDetailPage() {
       </div>
 
       {selectedPago && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setSelectedPago(null)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div
             className="modal-content-anim"
             style={styles.modalContent}
@@ -234,7 +234,7 @@ export default function ComisionDetailPage() {
       )}
 
       {selectedEjecucion && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setSelectedEjecucion(null)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div
             className="modal-content-anim"
             style={styles.modalContent}

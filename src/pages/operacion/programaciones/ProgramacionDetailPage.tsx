@@ -2303,7 +2303,7 @@ export default function ProgramacionDetailPage() {
       </div>
 
       {selectedTecnico && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setSelectedTecnico(null)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <h2 style={styles.modalTitle}>Técnico Asociado</h2>
@@ -2336,7 +2336,7 @@ export default function ProgramacionDetailPage() {
       )}
 
       {selectedDocumento && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setSelectedDocumento(null)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <h2 style={styles.modalTitle}>Documento</h2>
@@ -2397,7 +2397,7 @@ export default function ProgramacionDetailPage() {
       )}
 
       {selectedNotaCredito && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setSelectedNotaCredito(null)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <h2 style={styles.modalTitle}>Nota de Crédito</h2>
@@ -2442,7 +2442,7 @@ export default function ProgramacionDetailPage() {
       )}
 
       {selectedFuente && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setSelectedFuente(null)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <h2 style={styles.modalTitle}>Fuente</h2>
@@ -2471,7 +2471,7 @@ export default function ProgramacionDetailPage() {
       )}
 
       {showEditModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowEditModal(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setShowEditModal(false)}>
@@ -2833,7 +2833,7 @@ export default function ProgramacionDetailPage() {
       )}
 
       {showComisionModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowComisionModal(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setShowComisionModal(false)}>
@@ -3135,7 +3135,7 @@ export default function ProgramacionDetailPage() {
       )}
 
       {showConfirmComision && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowConfirmComision(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setShowConfirmComision(false)}><X size={18} /></button>
@@ -3207,7 +3207,7 @@ export default function ProgramacionDetailPage() {
       )}
 
       {showDocumentoModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowDocumentoModal(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setShowDocumentoModal(false)}>
@@ -3280,7 +3280,7 @@ export default function ProgramacionDetailPage() {
       )}
 
       {showRequisicionModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowRequisicionModal(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setShowRequisicionModal(false)}>
@@ -3389,7 +3389,7 @@ export default function ProgramacionDetailPage() {
       )}
 
       {showInsumoSubModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowInsumoSubModal(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setShowInsumoSubModal(false)}>
@@ -3548,7 +3548,7 @@ export default function ProgramacionDetailPage() {
       )}
 
       {showRemisionModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowRemisionModal(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setShowRemisionModal(false)}>
@@ -3853,7 +3853,7 @@ export default function ProgramacionDetailPage() {
       )}
 
       {showWhatsappConfirm && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowWhatsappConfirm(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <h2 style={styles.modalTitle}>Enviar por WhatsApp</h2>
@@ -3874,7 +3874,7 @@ export default function ProgramacionDetailPage() {
       )}
 
       {showGmailConfirm && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowGmailConfirm(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <h2 style={styles.modalTitle}>Enviar por Gmail</h2>
@@ -3895,7 +3895,7 @@ export default function ProgramacionDetailPage() {
       )}
 
       {showDeleteConfirm && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => { if (!deleteProgramacionMutation.isPending) setShowDeleteConfirm(false); }}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <h2 style={styles.modalTitle}>Eliminar programación</h2>
@@ -3931,7 +3931,7 @@ export default function ProgramacionDetailPage() {
       <SuccessToast show={showRemisionSuccess} message={`Remisión ${remisionCreatedId ?? ''} creada`} onClose={() => setShowRemisionSuccess(false)} />
       <SuccessToast show={showRequisicionSuccess} message={`Requisición ${requisicionCreatedId ?? ''} creada`} onClose={() => setShowRequisicionSuccess(false)} />
       {pendingWhatsappShare && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setPendingWhatsappShare(null)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <h2 style={styles.modalTitle}>Enviar por WhatsApp</h2>
@@ -3953,7 +3953,7 @@ export default function ProgramacionDetailPage() {
         </div>
       )}
       {whatsappLink && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setWhatsappLink(null)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <h2 style={styles.modalTitle}>Listo para enviar</h2>
@@ -4025,7 +4025,7 @@ export default function ProgramacionDetailPage() {
       )}
 
       {showTecnicoSugeridoModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowTecnicoSugeridoModal(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setShowTecnicoSugeridoModal(false)}>

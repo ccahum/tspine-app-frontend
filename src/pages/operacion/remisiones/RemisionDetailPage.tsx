@@ -1649,7 +1649,7 @@ export default function RemisionDetailPage() {
       </div>
 
       {selectedTecnico && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setSelectedTecnico(null)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <h2 style={styles.modalTitle}>Técnico Asociado</h2>
@@ -1679,7 +1679,7 @@ export default function RemisionDetailPage() {
       )}
 
       {showComisionModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowComisionModal(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setShowComisionModal(false)}>
@@ -1964,7 +1964,7 @@ export default function RemisionDetailPage() {
       )}
 
       {showConfirmComision && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowConfirmComision(false)}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setShowConfirmComision(false)}><X size={18} /></button>
@@ -2047,7 +2047,7 @@ export default function RemisionDetailPage() {
         const editTotalPagar = round2(editTotalAntesImp + editIva - editRetencion);
 
         return (
-          <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowEditModal(false)}>
+          <div className="modal-overlay-anim" style={styles.modalOverlay}>
             <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
               <div style={styles.editModalHeader}>
                 <button style={styles.closeBtn} onClick={() => setShowEditModal(false)}>
@@ -2384,7 +2384,7 @@ export default function RemisionDetailPage() {
       })()}
 
       {showDeleteConfirm && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => { if (!deleteRemisionMutation.isPending) setShowDeleteConfirm(false); }}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <h2 style={styles.modalTitle}>Eliminar Remisión</h2>

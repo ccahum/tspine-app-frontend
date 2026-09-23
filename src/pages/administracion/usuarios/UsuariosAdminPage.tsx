@@ -123,7 +123,7 @@ function NuevoUsuarioModal({
   };
 
   return (
-    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
+    <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Nuevo usuario</h2>
@@ -308,7 +308,7 @@ function EditarUsuarioModal({
   };
 
   return (
-    <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={onClose}>
+    <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Editar usuario</h2>

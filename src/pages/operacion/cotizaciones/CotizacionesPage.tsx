@@ -1331,7 +1331,7 @@ function SignaturePadModal({ onClose, onSave, saving }: {
   };
 
   return (
-    <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10002 }} onClick={onClose}>
+    <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10002 }}>
       <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '520px' }} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Firmar cotización</h2>
