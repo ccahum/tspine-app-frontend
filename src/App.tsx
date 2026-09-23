@@ -8,6 +8,7 @@ import DashboardPage from './pages/dashboard/DashboardPage';
 import Layout from './components/layout/Layout';
 import { esSuperAdmin } from './lib/auth.utils';
 import { routeImports } from './routeImports';
+import { useMobileEnterAsTab } from './hooks/useMobileEnterAsTab';
 
 // as any: routeImports está tipado como () => Promise<unknown> para que Sidebar no necesite
 // conocer el tipo real del módulo — cada entrada individual sí es un import() válido de
@@ -58,6 +59,8 @@ function SuperAdminGuard() {
 }
 
 export default function App() {
+  useMobileEnterAsTab();
+
   return (
     <BrowserRouter>
       <Routes>
