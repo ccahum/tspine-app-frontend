@@ -162,6 +162,7 @@ export interface CreateDetCotizaPayload {
   cantidad: number;
   valorUnitario: number;
   observaciones?: string;
+  hospitalId?: string;
 }
 
 export interface UpdateDetCotizaPayload {
@@ -169,6 +170,7 @@ export interface UpdateDetCotizaPayload {
   cantidad: number;
   valorUnitario: number;
   observaciones?: string;
+  hospitalId?: string;
 }
 
 export interface CotizacionListResponse {

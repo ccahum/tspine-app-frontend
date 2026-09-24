@@ -951,7 +951,7 @@ function focusNextInEnterNavRoot(current: HTMLElement) {
   }, 0);
 }
 
-function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem, onDone, onSaved }: { cotizacionId: string; tarifaId?: string | null; tarifaLabel?: string | null; items: CotizacionItem[]; onSelectItem: (item: CotizacionItem) => void; onDone: () => void; onSaved: () => void }) {
+function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, hospitalId, items, onSelectItem, onDone, onSaved }: { cotizacionId: string; tarifaId?: string | null; tarifaLabel?: string | null; hospitalId?: string; items: CotizacionItem[]; onSelectItem: (item: CotizacionItem) => void; onDone: () => void; onSaved: () => void }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(emptyItemForm);
   const [productoSearch, setProductoSearch] = useState('');
@@ -967,8 +967,8 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem,
   }, [items.length]);
 
   const { data: productoResults = [] } = useQuery<ProductoOption[]>({
-    queryKey: ['cotizaciones-productos', productoSearch, cotizacionId, tarifaId],
-    queryFn: () => cotizacionesService.searchProductos(productoSearch, cotizacionId, tarifaId ?? undefined),
+    queryKey: ['cotizaciones-productos', productoSearch, cotizacionId, tarifaId, hospitalId],
+    queryFn: () => cotizacionesService.searchProductos(productoSearch, cotizacionId, tarifaId ?? undefined, hospitalId),
     enabled: productoFocused,
   });
   // Cada vez que cambia la lista visible (nueva búsqueda) se reinicia el resaltado a la primera
@@ -1001,6 +1001,7 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem,
       cantidad: Number(form.cantidad),
       valorUnitario: Number(form.valorUnitario),
       observaciones: form.observaciones || undefined,
+      hospitalId,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacionId] });
@@ -1024,6 +1025,7 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem,
       // anterior, a diferencia de otros callers de updateItem que no la tocan si no vino en el
       // body.
       observaciones: form.observaciones,
+      hospitalId,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacionId] });
@@ -2876,6 +2878,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
             cotizacionId={cotizacion.id}
             tarifaId={tarifaId}
             tarifaLabel={tarifaLabel}
+            hospitalId={form.hospitalId}
             items={cotizacion.items}
             onSelectItem={setSelectedItem}
             onDone={() => setShowAddItem(false)}
