@@ -39,9 +39,11 @@ type Step = 'CREDENCIALES' | 'CAMBIAR_PASSWORD' | 'CONFIGURAR_2FA' | 'VERIFICAR_
 // justo para que no se sienta como un salto brusco, sin hacer esperar de más al usuario.
 const REDIRECT_DELAY_MS = 900;
 
-// "Recordarme" solo recuerda el usuario (no la contraseña ni el 2FA, que siempre se piden) para
-// prellenar el campo la próxima vez.
+// "Recordarme" recuerda usuario y contraseña para prellenar ambos campos la próxima vez — el 2FA
+// siempre se sigue pidiendo, esa política no cambia. La contraseña queda en localStorage en texto
+// plano (visible desde las devtools de ese navegador) — aceptable a propósito para este caso.
 const REMEMBER_USUARIO_KEY = 'tspine_remembered_usuario';
+const REMEMBER_PASSWORD_KEY = 'tspine_remembered_password';
 
 // El backend bloquea el pendingToken tras 5 intentos fallidos de código 2FA — en ese caso hay
 // que mandar al usuario de vuelta a usuario/contraseña en vez de dejarlo seguir intentando con
@@ -124,7 +126,7 @@ export default function LoginPage() {
   const { isMobile } = useResponsiveStyles();
   const [step, setStep] = useState<Step>('CREDENCIALES');
   const [usuario, setUsuario] = useState(() => localStorage.getItem(REMEMBER_USUARIO_KEY) ?? '');
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState(() => localStorage.getItem(REMEMBER_PASSWORD_KEY) ?? '');
   const [verPassword, setVerPassword] = useState(false);
   const [recordarme, setRecordarme] = useState(() => !!localStorage.getItem(REMEMBER_USUARIO_KEY));
   const [pendingToken, setPendingToken] = useState('');
@@ -198,8 +200,10 @@ export default function LoginPage() {
 
       if (recordarme) {
         localStorage.setItem(REMEMBER_USUARIO_KEY, usuario);
+        localStorage.setItem(REMEMBER_PASSWORD_KEY, password);
       } else {
         localStorage.removeItem(REMEMBER_USUARIO_KEY);
+        localStorage.removeItem(REMEMBER_PASSWORD_KEY);
       }
 
       await continuarFlujo(res);
