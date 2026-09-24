@@ -2495,6 +2495,18 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     },
   });
 
+  // El recálculo de arriba (y agregar un consumo nuevo, que ya resuelve su especial contra
+  // form.hospitalId aunque todavía no se haya guardado la cotización) dejaban un hueco: si el
+  // usuario cambiaba de hospital, agregaba un consumo y cerraba SIN darle a "Guardar cotización",
+  // el hospital guardado de la cotización se quedaba siendo el viejo mientras el consumo nuevo (o
+  // el recalculado) ya reflejaba el especial del hospital nuevo — quedaban desincronizados. Por
+  // eso el hospital ahora se guarda solo, de inmediato, apenas cambia — igual que ya se comporta
+  // el recálculo de nombres especiales, en vez de esperar al guardado general del formulario.
+  const updateHospitalMutation = useMutation({
+    mutationFn: (nuevoHospitalId: string) => cotizacionesService.updateCotizacion(cotizacion.id, { hospitalId: nuevoHospitalId }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacion.id] }); },
+  });
+
   useEffect(() => {
     if (!form.hospitalId) return;
     if (!hospitalBaselineEstablecidaRef.current) {
@@ -2504,6 +2516,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     }
     if (form.hospitalId === recalculatedHospitalRef.current) return;
     recalculatedHospitalRef.current = form.hospitalId;
+    updateHospitalMutation.mutate(form.hospitalId);
     if (cotizacion.items.length > 0) {
       recalcNombresEspecialesMutation.mutate(form.hospitalId);
     }
@@ -3127,7 +3140,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
   // Si hay un paquete + nivel seleccionados, los consumos ya no se agregan a mano: se traen del
   // paquete (detalle_paquetes) según el nivel elegido, con precio según la tarifa resuelta arriba.
   // Al cambiar cualquiera de los tres, se vuelve a traer la lista completa (reemplaza lo que hubiera).
-  const paqueteConsumosQuery = useQuery<PaqueteConsumoOption[]>({
+  const paqueteConsumosQuery = useQuery<{ items: PaqueteConsumoOption[]; excluidosPorDenegado: number }>({
     queryKey: ['cotizacion-paquete-consumos', form.paqueteId, form.nivel, tarifaId],
     queryFn: () => cotizacionesService.getPaqueteConsumos(form.paqueteId, form.nivel, tarifaId || undefined),
     enabled: !!form.paqueteId && !!form.nivel && !!tarifaId,
@@ -3135,7 +3148,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
   useEffect(() => {
     if (!form.paqueteId || !form.nivel || !tarifaId || !paqueteConsumosQuery.data) return;
-    setStagedItems(paqueteConsumosQuery.data.map(p => {
+    setStagedItems(paqueteConsumosQuery.data.items.map(p => {
       const productoLabel = `${p.referencia ?? ''} / ${p.nombre ?? ''}`.replace(/^ \/ /, '');
       const valorUnitario = p.precioSugerido !== null ? String(p.precioSugerido) : '0';
       const cantidad = String(p.cantidad);
@@ -3149,6 +3162,12 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
         observaciones: '',
       };
     }));
+    // Productos del paquete que están denegados para la tarifa resuelta — se excluyeron en el
+    // backend (ver getPaqueteConsumos), acá solo se avisa para que no quede en silencio.
+    const { excluidosPorDenegado } = paqueteConsumosQuery.data;
+    if (excluidosPorDenegado > 0) {
+      onNotify(`Se ${excluidosPorDenegado === 1 ? 'eliminó 1 producto denegado' : `eliminaron ${excluidosPorDenegado} productos denegados`} del paquete para esta tarifa`, 'info');
+    }
   }, [paqueteConsumosQuery.data]);
 
   // Si cambia el Cubrimiento o el Responsable Económico (y con eso la tarifa resuelta) y ya hay

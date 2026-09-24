@@ -235,7 +235,7 @@ export const cotizacionesService = {
   getPaquetes: (): Promise<PaqueteOption[]> =>
     api.get('/operacion/cotizaciones/paquetes').then(r => r.data),
 
-  getPaqueteConsumos: (paqueteId: string, nivel: string, tarifaId?: string): Promise<PaqueteConsumoOption[]> =>
+  getPaqueteConsumos: (paqueteId: string, nivel: string, tarifaId?: string): Promise<{ items: PaqueteConsumoOption[]; excluidosPorDenegado: number }> =>
     api.get(`/operacion/cotizaciones/paquetes/${paqueteId}/consumos`, { params: { nivel, ...(tarifaId ? { tarifaId } : {}) } }).then(r => r.data),
 
   getPreciosPorProductos: (productoIds: string[], tarifaId: string): Promise<{ productoId: string; precio: number | null }[]> =>
