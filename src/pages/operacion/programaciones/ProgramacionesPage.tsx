@@ -5,7 +5,7 @@ import { Search, Lock, AlertCircle, CircleX, DollarSign, Plus, X, Calendar, BarC
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import DatePicker from '../../../components/DatePicker';
-import OptionDropdown from '../../../components/OptionDropdown';
+import OptionDropdown, { type OptionDropdownHandle } from '../../../components/OptionDropdown';
 import DateRangeFilter from '../../../components/filters/DateRangeFilter';
 import StatusFilter from '../../../components/filters/StatusFilter';
 import ProgramacionesStats from './ProgramacionesStats';
@@ -258,6 +258,8 @@ export default function ProgramacionesPage() {
   }, [showNewModal]);
 
   const [newForm, setNewForm] = useState({ fechaQx: '', horaQx: '', sedeId: '', hospitalId: '' });
+  const newHoraDropdownRef = useRef<OptionDropdownHandle>(null);
+  const newMinutoDropdownRef = useRef<OptionDropdownHandle>(null);
   const [newObservaciones, setNewObservaciones] = useState('');
   const [newConsumo, setNewConsumo] = useState('');
   const [newConsumoPanelOpen, setNewConsumoPanelOpen] = useState(false);
@@ -287,12 +289,20 @@ export default function ProgramacionesPage() {
   const [newHospitalSearch, setNewHospitalSearch] = useState('');
   const [newMedicoFocused, setNewMedicoFocused] = useState(false);
   const [newHospitalFocused, setNewHospitalFocused] = useState(false);
+  const [newHospitalHighlighted, setNewHospitalHighlighted] = useState(0);
+  const [newMedicoHighlighted, setNewMedicoHighlighted] = useState(0);
+  const newHospitalOptionRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const newMedicoOptionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [newCotizaciones, setNewCotizaciones] = useState<CotizacionOption[]>([]);
   const [newCotizacionFocused, setNewCotizacionFocused] = useState(false);
   const [newCotizacionFilterText, setNewCotizacionFilterText] = useState('');
   const [newTecnicosSugeridos, setNewTecnicosSugeridos] = useState<TecnicoOption[]>([]);
   const [newTecnicoSugeridoSearch, setNewTecnicoSugeridoSearch] = useState('');
   const [newTecnicoSugeridoFocused, setNewTecnicoSugeridoFocused] = useState(false);
+  const [newCotizacionHighlighted, setNewCotizacionHighlighted] = useState(0);
+  const [newTecnicoSugeridoHighlighted, setNewTecnicoSugeridoHighlighted] = useState(0);
+  const newCotizacionOptionRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const newTecnicoSugeridoOptionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [newProgramacionError, setNewProgramacionError] = useState<{ field: string; message: string } | null>(null);
   const [showCreateSuccess, setShowCreateSuccess] = useState(false);
 
@@ -402,6 +412,14 @@ export default function ProgramacionesPage() {
   const newHospitalResults = newHospitalSearch.trim()
     ? hospitalOptions.filter(h => h.nombre.toLowerCase().includes(newHospitalSearch.trim().toLowerCase()))
     : hospitalOptions;
+  useEffect(() => { setNewHospitalHighlighted(0); }, [newHospitalResults.length, newHospitalSearch]);
+  useEffect(() => { newHospitalOptionRefs.current[newHospitalHighlighted]?.scrollIntoView({ block: 'nearest' }); }, [newHospitalHighlighted]);
+  useEffect(() => { setNewMedicoHighlighted(0); }, [newMedicoResults.length, newMedicoSearch, newMedicos.length]);
+  useEffect(() => { newMedicoOptionRefs.current[newMedicoHighlighted]?.scrollIntoView({ block: 'nearest' }); }, [newMedicoHighlighted]);
+  useEffect(() => { setNewCotizacionHighlighted(0); }, [newCotizacionResultsFiltradas.length, newCotizacionFilterText, newCotizaciones.length]);
+  useEffect(() => { newCotizacionOptionRefs.current[newCotizacionHighlighted]?.scrollIntoView({ block: 'nearest' }); }, [newCotizacionHighlighted]);
+  useEffect(() => { setNewTecnicoSugeridoHighlighted(0); }, [newTecnicoSugeridoResults.length, newTecnicoSugeridoSearch, newTecnicosSugeridos.length]);
+  useEffect(() => { newTecnicoSugeridoOptionRefs.current[newTecnicoSugeridoHighlighted]?.scrollIntoView({ block: 'nearest' }); }, [newTecnicoSugeridoHighlighted]);
 
   // Al crear (no al editar) no se permite elegir fecha/hora ya pasada.
   const todayMexico = getTodayMexico();
@@ -554,7 +572,7 @@ export default function ProgramacionesPage() {
   });
 
   const openNewModal = () => {
-    setNewForm({ fechaQx: '', horaQx: '', sedeId: '', hospitalId: '' });
+    setNewForm({ fechaQx: getTodayMexico(), horaQx: '', sedeId: '', hospitalId: '' });
     setNewObservaciones('');
     setNewConsumo('');
     setNewConsumoPanelOpen(false);
@@ -568,6 +586,10 @@ export default function ProgramacionesPage() {
     setNewTecnicoSugeridoSearch('');
     setNewProgramacionError(null);
     setShowNewModal(true);
+    // Como Fecha ya viene preseleccionada (hoy), Hora también se despliega sola — igual que cuando
+    // se cambia la fecha a mano. Se difiere porque el modal (y por lo tanto el selector de Hora)
+    // recién se monta después de este render.
+    setTimeout(() => { newHoraDropdownRef.current?.open(); }, 0);
   };
 
   // Trae los productos ya cotizados en las cotizaciones vinculadas y los anexa al Consumo, en el
@@ -623,7 +645,10 @@ export default function ProgramacionesPage() {
                       || (Number(h) === Number(nowMexicoTime.split(':')[0]) && m && Number(m) < Number(nowMexicoTime.split(':')[1])));
                     setNewForm({ ...newForm, fechaQx, horaQx: horaInvalida ? '' : newForm.horaQx });
                     setNewProgramacionError(null);
+                    newHoraDropdownRef.current?.open();
                   }}
+                  style={newForm.fechaQx ? { backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510', fontWeight: 600 } : undefined}
+                  labelStyle={newForm.fechaQx ? { flex: 1, textAlign: 'center' as const } : undefined}
                 />
                 {newProgramacionError?.field === 'fechaQx' && <span style={styles.errorText}>{newProgramacionError.message}</span>}
               </div>
@@ -632,27 +657,38 @@ export default function ProgramacionesPage() {
                 <label style={styles.label}>Hora QX *</label>
                 <div style={styles.horaGrid}>
                   <OptionDropdown
+                    ref={newHoraDropdownRef}
                     disabled={!newFechaQxListo}
                     error={newProgramacionError?.field === 'horaQx'}
                     placeholder="HH"
                     value={newForm.horaQx.split(':')[0] ?? ''}
                     options={Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).filter(h => Number(h) >= minHour).map(h => ({ id: h, label: h }))}
                     onChange={h => {
-                      const minuto = newForm.horaQx.split(':')[1] ?? '00';
-                      setNewForm({ ...newForm, horaQx: `${h}:${minuto}` });
+                      // Tanto con clic como con Enter, Hora siempre lleva a Minuto — ya no hay un
+                      // salto directo a Sede desde acá.
+                      setNewForm(prev => ({ ...prev, horaQx: `${h}:${prev.horaQx.split(':')[1] ?? '00'}` }));
                       setNewProgramacionError(null);
+                      newMinutoDropdownRef.current?.open();
                     }}
                   />
                   <OptionDropdown
+                    ref={newMinutoDropdownRef}
                     disabled={!newFechaQxListo}
                     error={newProgramacionError?.field === 'horaQx'}
                     placeholder="MM"
                     value={newForm.horaQx.split(':')[1] ?? ''}
                     options={Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).filter(m => Number(m) >= minMinute).map(m => ({ id: m, label: m }))}
                     onChange={m => {
-                      const hora = newForm.horaQx.split(':')[0] ?? '00';
-                      setNewForm({ ...newForm, horaQx: `${hora}:${m}` });
+                      // Después de Minuto ya no hay ningún otro "mini-campo" al que abrir — sea con
+                      // clic o con Enter, siempre sigue Sede, así que aquí (a diferencia de Hora) el
+                      // salto aplica en el onChange mismo, sin necesitar onEnterSelect aparte.
+                      setNewForm(prev => ({ ...prev, horaQx: `${prev.horaQx.split(':')[0] ?? '00'}:${m}` }));
                       setNewProgramacionError(null);
+                      setTimeout(() => {
+                        const primera = sedeOptions[0];
+                        if (primera) setNewForm(prev => ({ ...prev, sedeId: primera.id }));
+                        document.querySelector<HTMLButtonElement>('#programacion-new-field-sedeId button:not([disabled])')?.focus();
+                      }, 0);
                     }}
                   />
                 </div>
@@ -662,14 +698,36 @@ export default function ProgramacionesPage() {
 
               <div style={styles.formGroup} id="programacion-new-field-sedeId">
                 <label style={styles.label}>Sede *</label>
-                <div style={styles.sedeGrid}>
+                <div
+                  style={styles.sedeGrid}
+                  onKeyDown={e => {
+                    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                      e.preventDefault();
+                      const idx = sedeOptions.findIndex(s => s.id === newForm.sedeId);
+                      if (idx < 0) return;
+                      const nextIdx = e.key === 'ArrowRight' ? Math.min(idx + 1, sedeOptions.length - 1) : Math.max(idx - 1, 0);
+                      if (nextIdx === idx) return;
+                      setNewForm({ ...newForm, sedeId: sedeOptions[nextIdx].id });
+                      setNewProgramacionError(null);
+                      e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])')[nextIdx]?.focus();
+                    } else if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])'));
+                      const idx = buttons.indexOf(document.activeElement as HTMLButtonElement);
+                      if (idx >= 0 && sedeOptions[idx]) { setNewForm({ ...newForm, sedeId: sedeOptions[idx].id }); setNewProgramacionError(null); }
+                      setTimeout(() => {
+                        document.querySelector<HTMLInputElement>('#programacion-new-field-hospitalId input')?.focus();
+                      }, 0);
+                    }
+                  }}
+                >
                   {sedeOptions.map(s => (
                     <button
                       key={s.id}
                       type="button"
+                      className="pick-btn-focus"
                       disabled={!newHoraQxListo}
                       style={{ ...styles.sedeBtn, ...(newForm.sedeId === s.id ? styles.sedeBtnActive : {}), ...(newProgramacionError?.field === 'sedeId' ? styles.inputError : {}), ...(!newHoraQxListo ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
-                      onMouseDown={e => e.preventDefault()}
                       onClick={e => { setNewForm({ ...newForm, sedeId: s.id }); setNewProgramacionError(null); e.currentTarget.blur(); }}
                     >
                       {s.nombre}
@@ -704,18 +762,52 @@ export default function ProgramacionesPage() {
                       onChange={e => { setNewHospitalSearch(e.target.value); setNewProgramacionError(null); }}
                       onFocus={() => setNewHospitalFocused(true)}
                       onBlur={() => setTimeout(() => setNewHospitalFocused(false), 150)}
+                      onKeyDown={e => {
+                        // Con Tab no hace falta el margen de 150ms del onBlur (que existe para no
+                        // cerrar antes de que un clic en una opción termine de registrarse) — se
+                        // cierra al toque para que no se vea la lista un instante de más.
+                        if (e.key === 'Tab') { setNewHospitalFocused(false); return; }
+                        if (e.key === 'ArrowDown' && newHospitalResults.length > 0) {
+                          e.preventDefault();
+                          setNewHospitalHighlighted(i => Math.min(i + 1, newHospitalResults.length - 1));
+                        } else if (e.key === 'ArrowUp' && newHospitalResults.length > 0) {
+                          e.preventDefault();
+                          setNewHospitalHighlighted(i => Math.max(i - 1, 0));
+                        } else if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const h = newHospitalResults[newHospitalHighlighted];
+                          if (h) {
+                            setNewForm({ ...newForm, hospitalId: h.id });
+                            setNewHospitalSearch('');
+                            setNewProgramacionError(null);
+                            setTimeout(() => {
+                              document.querySelector<HTMLInputElement>('#programacion-new-field-medicos input')?.focus();
+                            }, 0);
+                          }
+                        }
+                      }}
                     />
                     {newHospitalFocused && (
                       <div style={styles.medicoDropdown}>
                         {newHospitalResults.length === 0 ? (
                           <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
                         ) : (
-                          newHospitalResults.map(h => (
+                          newHospitalResults.map((h, i) => (
                             <div
                               key={h.id}
+                              ref={el => { newHospitalOptionRefs.current[i] = el; }}
                               className="dropdown-item-hover"
-                              style={styles.medicoDropdownItem}
-                              onClick={() => { setNewForm({ ...newForm, hospitalId: h.id }); setNewHospitalSearch(''); setNewProgramacionError(null); }}
+                              style={{ ...styles.medicoDropdownItem, ...(i === newHospitalHighlighted ? styles.medicoDropdownItemHighlighted : {}) }}
+                              onMouseDown={e => e.preventDefault()}
+                              onMouseEnter={() => setNewHospitalHighlighted(i)}
+                              onClick={() => {
+                                setNewForm({ ...newForm, hospitalId: h.id });
+                                setNewHospitalSearch('');
+                                setNewProgramacionError(null);
+                                setTimeout(() => {
+                                  document.querySelector<HTMLInputElement>('#programacion-new-field-medicos input')?.focus();
+                                }, 0);
+                              }}
                             >
                               {h.nombre}
                             </div>
@@ -761,17 +853,47 @@ export default function ProgramacionesPage() {
                     onChange={e => { setNewMedicoSearch(e.target.value); setNewProgramacionError(null); }}
                     onFocus={() => setNewMedicoFocused(true)}
                     onBlur={() => setTimeout(() => setNewMedicoFocused(false), 150)}
+                    onKeyDown={e => {
+                      const disponibles = newMedicoResults.filter(m => !newMedicos.some(x => x.id === m.id));
+                      // Con Tab no hace falta el margen de 150ms del onBlur — se cierra al toque
+                      // para que no se vea la lista un instante de más antes de desaparecer.
+                      if (e.key === 'Tab') setNewMedicoFocused(false);
+                      if (e.key === 'ArrowDown' && disponibles.length > 0) {
+                        e.preventDefault();
+                        setNewMedicoHighlighted(i => Math.min(i + 1, disponibles.length - 1));
+                      } else if (e.key === 'ArrowUp' && disponibles.length > 0) {
+                        e.preventDefault();
+                        setNewMedicoHighlighted(i => Math.max(i - 1, 0));
+                      } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const m = disponibles[newMedicoHighlighted];
+                        if (m) {
+                          // Se agrega y el campo se queda enfocado para poder seguir agregando más
+                          // médicos — igual que en Nueva Cotización.
+                          setNewMedicos([...newMedicos, m]);
+                          setNewMedicoSearch('');
+                        } else {
+                          // Sin más para agregar — recién ahí salta a Cotización.
+                          setTimeout(() => {
+                            document.querySelector<HTMLInputElement>('#programacion-new-field-cotizaciones input')?.focus();
+                          }, 0);
+                        }
+                      }
+                    }}
                   />
                   {newMedicoFocused && (
                     <div style={styles.medicoDropdown}>
                       {newMedicoResults.filter(m => !newMedicos.some(x => x.id === m.id)).length === 0 ? (
                         <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
                       ) : (
-                        newMedicoResults.filter(m => !newMedicos.some(x => x.id === m.id)).map(m => (
+                        newMedicoResults.filter(m => !newMedicos.some(x => x.id === m.id)).map((m, i) => (
                           <div
                             key={m.id}
+                            ref={el => { newMedicoOptionRefs.current[i] = el; }}
                             className="dropdown-item-hover"
-                            style={styles.medicoDropdownItem}
+                            style={{ ...styles.medicoDropdownItem, ...(i === newMedicoHighlighted ? styles.medicoDropdownItemHighlighted : {}) }}
+                            onMouseDown={e => e.preventDefault()}
+                            onMouseEnter={() => setNewMedicoHighlighted(i)}
                             onClick={() => { setNewMedicos([...newMedicos, m]); setNewMedicoSearch(''); }}
                           >
                             {m.nombreCompleto}
@@ -812,17 +934,42 @@ export default function ProgramacionesPage() {
                     onChange={e => setNewCotizacionFilterText(e.target.value)}
                     onFocus={() => setNewCotizacionFocused(true)}
                     onBlur={() => setTimeout(() => setNewCotizacionFocused(false), 150)}
+                    onKeyDown={e => {
+                      const disponibles = newCotizacionResultsFiltradas.filter(c => !newCotizaciones.some(x => x.id === c.id));
+                      if (e.key === 'Tab') setNewCotizacionFocused(false);
+                      if (e.key === 'ArrowDown' && disponibles.length > 0) {
+                        e.preventDefault();
+                        setNewCotizacionHighlighted(i => Math.min(i + 1, disponibles.length - 1));
+                      } else if (e.key === 'ArrowUp' && disponibles.length > 0) {
+                        e.preventDefault();
+                        setNewCotizacionHighlighted(i => Math.max(i - 1, 0));
+                      } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const c = disponibles[newCotizacionHighlighted];
+                        if (c) {
+                          setNewCotizaciones([...newCotizaciones, c]);
+                          setNewCotizacionFilterText('');
+                        } else {
+                          setTimeout(() => {
+                            document.querySelector<HTMLInputElement>('#programacion-new-field-tecnicos-sugeridos input')?.focus();
+                          }, 0);
+                        }
+                      }
+                    }}
                   />
                   {newCotizacionFocused && (
                     <div style={styles.medicoDropdown}>
                       {newCotizacionResultsFiltradas.filter(c => !newCotizaciones.some(x => x.id === c.id)).length === 0 ? (
                         <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin cotizaciones que coincidan</div>
                       ) : (
-                        newCotizacionResultsFiltradas.filter(c => !newCotizaciones.some(x => x.id === c.id)).map(c => (
+                        newCotizacionResultsFiltradas.filter(c => !newCotizaciones.some(x => x.id === c.id)).map((c, i) => (
                           <div
                             key={c.id}
+                            ref={el => { newCotizacionOptionRefs.current[i] = el; }}
                             className="dropdown-item-hover"
-                            style={styles.medicoDropdownItem}
+                            style={{ ...styles.medicoDropdownItem, ...(i === newCotizacionHighlighted ? styles.medicoDropdownItemHighlighted : {}) }}
+                            onMouseDown={e => e.preventDefault()}
+                            onMouseEnter={() => setNewCotizacionHighlighted(i)}
                             onClick={() => { setNewCotizaciones([...newCotizaciones, c]); setNewCotizacionFilterText(''); }}
                           >
                             <span style={{ flexShrink: 0, color: '#4d7a13', fontWeight: 700 }}>{c.numCotizacion ?? c.id}</span>
@@ -863,17 +1010,49 @@ export default function ProgramacionesPage() {
                     onChange={e => setNewTecnicoSugeridoSearch(e.target.value)}
                     onFocus={() => setNewTecnicoSugeridoFocused(true)}
                     onBlur={() => setTimeout(() => setNewTecnicoSugeridoFocused(false), 150)}
+                    onKeyDown={e => {
+                      const disponibles = newTecnicoSugeridoResults.filter(t => !newTecnicosSugeridos.some(x => x.id === t.id));
+                      if (e.key === 'Tab') setNewTecnicoSugeridoFocused(false);
+                      if (e.key === 'ArrowDown' && disponibles.length > 0) {
+                        e.preventDefault();
+                        setNewTecnicoSugeridoHighlighted(i => Math.min(i + 1, disponibles.length - 1));
+                      } else if (e.key === 'ArrowUp' && disponibles.length > 0) {
+                        e.preventDefault();
+                        setNewTecnicoSugeridoHighlighted(i => Math.max(i - 1, 0));
+                      } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const t = disponibles[newTecnicoSugeridoHighlighted];
+                        if (t) {
+                          setNewTecnicosSugeridos([...newTecnicosSugeridos, t]);
+                          setNewTecnicoSugeridoSearch('');
+                        } else {
+                          // De acá en adelante (Consumo) no aplica ninguna configuración extra —
+                          // solo se le entrega el foco.
+                          setTimeout(() => {
+                            document.querySelector<HTMLButtonElement>('#programacion-new-field-consumo button:not([disabled])')?.focus();
+                          }, 0);
+                        }
+                      } else if (e.key === 'Tab' && !e.shiftKey) {
+                        // Sin seleccionar nada — solo mueve el foco al campo de texto de Consumo
+                        // (no a los botones de Importar/Agregar del catálogo).
+                        e.preventDefault();
+                        document.querySelector<HTMLTextAreaElement>('#programacion-new-field-consumo textarea:not([disabled])')?.focus();
+                      }
+                    }}
                   />
                   {newTecnicoSugeridoFocused && (
                     <div style={styles.medicoDropdown}>
                       {newTecnicoSugeridoResults.filter(t => !newTecnicosSugeridos.some(x => x.id === t.id)).length === 0 ? (
                         <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
                       ) : (
-                        newTecnicoSugeridoResults.filter(t => !newTecnicosSugeridos.some(x => x.id === t.id)).map(t => (
+                        newTecnicoSugeridoResults.filter(t => !newTecnicosSugeridos.some(x => x.id === t.id)).map((t, i) => (
                           <div
                             key={t.id}
+                            ref={el => { newTecnicoSugeridoOptionRefs.current[i] = el; }}
                             className="dropdown-item-hover"
-                            style={styles.medicoDropdownItem}
+                            style={{ ...styles.medicoDropdownItem, ...(i === newTecnicoSugeridoHighlighted ? styles.medicoDropdownItemHighlighted : {}) }}
+                            onMouseDown={e => e.preventDefault()}
+                            onMouseEnter={() => setNewTecnicoSugeridoHighlighted(i)}
                             onClick={() => { setNewTecnicosSugeridos([...newTecnicosSugeridos, t]); setNewTecnicoSugeridoSearch(''); }}
                           >
                             <Plus size={14} /> {t.nombreCompleto}
@@ -892,7 +1071,7 @@ export default function ProgramacionesPage() {
                     {newCotizaciones.length > 0 && (
                       <button
                         type="button"
-                        className="btn-press"
+                        className="btn-press pick-btn-focus"
                         style={{ ...styles.addFromCatalogBtn, ...(!newMedicosListo ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
                         onClick={handleImportarConsumosCotizacion}
                         disabled={importandoConsumos || !newMedicosListo}
@@ -903,7 +1082,7 @@ export default function ProgramacionesPage() {
                     <div style={{ position: 'relative' as const }} ref={consumoPanelRef}>
                       <button
                         type="button"
-                        className="btn-press"
+                        className="btn-press pick-btn-focus"
                         style={{ ...styles.addFromCatalogBtn, ...(!newMedicosListo ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
                         disabled={!newMedicosListo}
                         onClick={() => (newConsumoPanelOpen ? closeConsumoPanel() : setNewConsumoPanelOpen(true))}
@@ -936,6 +1115,7 @@ export default function ProgramacionesPage() {
                                     key={p.id}
                                     className="dropdown-item-hover"
                                     style={styles.medicoDropdownItem}
+                                    onMouseDown={e => e.preventDefault()}
                                     onClick={() => {
                                       const texto = p.nombre ?? '';
                                       setNewConsumo(prev => (prev.trim() ? `${prev.trim()}, ${texto}` : texto));
@@ -1467,6 +1647,7 @@ const styles: Record<string, React.CSSProperties> = {
   cotizacionChip: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '8px', backgroundColor: '#f4f8ea', border: '1px solid #dbe8c2', color: '#3f6510', fontSize: '0.8rem', fontWeight: 700 },
   medicoDropdown: { position: 'absolute' as const, top: 'calc(100% + 0.35rem)', left: 0, right: 0, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', maxHeight: '220px', overflowY: 'auto' as const, zIndex: 20 },
   medicoDropdownItem: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#333', cursor: 'pointer' },
+  medicoDropdownItemHighlighted: { backgroundColor: '#e9f2d8' },
   addFromCatalogBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.35rem 0.65rem', border: '1.5px solid #dbe8c2', borderRadius: '999px', backgroundColor: '#f4f8ea', color: '#3f6510', fontSize: '0.75rem', fontWeight: 400, cursor: 'pointer' },
   consumoPanel: { position: 'absolute' as const, bottom: 'calc(100% + 0.4rem)', right: 0, width: '280px', maxWidth: '90vw', backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '10px', boxShadow: '0 12px 30px rgba(0,0,0,0.15)', padding: '0.85rem', zIndex: 25, display: 'flex', flexDirection: 'column' as const, gap: '0.6rem' },
   consumoPanelTitle: { fontSize: '0.75rem', fontWeight: 700, color: '#555', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },

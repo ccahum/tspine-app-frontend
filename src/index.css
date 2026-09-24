@@ -188,6 +188,14 @@ body {
   background-color: #f4f4ee;
 }
 
+/* Los botones tipo "pill" (Cubrimiento, Sede, etc.) quitan el outline nativo por estética — sin
+   esto, moverse entre ellos con teclado (flechas, Enter, Tab) no deja ninguna señal visual de
+   cuál está enfocado. */
+.pick-btn-focus:focus-visible {
+  outline: 2px solid #3f6510;
+  outline-offset: 2px;
+}
+
 /* Días/meses/años del DatePicker y presets del filtro de fecha (Hoy, Esta semana, etc.) — al
    pasar el mouse se ven resaltados como preview antes del clic, con el mismo verde suave que ya
    se usa para marcar "hoy" (no el verde sólido del día realmente seleccionado, que se sentía muy

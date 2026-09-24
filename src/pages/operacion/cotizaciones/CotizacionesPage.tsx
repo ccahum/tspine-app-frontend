@@ -299,11 +299,22 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   // Color de acento de las tablas (encabezado, líneas, fila de Total).
   const tableAccentColor: [number, number, number] = empresaEsCabcari ? [11, 43, 91] : empresaEsNeurotec ? [0, 83, 122] : empresaEsVermed ? [29, 84, 50] : PDF_OLIVE;
 
-  const [{ default: JsPDF }] = await Promise.all([
-    import('jspdf'),
-    // Import solo por su efecto secundario: registra doc.autoTable(...) en el prototipo de jsPDF
-    // (el default export del paquete no interopera bien con el bundling de Vite).
-    import('jspdf-autotable'),
+  // Todo lo que no depende de nada más (la librería de PDF y las tres imágenes) se carga en
+  // paralelo — antes se esperaba jsPDF y LUEGO cada imagen una tras otra, en serie, lo que hacía
+  // que generar el PDF se sintiera lento tanto en escritorio como en mobile.
+  const [[{ default: JsPDF }], fondoImg, iso9001Img, firmaImg] = await Promise.all([
+    Promise.all([
+      import('jspdf'),
+      // Import solo por su efecto secundario: registra doc.autoTable(...) en el prototipo de jsPDF
+      // (el default export del paquete no interopera bien con el bundling de Vite).
+      import('jspdf-autotable'),
+    ]),
+    // Si el membrete no carga (ej. bloqueado por el navegador), se continúa sin él.
+    loadImage(fondoUrl).catch(() => null),
+    // Si el sello ISO no carga, se omite esa franja final en vez de romper el PDF completo.
+    loadImage(iso9001Url).catch(() => null),
+    // Si la firma guardada no carga, se deja la línea en blanco como si no se hubiera firmado.
+    data.firma ? loadImage(data.firma).catch(() => null) : Promise.resolve(null),
   ]);
   const doc = new JsPDF({ unit: 'mm', format: 'letter' }) as AutoTableDoc;
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -336,33 +347,11 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   // dejarle espacio a drawCompanyHeader + drawInfoGrid, que se repiten completos en cada página
   // nueva — con eso ya se pasa holgado ese 27%, así que ese es el número que manda.
   const CONTINUATION_TOP_Y = HEADER_SAFE_Y + 40;
-  let fondoImg: HTMLImageElement | null = null;
-  try {
-    fondoImg = await loadImage(fondoUrl);
-    doc.addImage(fondoImg, 'PNG', 0, 0, pageWidth, pageHeight);
-  } catch {
-    // Si el membrete no carga (ej. bloqueado por el navegador), se continúa sin él.
-  }
+  if (fondoImg) doc.addImage(fondoImg, 'PNG', 0, 0, pageWidth, pageHeight);
   const drawFondo = () => {
     if (fondoImg) doc.addImage(fondoImg, 'PNG', 0, 0, pageWidth, pageHeight);
   };
-
-  let iso9001Img: HTMLImageElement | null = null;
-  try {
-    iso9001Img = await loadImage(iso9001Url);
-  } catch {
-    // Si el sello ISO no carga, se omite esa franja final en vez de romper el PDF completo.
-  }
   const isoSize = 16;
-
-  let firmaImg: HTMLImageElement | null = null;
-  if (data.firma) {
-    try {
-      firmaImg = await loadImage(data.firma);
-    } catch {
-      // Si la firma guardada no carga, se deja la línea en blanco como si no se hubiera firmado.
-    }
-  }
 
   // Identidad de la empresa, inmediatamente debajo del logo. Es texto angosto pegado al margen
   // izquierdo, así que a esa altura no pisa la ola decorativa (que ocupa más el lado derecho) —
@@ -433,12 +422,17 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   // quitó. Se repite en cada página nueva (ver willDrawPage y el salto manual más abajo), igual que
   // drawCompanyHeader.
   const drawInfoGrid = (startY: number): number => {
-    const gridFields: [string, string][] = [
+    // "wide" es solo para Observaciones: al ser texto libre puede ser mucho más largo que el resto
+    // de los campos, así que en vez de compartir el ancho de columna angosto de 1/5, ocupa el resto
+    // del ancho disponible en su fila (queda al lado de N° de Proveedor, no en una fila aparte).
+    const gridFields: [string, string, boolean?][] = [
       ['Cubrimiento', data.cubrimiento ?? '-'],
       ['Cirugía', data.cirugia ?? '-'],
       ['Hospital', data.hospital ?? '-'],
       ['Doctor', data.medico ?? '-'],
       ['Tiempo de entrega', data.tiempoEntrega ?? '-'],
+      ['N° de Proveedor', data.numProveedor ?? '-'],
+      ['Observaciones', data.observaciones ?? '-', true],
     ];
     const gridCols = 5;
     const gridGap = 4;
@@ -448,16 +442,20 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
 
     let rowY = startY + 4;
     let rowMaxHeight = 0;
-    gridFields.forEach(([label, value], i) => {
-      const col = i % gridCols;
+    let col = 0;
+    gridFields.forEach(([label, value, wide]) => {
       const colX = marginX + col * (colWidth + gridGap);
-      const fieldEndY = drawField(doc, label, value, colX, colWidth, rowY, false, gridFontSize);
+      const width = wide ? (rightX - colX) : colWidth;
+      const fieldEndY = drawField(doc, label, value, colX, width, rowY, false, gridFontSize);
       rowMaxHeight = Math.max(rowMaxHeight, fieldEndY - rowY);
-      if (col === gridCols - 1 || i === gridFields.length - 1) {
+      col++;
+      if (wide || col === gridCols) {
         rowY += rowMaxHeight + gridRowGap;
         rowMaxHeight = 0;
+        col = 0;
       }
     });
+    if (col !== 0) rowY += rowMaxHeight + gridRowGap;
 
     const endY = rowY;
     if (!usaFormatoAlterno) {
@@ -490,10 +488,17 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   // desde el inicio de la tabla hasta el final, lo cual solo servía si la tabla cabía en una sola
   // página; con muchos consumos ahora puede abarcar varias, así que el borde se dibuja por página.
   let pageTableStartY = y;
+  // Orden alfabético por Sistema y, dentro de un mismo sistema, por nombre del producto — solo
+  // para cómo se listan en el PDF, no afecta el orden guardado ni el que se ve en la vista de
+  // detalle/edición de la cotización.
+  const itemsOrdenados = [...data.items].sort((a, b) =>
+    (a.sistema ?? '').localeCompare(b.sistema ?? '', 'es', { sensitivity: 'base' })
+    || (a.descripcion ?? '').localeCompare(b.descripcion ?? '', 'es', { sensitivity: 'base' }),
+  );
   doc.autoTable({
     startY: y,
     head: [['Cant', 'Referencia', 'Descripción', 'V/r Unitario', 'Importe']],
-    body: data.items.map(it => [
+    body: itemsOrdenados.map(it => [
       String(it.cantidad ?? '-'),
       it.referencia ?? '-',
       it.descripcion ?? '-',
@@ -627,7 +632,8 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   // Fecha y hora en que se generó ESTE pdf (hora local del navegador, no la fecha de la cotización)
   // — va justo debajo del contenido de la Nota, no junto a la firma.
   const now = new Date();
-  const genFecha = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const MESES_ABREV = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  const genFecha = `${now.getDate()} de ${MESES_ABREV[now.getMonth()]} del ${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   doc.setFontSize(6.5);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...PDF_GRAY_TEXT);
@@ -786,7 +792,7 @@ async function generarPdfCotizacion(data: CotizacionDetail, isMobile: boolean) {
 // 'cancelado': el usuario cerró el cuadro nativo de compartir sin elegir nada.
 type ResultadoEnvioWhatsapp = 'compartido' | 'respaldo' | 'cancelado';
 
-async function enviarCotizacionPorWhatsapp(data: CotizacionDetail): Promise<ResultadoEnvioWhatsapp> {
+async function enviarCotizacionPorWhatsapp(data: CotizacionDetail, isMobile: boolean): Promise<ResultadoEnvioWhatsapp> {
   const doc = await buildCotizacionPdf(data);
   const fileName = cotizacionPdfFileName(data);
   const { total } = computeTotales(data.items, data.tieneDcto, data.porcentajeDcto, data.vrDctoPesos, data.impuestos);
@@ -795,11 +801,20 @@ async function enviarCotizacionPorWhatsapp(data: CotizacionDetail): Promise<Resu
   const blob: Blob = doc.output('blob');
   const nav = navigator as Navigator & { canShare?: (data?: ShareData) => boolean; share?: (data: ShareData) => Promise<void> };
 
-  if (nav.canShare && nav.share) {
+  // En macOS de escritorio, la hoja nativa de compartir no incluye WhatsApp Desktop como destino
+  // (solo AirDrop/Mail/Notas) — intentar nav.share() ahí es un callejón sin salida, así que se va
+  // directo al respaldo (que sí abre WhatsApp de verdad). En Windows de escritorio si se deja
+  // intentar, porque ahí algunos navegadores sí pueden compartir directo a WhatsApp Desktop.
+  const esMacEscritorio = !isMobile && /Macintosh/.test(navigator.userAgent);
+
+  if (!esMacEscritorio && nav.canShare && nav.share) {
     const file = new File([blob], fileName, { type: 'application/pdf' });
     if (nav.canShare({ files: [file] })) {
       try {
-        await nav.share({ files: [file], title: fileName, text: mensaje });
+        // En iOS, combinar "files" con "text"/"title" en el mismo share() hace que WhatsApp no
+        // aparezca como opción en la hoja nativa de compartir (queda solo AirDrop/Mail) — su
+        // extensión de compartir no se registra para shares mixtos, solo para archivos "puros".
+        await nav.share({ files: [file] });
         return 'compartido';
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') return 'cancelado';
@@ -811,7 +826,30 @@ async function enviarCotizacionPorWhatsapp(data: CotizacionDetail): Promise<Resu
   // Respaldo: el navegador no soporta adjuntar archivos vía "compartir".
   // Se descarga el PDF y se abre WhatsApp con el mensaje, para que el usuario adjunte el PDF manualmente.
   doc.save(fileName);
-  window.open(`https://wa.me/?text=${encodeURIComponent(mensaje)}`, '_blank');
+  const webFallbackUrl = `https://wa.me/?text=${encodeURIComponent(mensaje)}`;
+  if (esMacEscritorio) {
+    // "whatsapp://" abre la app de escritorio si está instalada (a diferencia de "wa.me", que
+    // siempre abre la versión web). No hay forma de saber de antemano si alguien tiene registrado
+    // ese esquema, así que se abre una pestaña en blanco propia y se intenta navegarla ahí: si el
+    // sistema sí lanza la app, el navegador pierde el foco y esa pestaña queda oculta; si nadie lo
+    // interceptó, sigue siendo la pestaña visible — solo en ese caso se cae a la versión web.
+    const win = window.open('about:blank', '_blank');
+    if (win) {
+      win.location.href = `whatsapp://send?text=${encodeURIComponent(mensaje)}`;
+      setTimeout(() => {
+        try {
+          if (!win.closed && win.document.visibilityState !== 'hidden') win.location.href = webFallbackUrl;
+        } catch {
+          // Si por lo que sea no se puede leer la visibilidad de esa pestaña, se prefiere no
+          // tocarla — mejor dejarla como esté que arriesgarse a interrumpir un envío que sí funcionó.
+        }
+      }, 600);
+    } else {
+      window.open(webFallbackUrl, '_blank');
+    }
+  } else {
+    window.open(webFallbackUrl, '_blank');
+  }
   return 'respaldo';
 }
 
@@ -854,16 +892,16 @@ const CotizacionCard = memo(({ item, onSelect }: { item: CotizacionListItem; onS
     </div>
     <div style={styles.mobileCardFieldsRow}>
       <div style={{ ...styles.mobileCardField, flex: 1 }}>
-        <span style={styles.mobileCardFieldLabel}>Sede</span>
-        <span style={styles.mobileCardFieldValue}>{item.sede ?? '-'}</span>
-      </div>
-      <div style={{ ...styles.mobileCardField, flex: 1 }}>
         <span style={styles.mobileCardFieldLabel}>Usuario</span>
         <span style={styles.mobileCardFieldValue}>{item.usuario ?? '-'}</span>
       </div>
       <div style={{ ...styles.mobileCardField, flex: 1 }}>
         <span style={styles.mobileCardFieldLabel}>Cirugía</span>
         <span style={styles.mobileCardFieldValue}>{item.cirugia ?? '-'}</span>
+      </div>
+      <div style={{ ...styles.mobileCardField, flex: 1 }}>
+        <span style={styles.mobileCardFieldLabel}>Total</span>
+        <span style={{ ...styles.mobileCardFieldValue, fontWeight: 700, color: '#3f6510' }}>{formatMoney(item.total)}</span>
       </div>
     </div>
   </div>
@@ -878,7 +916,7 @@ function DetalleItem({ label, children, bold, labelBold = true }: { label: strin
   );
 }
 
-const emptyItemForm = { productoId: '', productoLabel: '', articulo: '', cantidad: '', valorUnitario: '', valor: '', observaciones: '' };
+const emptyItemForm = { productoId: '', productoLabel: '', cantidad: '', valorUnitario: '', valor: '', observaciones: '' };
 
 /** cantidad × valor unitario, redondeado a 2 decimales; '' si algún operando falta. */
 const recalcValor = (cantidad: string, valorUnitario: string): string => {
@@ -888,13 +926,41 @@ const recalcValor = (cantidad: string, valorUnitario: string): string => {
   return (Math.round(c * vu * 100) / 100).toString();
 };
 
+// Al presionar Enter en un campo dentro de un contenedor marcado con data-enter-nav-root, mueve
+// el foco al siguiente input/textarea/button habilitado y visible dentro de ese contenedor. No
+// hace nada si el campo no está dentro de uno (p. ej. en Editar Cotización, donde este salto no
+// aplica todavía).
+function focusNextInEnterNavRoot(current: HTMLElement) {
+  const root = current.closest('[data-enter-nav-root]');
+  if (!root) return;
+  const listFocusable = () => Array.from(
+    root.querySelectorAll<HTMLElement>('input:not([disabled]), textarea:not([disabled]), button:not([disabled])'),
+  ).filter(el => el.offsetParent !== null);
+  const idx = listFocusable().indexOf(current);
+  if (idx < 0) return;
+  // Se espera un tick porque seleccionar un valor (p. ej. el Hospital) puede hacer que el
+  // siguiente campo (p. ej. Cirugía) pase de deshabilitado/oculto a habilitado recién en el
+  // siguiente render — antes de eso, no existe todavía como elemento enfocable.
+  setTimeout(() => {
+    const fresh = listFocusable();
+    // Si el campo actual sigue en la lista (p. ej. un input de texto simple), el siguiente sigue
+    // un índice adelante; si desapareció (p. ej. el buscador de Hospital se reemplazó por su
+    // etiqueta ya seleccionada), lo que antes era el siguiente ahora quedó en su mismo índice.
+    const target = fresh.includes(current) ? fresh[idx + 1] : fresh[idx];
+    target?.focus();
+  }, 0);
+}
+
 function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem, onDone, onSaved }: { cotizacionId: string; tarifaId?: string | null; tarifaLabel?: string | null; items: CotizacionItem[]; onSelectItem: (item: CotizacionItem) => void; onDone: () => void; onSaved: () => void }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(emptyItemForm);
   const [productoSearch, setProductoSearch] = useState('');
   const [productoFocused, setProductoFocused] = useState(false);
+  const [productoHighlighted, setProductoHighlighted] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const addedListRef = useRef<HTMLDivElement>(null);
+  const cantidadRef = useRef<HTMLInputElement>(null);
+  const productoOptionRefs = useRef<(HTMLDivElement | null)[]>([]);
   // El último consumo agregado siempre debe quedar visible al final de la lista.
   useEffect(() => {
     if (addedListRef.current) addedListRef.current.scrollTop = addedListRef.current.scrollHeight;
@@ -905,6 +971,29 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem,
     queryFn: () => cotizacionesService.searchProductos(productoSearch, cotizacionId, tarifaId ?? undefined),
     enabled: productoFocused,
   });
+  // Cada vez que cambia la lista visible (nueva búsqueda) se reinicia el resaltado a la primera
+  // opción, para no dejarlo apuntando a un índice que ya no corresponde a nada.
+  useEffect(() => { setProductoHighlighted(0); }, [productoResults]);
+  // La opción resaltada debe quedar visible aunque esté fuera del recuadro visible del scroll —
+  // sin esto, navegar con las flechas movía el resaltado pero la barra de scroll se quedaba fija.
+  useEffect(() => {
+    productoOptionRefs.current[productoHighlighted]?.scrollIntoView({ block: 'nearest' });
+  }, [productoHighlighted]);
+
+  const selectProducto = (p: ProductoOption) => {
+    const nuevoValorUnitario = p.precioSugerido !== null ? String(p.precioSugerido) : form.valorUnitario;
+    const nuevaCantidad = form.cantidad || '1';
+    setForm({
+      ...form,
+      productoId: p.id,
+      productoLabel: `${p.referencia ?? ''} / ${p.nombre ?? ''}`.replace(/^ \/ /, ''),
+      cantidad: nuevaCantidad,
+      valorUnitario: nuevoValorUnitario,
+      valor: recalcValor(nuevaCantidad, nuevoValorUnitario),
+    });
+    setProductoSearch('');
+    setTimeout(() => cantidadRef.current?.focus(), 0);
+  };
 
   const createMutation = useMutation({
     mutationFn: () => cotizacionesService.createItem(cotizacionId, {
@@ -923,20 +1012,46 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem,
     },
   });
 
+  // Si el producto elegido ya tiene una fila en la lista, no se crea una segunda — se suma la
+  // cantidad a la fila existente (mismo valor unitario que ya tenía esa fila, no el que se
+  // hubiera sugerido en este segundo intento) y la observación nueva sustituye a la anterior.
+  const updateExistenteMutation = useMutation({
+    mutationFn: (existente: CotizacionItem) => cotizacionesService.updateItem(existente.id, {
+      productoId: form.productoId,
+      cantidad: (existente.cantidad ?? 0) + Number(form.cantidad),
+      valorUnitario: existente.valorUnitario ?? Number(form.valorUnitario),
+      // Siempre se manda (aunque venga vacío) porque acá sí se quiere sustituir la observación
+      // anterior, a diferencia de otros callers de updateItem que no la tocan si no vino en el
+      // body.
+      observaciones: form.observaciones,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacionId] });
+      onSaved();
+      setForm(emptyItemForm);
+      setProductoSearch('');
+    },
+  });
+
   const handleGuardar = () => {
     if (!form.productoId) { setError('Selecciona una descripción (producto).'); return; }
     if (!form.cantidad || Number(form.cantidad) <= 0) { setError('La cantidad debe ser mayor a cero.'); return; }
     if (!form.valorUnitario || Number(form.valorUnitario) <= 0) { setError('El valor unitario debe ser mayor a cero.'); return; }
     if (!form.valor || Number(form.valor) <= 0) { setError('El valor debe ser mayor a cero.'); return; }
     setError(null);
-    createMutation.mutate();
+    const existente = items.find(it => it.productoId === form.productoId);
+    if (existente) {
+      updateExistenteMutation.mutate(existente);
+    } else {
+      createMutation.mutate();
+    }
   };
 
   return (
     <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10001 }}>
       <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
-          <h2 style={styles.modalTitle}>Agregar Consumo</h2>
+          <h2 style={styles.modalTitle}>Agregar consumo</h2>
           <button style={styles.closeBtn} onClick={onDone}>
             <X size={18} />
           </button>
@@ -975,11 +1090,12 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem,
               {form.productoId ? (
                 <span style={styles.medicoTag}>
                   {form.productoLabel}
-                  <X size={12} style={{ cursor: 'pointer' }} onClick={() => setForm({ ...form, productoId: '', productoLabel: '', articulo: '' })} />
+                  <X size={12} style={{ cursor: 'pointer' }} onClick={() => setForm({ ...form, productoId: '', productoLabel: '' })} />
                 </span>
               ) : (
                 <div style={{ position: 'relative' as const }}>
                   <SanitizedInput
+                    autoFocus
                     style={styles.formInput}
                     placeholder="Buscar por clave, nombre o sistema..."
                     value={productoSearch}
@@ -987,31 +1103,35 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem,
                     onChange={setProductoSearch}
                     onFocus={() => setProductoFocused(true)}
                     onBlur={() => setTimeout(() => setProductoFocused(false), 150)}
+                    onKeyDown={e => {
+                      if (!productoFocused || productoResults.length === 0) return;
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setProductoHighlighted(i => Math.min(i + 1, productoResults.length - 1));
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setProductoHighlighted(i => Math.max(i - 1, 0));
+                      } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const p = productoResults[productoHighlighted];
+                        if (p) selectProducto(p);
+                      }
+                    }}
                   />
                   {productoFocused && (
                     <div style={styles.medicoDropdown}>
                       {productoResults.length === 0 ? (
                         <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
                       ) : (
-                        productoResults.map(p => (
+                        productoResults.map((p, i) => (
                           <div
                             key={p.id}
+                            ref={el => { productoOptionRefs.current[i] = el; }}
                             className="dropdown-item-hover"
-                            style={{ ...styles.medicoDropdownItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}
-                            onClick={() => {
-                              const nuevoValorUnitario = p.precioSugerido !== null ? String(p.precioSugerido) : form.valorUnitario;
-                              const nuevaCantidad = form.cantidad || '1';
-                              setForm({
-                                ...form,
-                                productoId: p.id,
-                                productoLabel: `${p.referencia ?? ''} / ${p.nombre ?? ''}`.replace(/^ \/ /, ''),
-                                articulo: `Fórmula para ${p.nombre ?? ''}`,
-                                cantidad: nuevaCantidad,
-                                valorUnitario: nuevoValorUnitario,
-                                valor: recalcValor(nuevaCantidad, nuevoValorUnitario),
-                              });
-                              setProductoSearch('');
-                            }}
+                            style={{ ...styles.medicoDropdownItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', ...(i === productoHighlighted ? styles.medicoDropdownItemHighlighted : {}) }}
+                            onMouseDown={e => e.preventDefault()}
+                            onMouseEnter={() => setProductoHighlighted(i)}
+                            onClick={() => selectProducto(p)}
                           >
                             <span>
                               {p.referencia && <span style={styles.productoClaveTag}>{p.referencia}</span>}
@@ -1032,22 +1152,17 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem,
               )}
             </div>
 
-            {form.productoId && (
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Artículo</label>
-                <input style={{ ...styles.formInput, color: '#6b6b60' }} value={form.articulo} readOnly />
-              </div>
-            )}
-
             <div style={styles.formRow3}>
               <div style={styles.formGroup}>
                 <label style={styles.formLabel}>Cantidad *</label>
                 <input
+                  ref={cantidadRef}
                   type="text"
                   inputMode="decimal"
                   style={styles.formInput}
                   value={form.cantidad}
                   onChange={e => { const cantidad = sanitizeNumeric(e.target.value); setForm({ ...form, cantidad, valor: recalcValor(cantidad, form.valorUnitario) }); }}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); document.getElementById('cotizacion-add-item-observaciones')?.focus(); } }}
                 />
               </div>
               <div style={styles.formGroup}>
@@ -1068,15 +1183,22 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, items, onSelectItem,
 
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Observaciones</label>
-              <SanitizedTextarea style={styles.formInput} value={form.observaciones} sanitize={sanitizeObservaciones} onChange={observaciones => setForm({ ...form, observaciones })} />
+              <SanitizedTextarea
+                id="cotizacion-add-item-observaciones"
+                style={styles.formInput}
+                value={form.observaciones}
+                sanitize={sanitizeObservaciones}
+                onChange={observaciones => setForm({ ...form, observaciones })}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleGuardar(); } }}
+              />
             </div>
 
             {error && <span style={styles.errorText}>{error}</span>}
 
             <div style={styles.formActions}>
               <button style={styles.cancelBtn} onClick={onDone}>{items.length > 0 ? 'Listo' : 'Cancelar'}</button>
-              <button style={styles.saveBtn} onClick={handleGuardar} disabled={createMutation.isPending}>
-                {createMutation.isPending ? 'Guardando...' : 'Guardar'}
+              <button style={styles.saveBtn} onClick={handleGuardar} disabled={createMutation.isPending || updateExistenteMutation.isPending}>
+                {(createMutation.isPending || updateExistenteMutation.isPending) ? 'Guardando...' : 'Guardar'}
               </button>
             </div>
           </div>
@@ -1090,7 +1212,6 @@ interface StagedItem {
   localId: string;
   productoId: string;
   productoLabel: string;
-  articulo: string;
   cantidad: string;
   valorUnitario: string;
   valor: string;
@@ -1108,8 +1229,11 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, hospitalId, items, onSelectI
   const [form, setForm] = useState(emptyItemForm);
   const [productoSearch, setProductoSearch] = useState('');
   const [productoFocused, setProductoFocused] = useState(false);
+  const [productoHighlighted, setProductoHighlighted] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const addedListRef = useRef<HTMLDivElement>(null);
+  const cantidadRef = useRef<HTMLInputElement>(null);
+  const productoOptionRefs = useRef<(HTMLDivElement | null)[]>([]);
   // El último consumo agregado siempre debe quedar visible al final de la lista.
   useEffect(() => {
     if (addedListRef.current) addedListRef.current.scrollTop = addedListRef.current.scrollHeight;
@@ -1120,6 +1244,25 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, hospitalId, items, onSelectI
     queryFn: () => cotizacionesService.searchProductos(productoSearch, undefined, tarifaId, hospitalId),
     enabled: productoFocused,
   });
+  useEffect(() => { setProductoHighlighted(0); }, [productoResults]);
+  useEffect(() => {
+    productoOptionRefs.current[productoHighlighted]?.scrollIntoView({ block: 'nearest' });
+  }, [productoHighlighted]);
+
+  const selectProducto = (p: ProductoOption) => {
+    const nuevoValorUnitario = p.precioSugerido !== null ? String(p.precioSugerido) : form.valorUnitario;
+    const nuevaCantidad = form.cantidad || '1';
+    setForm({
+      ...form,
+      productoId: p.id,
+      productoLabel: `${p.referencia ?? ''} / ${p.nombre ?? ''}`.replace(/^ \/ /, ''),
+      cantidad: nuevaCantidad,
+      valorUnitario: nuevoValorUnitario,
+      valor: recalcValor(nuevaCantidad, nuevoValorUnitario),
+    });
+    setProductoSearch('');
+    setTimeout(() => cantidadRef.current?.focus(), 0);
+  };
 
   const handleAgregar = () => {
     if (!form.productoId) { setError('Selecciona una descripción (producto).'); return; }
@@ -1138,7 +1281,7 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, hospitalId, items, onSelectI
     <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10001 }}>
       <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
-          <h2 style={styles.modalTitle}>Agregar Consumo</h2>
+          <h2 style={styles.modalTitle}>Agregar consumo</h2>
           <button style={styles.closeBtn} onClick={onDone}>
             <X size={18} />
           </button>
@@ -1176,11 +1319,12 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, hospitalId, items, onSelectI
               {form.productoId ? (
                 <span style={styles.medicoTag}>
                   {form.productoLabel}
-                  <X size={12} style={{ cursor: 'pointer' }} onClick={() => setForm({ ...form, productoId: '', productoLabel: '', articulo: '' })} />
+                  <X size={12} style={{ cursor: 'pointer' }} onClick={() => setForm({ ...form, productoId: '', productoLabel: '' })} />
                 </span>
               ) : (
                 <div style={{ position: 'relative' as const }}>
                   <SanitizedInput
+                    autoFocus
                     style={styles.formInput}
                     placeholder="Buscar por clave, nombre o sistema..."
                     value={productoSearch}
@@ -1188,31 +1332,36 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, hospitalId, items, onSelectI
                     onChange={setProductoSearch}
                     onFocus={() => setProductoFocused(true)}
                     onBlur={() => setTimeout(() => setProductoFocused(false), 150)}
+                    onKeyDown={e => {
+                      if (!productoFocused || productoResults.length === 0) return;
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setProductoHighlighted(i => Math.min(i + 1, productoResults.length - 1));
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setProductoHighlighted(i => Math.max(i - 1, 0));
+                      } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const p = productoResults[productoHighlighted];
+                        if (p) selectProducto(p);
+                      }
+                    }}
                   />
                   {productoFocused && (
                     <div style={styles.medicoDropdown}>
                       {productoResults.length === 0 ? (
                         <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
                       ) : (
-                        productoResults.map(p => (
+                        productoResults.map((p, i) => (
                           <div
                             key={p.id}
+                            ref={el => { productoOptionRefs.current[i] = el; }}
                             className="dropdown-item-hover"
-                            style={{ ...styles.medicoDropdownItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}
-                            onClick={() => {
-                              const nuevoValorUnitario = p.precioSugerido !== null ? String(p.precioSugerido) : form.valorUnitario;
-                              const nuevaCantidad = form.cantidad || '1';
-                              setForm({
-                                ...form,
-                                productoId: p.id,
-                                productoLabel: `${p.referencia ?? ''} / ${p.nombre ?? ''}`.replace(/^ \/ /, ''),
-                                articulo: `Fórmula para ${p.nombre ?? ''}`,
-                                cantidad: nuevaCantidad,
-                                valorUnitario: nuevoValorUnitario,
-                                valor: recalcValor(nuevaCantidad, nuevoValorUnitario),
-                              });
-                              setProductoSearch('');
-                            }}
+                            style={{ ...styles.medicoDropdownItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', ...(i === productoHighlighted ? styles.medicoDropdownItemHighlighted : {}) }}
+                            onMouseDown={e => e.preventDefault()}
+                            onMouseEnter={() => setProductoHighlighted(i)}
+                            onClick={() => selectProducto(p)}
                           >
                             <span>
                               {p.referencia && <span style={styles.productoClaveTag}>{p.referencia}</span>}
@@ -1233,22 +1382,17 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, hospitalId, items, onSelectI
               )}
             </div>
 
-            {form.productoId && (
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Artículo</label>
-                <input style={{ ...styles.formInput, color: '#6b6b60' }} value={form.articulo} readOnly />
-              </div>
-            )}
-
             <div style={styles.formRow3}>
               <div style={styles.formGroup}>
                 <label style={styles.formLabel}>Cantidad *</label>
                 <input
+                  ref={cantidadRef}
                   type="text"
                   inputMode="decimal"
                   style={styles.formInput}
                   value={form.cantidad}
                   onChange={e => { const cantidad = sanitizeNumeric(e.target.value); setForm({ ...form, cantidad, valor: recalcValor(cantidad, form.valorUnitario) }); }}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); document.getElementById('cotizacion-add-staged-item-observaciones')?.focus(); } }}
                 />
               </div>
               <div style={styles.formGroup}>
@@ -1269,7 +1413,14 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, hospitalId, items, onSelectI
 
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Observaciones</label>
-              <SanitizedTextarea style={styles.formInput} value={form.observaciones} sanitize={sanitizeObservaciones} onChange={observaciones => setForm({ ...form, observaciones })} />
+              <SanitizedTextarea
+                id="cotizacion-add-staged-item-observaciones"
+                style={styles.formInput}
+                value={form.observaciones}
+                sanitize={sanitizeObservaciones}
+                onChange={observaciones => setForm({ ...form, observaciones })}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); handleAgregar(); } }}
+              />
             </div>
 
             {error && <span style={styles.errorText}>{error}</span>}
@@ -1441,7 +1592,6 @@ function StagedItemDetailModal({ item, tarifaId, hospitalId, onClose, onSave, on
   const [form, setForm] = useState({
     productoId: item.productoId,
     productoLabel: item.productoLabel,
-    articulo: item.articulo,
     cantidad: item.cantidad,
     valorUnitario: item.valorUnitario,
     observaciones: item.observaciones,
@@ -1511,7 +1661,7 @@ function StagedItemDetailModal({ item, tarifaId, hospitalId, onClose, onSave, on
                 {form.productoId ? (
                   <span style={styles.medicoTag}>
                     {form.productoLabel}
-                    <X size={12} style={{ cursor: 'pointer' }} onClick={() => setForm({ ...form, productoId: '', productoLabel: '', articulo: '' })} />
+                    <X size={12} style={{ cursor: 'pointer' }} onClick={() => setForm({ ...form, productoId: '', productoLabel: '' })} />
                   </span>
                 ) : (
                   <div style={{ position: 'relative' as const }}>
@@ -1532,13 +1682,13 @@ function StagedItemDetailModal({ item, tarifaId, hospitalId, onClose, onSave, on
                               key={p.id}
                               className="dropdown-item-hover"
                             style={{ ...styles.medicoDropdownItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}
+                              onMouseDown={e => e.preventDefault()}
                               onClick={() => {
                                 const nuevoValorUnitario = p.precioSugerido !== null ? String(p.precioSugerido) : form.valorUnitario;
                                 setForm({
                                   ...form,
                                   productoId: p.id,
                                   productoLabel: `${p.referencia ?? ''} / ${p.nombre ?? ''}`.replace(/^ \/ /, ''),
-                                  articulo: `Fórmula para ${p.nombre ?? ''}`,
                                   valorUnitario: nuevoValorUnitario,
                                 });
                                 setProductoSearch('');
@@ -1606,9 +1756,11 @@ function StagedItemDetailModal({ item, tarifaId, hospitalId, onClose, onSave, on
   );
 }
 
-function ItemDetailModal({ item, cotizacionId, onClose, onSaved, onDeleted, readOnly = false }: {
+function ItemDetailModal({ item, cotizacionId, totalItems, onClose, onSaved, onDeleted, readOnly = false }: {
   item: CotizacionItem;
   cotizacionId: string;
+  // La cotización debe conservar al menos un consumo — con esto se bloquea eliminar el último.
+  totalItems: number;
   onClose: () => void;
   onSaved: () => void;
   onDeleted: () => void;
@@ -1678,7 +1830,12 @@ function ItemDetailModal({ item, cotizacionId, onClose, onSaved, onDeleted, read
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             {!readOnly && !editing && (
               <>
-                <button style={styles.iconBtnDanger} onClick={() => setConfirmDelete(true)} title="Eliminar">
+                <button
+                  style={{ ...styles.iconBtnDanger, ...(totalItems <= 1 ? { opacity: 0.35, cursor: 'not-allowed' } : {}) }}
+                  disabled={totalItems <= 1}
+                  onClick={() => setConfirmDelete(true)}
+                  title={totalItems <= 1 ? 'La cotización debe tener al menos un consumo' : 'Eliminar'}
+                >
                   <Trash2 size={16} />
                 </button>
                 <button style={styles.iconBtnEdit} onClick={() => setEditing(true)} title="Editar">
@@ -1731,6 +1888,7 @@ function ItemDetailModal({ item, cotizacionId, onClose, onSaved, onDeleted, read
                               key={p.id}
                               className="dropdown-item-hover"
                             style={{ ...styles.medicoDropdownItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}
+                              onMouseDown={e => e.preventDefault()}
                               onClick={() => {
                                 setForm({
                                   ...form,
@@ -1800,7 +1958,7 @@ function ItemDetailModal({ item, cotizacionId, onClose, onSaved, onDeleted, read
   );
 }
 
-function TerceroButtonList({ label, required, clasificacion, valueId, onSelect, id, error }: {
+function TerceroButtonList({ label, required, clasificacion, valueId, onSelect, id, error, onConfirm }: {
   label: string;
   required?: boolean;
   clasificacion: string;
@@ -1808,6 +1966,8 @@ function TerceroButtonList({ label, required, clasificacion, valueId, onSelect, 
   onSelect: (id: string, label: string) => void;
   id?: string;
   error?: boolean;
+  // Se dispara al presionar Enter sobre una opción — el llamador decide a qué campo saltar después.
+  onConfirm?: () => void;
 }) {
   const { data: options = [] } = useQuery<TerceroOption[]>({
     queryKey: ['cotizaciones-terceros-fijas', clasificacion],
@@ -1819,14 +1979,34 @@ function TerceroButtonList({ label, required, clasificacion, valueId, onSelect, 
   return (
     <div style={styles.formGroup} id={id}>
       <label style={styles.formLabel}>{label}{required ? ' *' : ''}</label>
-      <div style={styles.pickBtnGrid}>
+      <div
+        style={styles.pickBtnGrid}
+        onKeyDown={e => {
+          if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+            e.preventDefault();
+            const idx = options.findIndex(o => o.id === valueId);
+            if (idx < 0) return;
+            const nextIdx = e.key === 'ArrowRight' ? Math.min(idx + 1, options.length - 1) : Math.max(idx - 1, 0);
+            if (nextIdx === idx) return;
+            onSelect(options[nextIdx].id, options[nextIdx].nombreCompleto);
+            e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])')[nextIdx]?.focus();
+          } else if (e.key === 'Enter' && onConfirm) {
+            e.preventDefault();
+            e.stopPropagation();
+            const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])'));
+            const idx = buttons.indexOf(document.activeElement as HTMLButtonElement);
+            if (idx >= 0 && options[idx]) onSelect(options[idx].id, options[idx].nombreCompleto);
+            onConfirm();
+          }
+        }}
+      >
         {options.map(o => (
           <button
             key={o.id}
             type="button"
+            className="pick-btn-focus"
             style={{ ...styles.pickBtn, ...(valueId === o.id ? styles.pickBtnActive : {}), ...(error ? styles.inputError : {}) }}
-            onMouseDown={e => e.preventDefault()}
-            onClick={e => { onSelect(o.id, o.nombreCompleto); e.currentTarget.blur(); }}
+            onClick={e => { onSelect(o.id, o.nombreCompleto); e.currentTarget.blur(); onConfirm?.(); }}
           >
             {o.nombreCompleto}
           </button>
@@ -1850,11 +2030,25 @@ function TerceroPicker({ label, required, valueId, valueLabel, onSelect, clasifi
 }) {
   const [search, setSearch] = useState('');
   const [focused, setFocused] = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
+  const optionRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const inputRef = useRef<HTMLInputElement>(null);
   const { data: results = [] } = useQuery<TerceroOption[]>({
     queryKey: ['cotizaciones-terceros', search, clasificacion],
     queryFn: () => cotizacionesService.searchTerceros(search, clasificacion),
     enabled: !disabled && focused,
   });
+  useEffect(() => { setHighlighted(0); }, [results]);
+  useEffect(() => { optionRefs.current[highlighted]?.scrollIntoView({ block: 'nearest' }); }, [highlighted]);
+
+  const selectOption = (t: TerceroOption) => {
+    onSelect(t.id, t.nombreCompleto);
+    setSearch('');
+    // Siempre desde el input, nunca desde el <div> de la opción clickeada — ese no es un elemento
+    // "enfocable" para focusNextInEnterNavRoot, así que con él la función no encontraba nada que
+    // avanzar y el salto al siguiente campo solo funcionaba con Enter, nunca con clic.
+    if (inputRef.current) focusNextInEnterNavRoot(inputRef.current);
+  };
 
   return (
     <div style={styles.formGroup} id={id}>
@@ -1871,20 +2065,48 @@ function TerceroPicker({ label, required, valueId, valueLabel, onSelect, clasifi
       ) : (
         <div style={{ position: 'relative' as const }}>
           <input
+            ref={inputRef}
             style={{ ...styles.formInput, ...(error ? styles.inputError : {}) }}
             placeholder={`Buscar ${label.toLowerCase()}...`}
             value={search}
             onChange={e => setSearch(e.target.value)}
             onFocus={() => setFocused(true)}
             onBlur={() => setTimeout(() => setFocused(false), 150)}
+            onKeyDown={e => {
+              if (e.key === 'ArrowDown' && results.length > 0) {
+                e.preventDefault();
+                setHighlighted(i => Math.min(i + 1, results.length - 1));
+              } else if (e.key === 'ArrowUp' && results.length > 0) {
+                e.preventDefault();
+                setHighlighted(i => Math.max(i - 1, 0));
+              } else if (e.key === 'Enter') {
+                e.preventDefault();
+                e.stopPropagation();
+                const t = results[highlighted];
+                if (t) selectOption(t);
+                else focusNextInEnterNavRoot(e.currentTarget);
+              }
+            }}
           />
           {focused && (
             <div style={styles.medicoDropdown}>
               {results.length === 0 ? (
                 <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
               ) : (
-                results.map(t => (
-                  <div key={t.id} className="dropdown-item-hover" style={styles.medicoDropdownItem} onClick={() => { onSelect(t.id, t.nombreCompleto); setSearch(''); }}>
+                results.map((t, i) => (
+                  <div
+                    key={t.id}
+                    ref={el => { optionRefs.current[i] = el; }}
+                    className="dropdown-item-hover"
+                    style={{ ...styles.medicoDropdownItem, ...(i === highlighted ? styles.medicoDropdownItemHighlighted : {}) }}
+                    // Sin esto, el mousedown le quita el foco al input ANTES de que el click
+                    // termine de dispararse — el onBlur (con su setTimeout de 150ms) alcanza a
+                    // desmontar este dropdown a mitad del clic, así que a veces no seleccionaba
+                    // nada al primer intento y había que volver a hacer clic.
+                    onMouseDown={e => e.preventDefault()}
+                    onMouseEnter={() => setHighlighted(i)}
+                    onClick={() => selectOption(t)}
+                  >
                     {t.nombreCompleto}
                   </div>
                 ))
@@ -1908,12 +2130,16 @@ function TerceroMultiPicker({ label, values, onChange, disabled, disabledHint, i
 }) {
   const [search, setSearch] = useState('');
   const [focused, setFocused] = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
+  const optionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const { data: results = [] } = useQuery<TerceroOption[]>({
     queryKey: ['cotizaciones-terceros-multi', search, clasificacion],
     queryFn: () => cotizacionesService.searchTerceros(search, clasificacion),
     enabled: !disabled && focused,
   });
   const availableResults = results.filter(r => !values.includes(r.nombreCompleto));
+  useEffect(() => { setHighlighted(0); }, [availableResults.length, search]);
+  useEffect(() => { optionRefs.current[highlighted]?.scrollIntoView({ block: 'nearest' }); }, [highlighted]);
 
   return (
     <div style={styles.formGroup} id={id}>
@@ -1941,14 +2167,47 @@ function TerceroMultiPicker({ label, values, onChange, disabled, disabledHint, i
             onChange={e => setSearch(e.target.value)}
             onFocus={() => setFocused(true)}
             onBlur={() => setTimeout(() => setFocused(false), 150)}
+            onKeyDown={e => {
+              // Con Tab no hace falta el margen de 150ms del onBlur — se cierra al toque para que
+              // no se vea la lista un instante de más antes de desaparecer (el Tab nativo ya se
+              // encarga de mover el foco a Hospital, el siguiente campo).
+              if (e.key === 'Tab') setFocused(false);
+              if (e.key === 'ArrowDown' && availableResults.length > 0) {
+                e.preventDefault();
+                setHighlighted(i => Math.min(i + 1, availableResults.length - 1));
+              } else if (e.key === 'ArrowUp' && availableResults.length > 0) {
+                e.preventDefault();
+                setHighlighted(i => Math.max(i - 1, 0));
+              } else if (e.key === 'Enter') {
+                e.preventDefault();
+                e.stopPropagation();
+                const t = availableResults[highlighted];
+                if (t) {
+                  // Se agrega y el campo se queda enfocado para poder seguir agregando más
+                  // médicos — solo salta al siguiente campo cuando ya no hay más para agregar.
+                  onChange([...values, t.nombreCompleto]);
+                  setSearch('');
+                } else {
+                  focusNextInEnterNavRoot(e.currentTarget);
+                }
+              }
+            }}
           />
           {focused && (
             <div style={styles.medicoDropdown}>
               {availableResults.length === 0 ? (
                 <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
               ) : (
-                availableResults.map(t => (
-                  <div key={t.id} className="dropdown-item-hover" style={styles.medicoDropdownItem} onClick={() => { onChange([...values, t.nombreCompleto]); setSearch(''); }}>
+                availableResults.map((t, i) => (
+                  <div
+                    key={t.id}
+                    ref={el => { optionRefs.current[i] = el; }}
+                    className="dropdown-item-hover"
+                    style={{ ...styles.medicoDropdownItem, ...(i === highlighted ? styles.medicoDropdownItemHighlighted : {}) }}
+                    onMouseDown={e => e.preventDefault()}
+                    onMouseEnter={() => setHighlighted(i)}
+                    onClick={() => { onChange([...values, t.nombreCompleto]); setSearch(''); }}
+                  >
                     {t.nombreCompleto}
                   </div>
                 ))
@@ -1975,9 +2234,22 @@ function ListPicker({ label, required, options, valueId, valueLabel, onSelect, i
 }) {
   const [search, setSearch] = useState('');
   const [focused, setFocused] = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
+  const optionRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const inputRef = useRef<HTMLInputElement>(null);
   const filtered = search.trim()
     ? options.filter(o => (o.nombre ?? '').toLowerCase().includes(search.trim().toLowerCase()))
     : options;
+  useEffect(() => { setHighlighted(0); }, [filtered.length, search]);
+  useEffect(() => { optionRefs.current[highlighted]?.scrollIntoView({ block: 'nearest' }); }, [highlighted]);
+
+  const selectOption = (o: { id: string; nombre: string | null }) => {
+    onSelect(o.id, o.nombre ?? '');
+    setSearch('');
+    // Siempre desde el input — el <div> de la opción clickeada no es "enfocable", así que con él
+    // el salto al siguiente campo solo funcionaba con Enter, nunca con clic.
+    if (inputRef.current) focusNextInEnterNavRoot(inputRef.current);
+  };
 
   return (
     <div style={styles.formGroup} id={id}>
@@ -1994,20 +2266,44 @@ function ListPicker({ label, required, options, valueId, valueLabel, onSelect, i
       ) : (
         <div style={{ position: 'relative' as const }}>
           <input
+            ref={inputRef}
             style={{ ...styles.formInput, ...(error ? styles.inputError : {}) }}
             placeholder={`Buscar ${label.toLowerCase()}...`}
             value={search}
             onChange={e => setSearch(e.target.value)}
             onFocus={() => setFocused(true)}
             onBlur={() => setTimeout(() => setFocused(false), 150)}
+            onKeyDown={e => {
+              if (e.key === 'ArrowDown' && filtered.length > 0) {
+                e.preventDefault();
+                setHighlighted(i => Math.min(i + 1, filtered.length - 1));
+              } else if (e.key === 'ArrowUp' && filtered.length > 0) {
+                e.preventDefault();
+                setHighlighted(i => Math.max(i - 1, 0));
+              } else if (e.key === 'Enter') {
+                e.preventDefault();
+                e.stopPropagation();
+                const o = filtered[highlighted];
+                if (o) selectOption(o);
+                else focusNextInEnterNavRoot(e.currentTarget);
+              }
+            }}
           />
           {focused && (
             <div style={styles.medicoDropdown}>
               {filtered.length === 0 ? (
                 <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
               ) : (
-                filtered.map(o => (
-                  <div key={o.id} className="dropdown-item-hover" style={styles.medicoDropdownItem} onClick={() => { onSelect(o.id, o.nombre ?? ''); setSearch(''); }}>
+                filtered.map((o, i) => (
+                  <div
+                    key={o.id}
+                    ref={el => { optionRefs.current[i] = el; }}
+                    className="dropdown-item-hover"
+                    style={{ ...styles.medicoDropdownItem, ...(i === highlighted ? styles.medicoDropdownItemHighlighted : {}) }}
+                    onMouseDown={e => e.preventDefault()}
+                    onMouseEnter={() => setHighlighted(i)}
+                    onClick={() => selectOption(o)}
+                  >
                     {o.nombre}
                   </div>
                 ))
@@ -2085,7 +2381,14 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     queryFn: () => cotizacionesService.getTerceroTarifa(form.responsableEconomicoId),
     enabled: !!form.responsableEconomicoId,
   });
-  const tarifaId = terceroTarifa?.tarifaId || form.cubrimientoId;
+  // Mientras terceroTarifa todavía está cargando (justo después de elegir el responsable
+  // económico), NO se debe caer al cubrimiento general como si el responsable no tuviera tarifa
+  // propia — eso duraba solo una fracción de segundo, pero si el usuario alcanzaba a buscar/elegir
+  // un producto en ese instante, el precio sugerido salía calculado con la tarifa equivocada (o en
+  // blanco), y quedaba así aunque la tarifa correcta llegara un instante después.
+  const tarifaId = form.responsableEconomicoId && terceroTarifaLoading
+    ? undefined
+    : (terceroTarifa?.tarifaId || form.cubrimientoId);
   const tarifaLabel = terceroTarifa?.tarifaNombre || CUBRIMIENTO_OPTIONS.find(o => o.id === form.cubrimientoId)?.label || '';
 
   const updateMutation = useMutation({
@@ -2174,6 +2477,36 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     }
   }, [tarifaId, terceroTarifaLoading]);
 
+  // Igual que el recálculo de precios de arriba, pero para la referencia/nombre especial de cada
+  // consumo — si el hospital cambia, el grupo del nuevo hospital puede tener (o dejar de tener) un
+  // especial cargado para alguno de los productos ya agregados.
+  const recalculatedHospitalRef = useRef<string | null>(null);
+  const hospitalBaselineEstablecidaRef = useRef(false);
+
+  const recalcNombresEspecialesMutation = useMutation({
+    mutationFn: (nuevoHospitalId: string) => cotizacionesService.recalcularNombresEspeciales(cotizacion.id, nuevoHospitalId),
+    onSuccess: result => {
+      queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacion.id] });
+      if (result.actualizados > 0) {
+        onNotify(`Se actualizó la referencia/nombre de ${result.actualizados} consumo(s) según el especial del nuevo hospital.`, 'info');
+      }
+    },
+  });
+
+  useEffect(() => {
+    if (!form.hospitalId) return;
+    if (!hospitalBaselineEstablecidaRef.current) {
+      hospitalBaselineEstablecidaRef.current = true;
+      recalculatedHospitalRef.current = form.hospitalId;
+      return;
+    }
+    if (form.hospitalId === recalculatedHospitalRef.current) return;
+    recalculatedHospitalRef.current = form.hospitalId;
+    if (cotizacion.items.length > 0) {
+      recalcNombresEspecialesMutation.mutate(form.hospitalId);
+    }
+  }, [form.hospitalId]);
+
   const validateForm = (): { field: string; message: string } | null => {
     if (!form.fecha) return { field: 'fecha', message: 'Selecciona la fecha.' };
     if (!form.dirigidoA.trim()) return { field: 'dirigidoA', message: 'Ingresa a quién va dirigida.' };
@@ -2249,7 +2582,13 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.formGroup} id="cotizacion-edit-field-fecha">
         <label style={styles.formLabel}>Fecha *</label>
-        <DatePicker error={error?.field === 'fecha'} value={form.fecha} onChange={fecha => { setForm({ ...form, fecha }); setError(null); }} />
+        <DatePicker
+          error={error?.field === 'fecha'}
+          value={form.fecha}
+          onChange={fecha => { setForm({ ...form, fecha }); setError(null); }}
+          style={form.fecha ? { backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510', fontWeight: 600 } : undefined}
+          labelStyle={form.fecha ? { flex: 1, textAlign: 'center' as const } : undefined}
+        />
         {error?.field === 'fecha' && <span style={styles.errorText}>{error.message}</span>}
       </div>
 
@@ -2481,7 +2820,13 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
                             </button>
                           </div>
                         ) : (
-                          <button type="button" style={styles.rowDeleteBtn} title="Eliminar" onClick={() => setConfirmDeleteItemId(it.id)}>
+                          <button
+                            type="button"
+                            style={{ ...styles.rowDeleteBtn, ...(cotizacion.items.length <= 1 ? { opacity: 0.35, cursor: 'not-allowed' } : {}) }}
+                            title={cotizacion.items.length <= 1 ? 'La cotización debe tener al menos un consumo' : 'Eliminar'}
+                            disabled={cotizacion.items.length <= 1}
+                            onClick={() => setConfirmDeleteItemId(it.id)}
+                          >
                             <Trash2 size={14} />
                           </button>
                         )}
@@ -2546,6 +2891,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
           <ItemDetailModal
             item={selectedItem}
             cotizacionId={cotizacion.id}
+            totalItems={cotizacion.items.length}
             onClose={() => setSelectedItem(null)}
             onSaved={() => { setItemsChanged(true); onNotify('Consumo actualizado'); }}
             onDeleted={() => {
@@ -2767,7 +3113,12 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
     queryFn: () => cotizacionesService.getTerceroTarifa(form.responsableEconomicoId),
     enabled: !!form.responsableEconomicoId,
   });
-  const tarifaId = terceroTarifa?.tarifaId || form.cubrimientoId;
+  // Mismo criterio que en EditCotizacionForm: no caer al cubrimiento general mientras
+  // terceroTarifa todavía está cargando, o el precio sugerido de un producto elegido justo en ese
+  // instante sale calculado con la tarifa equivocada (o en blanco).
+  const tarifaId = form.responsableEconomicoId && terceroTarifaLoading
+    ? undefined
+    : (terceroTarifa?.tarifaId || form.cubrimientoId);
   const tarifaLabel = terceroTarifa?.tarifaNombre || CUBRIMIENTO_OPTIONS.find(o => o.id === form.cubrimientoId)?.label || '';
 
   // Si hay un paquete + nivel seleccionados, los consumos ya no se agregan a mano: se traen del
@@ -2789,7 +3140,6 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
         localId: crypto.randomUUID(),
         productoId: p.id,
         productoLabel,
-        articulo: `Fórmula para ${p.nombre ?? ''}`,
         cantidad,
         valorUnitario,
         valor: recalcValor(cantidad, valorUnitario),
@@ -2840,6 +3190,26 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
   // ya se llenaron, para guiar al usuario en el orden correcto del formulario.
   const dirigidoAListo = !!form.dirigidoA.trim();
   const camposParaCubrimientoListos = dirigidoAListo && !!form.hospitalId && !!form.cirugia.trim();
+
+  const selectCubrimiento = (opt: { id: string; label: string }) => {
+    const autoResponsable = opt.id === CUBRIMIENTO_HOSPITALES_ID && form.hospitalId
+      ? { responsableEconomicoId: form.hospitalId, responsableEconomicoLabel: form.hospitalLabel }
+      : { responsableEconomicoId: '', responsableEconomicoLabel: '' };
+    setForm(prev => ({ ...prev, cubrimientoId: opt.id, empresaId: '', empresaLabel: '', ...autoResponsable }));
+    setError(null);
+  };
+
+  // Compartida entre el clic y el Enter sobre Cubrimiento — ambos deben avanzar a Empresa
+  // autoseleccionando su primera opción disponible, no solo Enter.
+  const avanzarAEmpresa = () => {
+    cotizacionesService.searchTerceros(undefined, 'EMPRESA').then(results => {
+      const primera = results.find(o => !o.nombreCompleto?.toLowerCase().includes('yucamark'));
+      if (primera) setForm(prev => ({ ...prev, empresaId: primera.id, empresaLabel: primera.nombreCompleto }));
+      setTimeout(() => {
+        document.querySelector<HTMLButtonElement>('#cotizacion-create-field-empresa button:not([disabled])')?.focus();
+      }, 0);
+    });
+  };
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -2899,6 +3269,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
     if (!form.empresaId) { setError({ field: 'empresa', message: 'Selecciona la empresa.' }); return; }
     if (!form.responsableEconomicoId) { setError({ field: 'responsable', message: 'Selecciona el responsable económico.' }); return; }
     if (!form.sedeId) { setError({ field: 'sede', message: 'Selecciona la sede.' }); return; }
+    if (stagedItems.length === 0) { setError({ field: 'consumos', message: 'Agrega al menos un consumo.' }); return; }
     if (form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID && !form.numProveedor.trim()) { setError({ field: 'numProveedor', message: 'Ingresa el N° de proveedor.' }); return; }
     if (form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID && !form.tiempoEntrega.trim()) { setError({ field: 'tiempoEntrega', message: 'Ingresa el tiempo de entrega.' }); return; }
     if (form.tieneDcto && !form.porcentajeDcto.trim() && !form.vrDctoPesos.trim()) { setError({ field: 'porcentajeDcto', message: 'Ingresa el porcentaje y/o el valor del descuento.' }); return; }
@@ -2930,7 +3301,17 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
           </button>
         </div>
         <div style={styles.modalBody}>
-          <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '1.1rem' }}>
+          <div
+            style={{ display: 'flex', flexDirection: 'column' as const, gap: '1.1rem' }}
+            data-enter-nav-root
+            onKeyDown={e => {
+              if (e.key !== 'Enter') return;
+              const target = e.target as HTMLElement;
+              if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') return;
+              e.preventDefault();
+              focusNextInEnterNavRoot(target);
+            }}
+          >
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>N° Cotización</label>
               <input style={{ ...styles.formInput, color: '#9ca3af', backgroundColor: '#f4f4ee' }} placeholder="Se genera automáticamente" disabled />
@@ -2938,7 +3319,14 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-fecha">
               <label style={styles.formLabel}>Fecha *</label>
-              <DatePicker min={toLocalDateString(new Date())} error={error?.field === 'fecha'} value={form.fecha} onChange={fecha => { setForm({ ...form, fecha }); setError(null); }} />
+              <DatePicker
+                min={toLocalDateString(new Date())}
+                error={error?.field === 'fecha'}
+                value={form.fecha}
+                onChange={fecha => { setForm({ ...form, fecha }); setError(null); }}
+                style={form.fecha ? { backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510', fontWeight: 600 } : undefined}
+                labelStyle={form.fecha ? { flex: 1, textAlign: 'center' as const } : undefined}
+              />
               {error?.field === 'fecha' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
@@ -2993,18 +3381,56 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                   Selecciona primero el hospital
                 </span>
               ) : (
-                <input style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }} value={form.cirugia} onChange={e => { setForm({ ...form, cirugia: e.target.value }); setError(null); }} />
+                <input
+                  style={{ ...styles.formInput, ...(error?.field === 'cirugia' ? styles.inputError : {}) }}
+                  value={form.cirugia}
+                  onChange={e => { setForm({ ...form, cirugia: e.target.value }); setError(null); }}
+                  onKeyDown={e => {
+                    if (e.key !== 'Enter') return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (camposParaCubrimientoListos) {
+                      selectCubrimiento(CUBRIMIENTO_OPTIONS[0]);
+                      document.querySelector<HTMLButtonElement>('#cotizacion-create-field-cubrimiento button:not([disabled])')?.focus();
+                    } else {
+                      focusNextInEnterNavRoot(e.currentTarget);
+                    }
+                  }}
+                />
               )}
               {error?.field === 'cirugia' && <span style={styles.errorText}>{error.message}</span>}
             </div>
 
             <div style={styles.formGroup} id="cotizacion-create-field-cubrimiento">
               <label style={styles.formLabel}>Cubrimiento *</label>
-              <div style={styles.pickBtnGrid}>
+              <div
+                style={styles.pickBtnGrid}
+                onKeyDown={e => {
+                  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    const idx = CUBRIMIENTO_OPTIONS.findIndex(o => o.id === form.cubrimientoId);
+                    if (idx < 0) return;
+                    const nextIdx = e.key === 'ArrowRight' ? Math.min(idx + 1, CUBRIMIENTO_OPTIONS.length - 1) : Math.max(idx - 1, 0);
+                    if (nextIdx === idx) return;
+                    selectCubrimiento(CUBRIMIENTO_OPTIONS[nextIdx]);
+                    e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])')[nextIdx]?.focus();
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])'));
+                    const idx = buttons.indexOf(document.activeElement as HTMLButtonElement);
+                    if (idx >= 0) selectCubrimiento(CUBRIMIENTO_OPTIONS[idx]);
+                    // La opción ya quedó elegida (por clic o flechas) — Enter confirma y salta a
+                    // Empresa, seleccionando de una vez su primera opción disponible.
+                    avanzarAEmpresa();
+                  }
+                }}
+              >
                 {CUBRIMIENTO_OPTIONS.map(opt => (
                   <button
                     key={opt.id}
                     type="button"
+                    className="pick-btn-focus"
                     disabled={!camposParaCubrimientoListos}
                     style={{
                       ...styles.pickBtn,
@@ -3012,15 +3438,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                       ...(error?.field === 'cubrimiento' ? styles.inputError : {}),
                       ...(!camposParaCubrimientoListos ? styles.pickBtnDisabled : {}),
                     }}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => {
-                      const autoResponsable = opt.id === CUBRIMIENTO_HOSPITALES_ID && form.hospitalId
-                        ? { responsableEconomicoId: form.hospitalId, responsableEconomicoLabel: form.hospitalLabel }
-                        : { responsableEconomicoId: '', responsableEconomicoLabel: '' };
-                      setForm({ ...form, cubrimientoId: opt.id, empresaId: '', empresaLabel: '', ...autoResponsable });
-                      setError(null);
-                      e.currentTarget.blur();
-                    }}
+                    onClick={e => { selectCubrimiento(opt); e.currentTarget.blur(); avanzarAEmpresa(); }}
                   >
                     {opt.label}
                   </button>
@@ -3041,6 +3459,23 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                 error={error?.field === 'empresa'}
                 valueId={form.empresaId}
                 onSelect={(id, label) => { setForm({ ...form, empresaId: id, empresaLabel: label }); setError(null); }}
+                onConfirm={() => {
+                  if (form.responsableEconomicoId) {
+                    // Ya hay responsable económico (p. ej. se autocompletó con el hospital) — se
+                    // salta directo a Sede. Si Sede ya viene autocompletada desde el Hospital
+                    // (getTerceroTarifa), se respeta ese valor; solo se autoselecciona la primera
+                    // opción cuando todavía está vacía.
+                    const targetSedeId = form.sedeId || sedeOptions[0]?.id;
+                    if (!form.sedeId && sedeOptions[0]) setForm(prev => ({ ...prev, sedeId: sedeOptions[0].id }));
+                    setTimeout(() => {
+                      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('#cotizacion-create-field-sede button:not([disabled])'));
+                      const idx = sedeOptions.findIndex(s => s.id === targetSedeId);
+                      (idx >= 0 ? buttons[idx] : buttons[0])?.focus();
+                    }, 0);
+                  } else {
+                    document.querySelector<HTMLInputElement>('#cotizacion-create-field-responsable input')?.focus();
+                  }
+                }}
               />
             )}
             {error?.field === 'empresa' && <span style={styles.errorText}>{error.message}</span>}
@@ -3061,14 +3496,43 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-sede">
               <label style={styles.formLabel}>Sede *</label>
-              <div style={styles.pickBtnGrid}>
+              <div
+                style={styles.pickBtnGrid}
+                onKeyDown={e => {
+                  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    const idx = sedeOptions.findIndex(s => s.id === form.sedeId);
+                    if (idx < 0) return;
+                    const nextIdx = e.key === 'ArrowRight' ? Math.min(idx + 1, sedeOptions.length - 1) : Math.max(idx - 1, 0);
+                    if (nextIdx === idx) return;
+                    setForm({ ...form, sedeId: sedeOptions[nextIdx].id });
+                    setError(null);
+                    e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])')[nextIdx]?.focus();
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])'));
+                    const idx = buttons.indexOf(document.activeElement as HTMLButtonElement);
+                    if (idx >= 0 && sedeOptions[idx]) { setForm({ ...form, sedeId: sedeOptions[idx].id }); setError(null); }
+                    const lastButton = buttons[buttons.length - 1];
+                    if (lastButton) focusNextInEnterNavRoot(lastButton);
+                  }
+                }}
+              >
                 {sedeOptions.map(s => (
                   <button
                     key={s.id}
                     type="button"
+                    className="pick-btn-focus"
                     style={{ ...styles.pickBtn, ...(form.sedeId === s.id ? styles.pickBtnActive : {}), ...(error?.field === 'sede' ? styles.inputError : {}) }}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => { setForm({ ...form, sedeId: s.id }); setError(null); e.currentTarget.blur(); }}
+                    onClick={e => {
+                      setForm({ ...form, sedeId: s.id });
+                      setError(null);
+                      const buttons = Array.from(e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('button:not([disabled])') ?? []);
+                      const lastButton = buttons[buttons.length - 1];
+                      e.currentTarget.blur();
+                      if (lastButton) focusNextInEnterNavRoot(lastButton);
+                    }}
                   >
                     {s.nombre}
                   </button>
@@ -3142,11 +3606,12 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
             <div style={styles.sectionDivider} />
 
-            <div style={styles.formGroup}>
+            <div style={styles.formGroup} id="cotizacion-create-field-consumos">
               <div style={styles.sectionHeader}>
                 <span style={{ ...styles.sectionTitle, color: '#374151' }}>Consumos</span>
                 <span style={styles.countBadge}>{stagedItems.length}</span>
               </div>
+              {error?.field === 'consumos' && <span style={styles.errorText}>{error.message}</span>}
 
               {stagedItems.length > 0 && tarifaLabel && (
                 <div style={styles.tarifaHint}>
@@ -3245,7 +3710,17 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                   items={stagedItems}
                   onSelectItem={setSelectedStagedItem}
                   onAdd={item => {
-                    setStagedItems(prev => [...prev, item]);
+                    // Si el producto ya tenía una fila en la lista, no se agrega una segunda — se
+                    // suma la cantidad a la fila existente (con el valor unitario que ya tenía) y
+                    // la observación nueva sustituye a la anterior.
+                    setStagedItems(prev => {
+                      const existenteIdx = prev.findIndex(x => x.productoId === item.productoId);
+                      if (existenteIdx === -1) return [...prev, item];
+                      const existente = prev[existenteIdx];
+                      const nuevaCantidad = String((Number(existente.cantidad) || 0) + (Number(item.cantidad) || 0));
+                      const actualizado = { ...existente, cantidad: nuevaCantidad, valor: recalcValor(nuevaCantidad, existente.valorUnitario), observaciones: item.observaciones };
+                      return prev.map((x, i) => (i === existenteIdx ? actualizado : x));
+                    });
                     if (form.paqueteId) setForm(prev => ({ ...prev, paqueteId: '', paqueteLabel: '', nivel: '' }));
                     onNotify('Consumo agregado');
                   }}
@@ -3286,8 +3761,8 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>¿Tiene Descuento? *</label>
               <div style={styles.pickBtnGrid}>
-                <button type="button" disabled={subtotal <= 0} style={{ ...styles.pickBtn, ...(!form.tieneDcto ? styles.pickBtnActive : {}), ...(subtotal <= 0 ? styles.pickBtnDisabled : {}) }} onMouseDown={e => e.preventDefault()} onClick={e => { setForm({ ...form, tieneDcto: false }); e.currentTarget.blur(); }}>No</button>
-                <button type="button" disabled={subtotal <= 0} style={{ ...styles.pickBtn, ...(form.tieneDcto ? styles.pickBtnActive : {}), ...(subtotal <= 0 ? styles.pickBtnDisabled : {}) }} onMouseDown={e => e.preventDefault()} onClick={e => { setForm({ ...form, tieneDcto: true }); e.currentTarget.blur(); }}>Sí</button>
+                <button type="button" className="pick-btn-focus" disabled={subtotal <= 0} style={{ ...styles.pickBtn, ...(!form.tieneDcto ? styles.pickBtnActive : {}), ...(subtotal <= 0 ? styles.pickBtnDisabled : {}) }} onClick={e => { setForm({ ...form, tieneDcto: false }); e.currentTarget.blur(); }}>No</button>
+                <button type="button" className="pick-btn-focus" disabled={subtotal <= 0} style={{ ...styles.pickBtn, ...(form.tieneDcto ? styles.pickBtnActive : {}), ...(subtotal <= 0 ? styles.pickBtnDisabled : {}) }} onClick={e => { setForm({ ...form, tieneDcto: true }); focusNextInEnterNavRoot(e.currentTarget); }}>Sí</button>
               </div>
               {subtotal <= 0 && <span style={{ fontSize: '0.78rem', color: '#9ca3af' }}>Agrega productos con un valor mayor a $0.00 para poder elegir.</span>}
             </div>
@@ -3352,14 +3827,36 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
             <div style={styles.formGroup} id="cotizacion-create-field-impuestos">
               <label style={styles.formLabel}>Impuestos *</label>
-              <div style={styles.pickBtnGrid}>
+              <div
+                style={styles.pickBtnGrid}
+                onKeyDown={e => {
+                  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    const idx = IMPUESTOS_OPTIONS.findIndex(o => o === form.impuestos);
+                    if (idx < 0) return;
+                    const nextIdx = e.key === 'ArrowRight' ? Math.min(idx + 1, IMPUESTOS_OPTIONS.length - 1) : Math.max(idx - 1, 0);
+                    if (nextIdx === idx) return;
+                    setForm({ ...form, impuestos: IMPUESTOS_OPTIONS[nextIdx] });
+                    setError(null);
+                    e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])')[nextIdx]?.focus();
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])'));
+                    const idx = buttons.indexOf(document.activeElement as HTMLButtonElement);
+                    if (idx >= 0 && IMPUESTOS_OPTIONS[idx]) { setForm({ ...form, impuestos: IMPUESTOS_OPTIONS[idx] }); setError(null); }
+                    const lastButton = buttons[buttons.length - 1];
+                    if (lastButton) focusNextInEnterNavRoot(lastButton);
+                  }
+                }}
+              >
                 {IMPUESTOS_OPTIONS.map(opt => (
                   <button
                     key={opt}
                     type="button"
+                    className="pick-btn-focus"
                     disabled={subtotal <= 0}
                     style={{ ...styles.pickBtn, ...(form.impuestos === opt ? styles.pickBtnActive : {}), ...(subtotal <= 0 ? styles.pickBtnDisabled : {}), ...(error?.field === 'impuestos' ? styles.inputError : {}) }}
-                    onMouseDown={e => e.preventDefault()}
                     onClick={e => { setForm({ ...form, impuestos: opt }); setError(null); e.currentTarget.blur(); }}
                   >
                     {opt}
@@ -3403,6 +3900,15 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                   type="checkbox"
                   checked={quiereFirmar}
                   onChange={e => { setQuiereFirmar(e.target.checked); setError(null); }}
+                  onKeyDown={e => {
+                    // Un checkbox suelto (sin <form>) no responde a Enter de forma nativa — solo a
+                    // Espacio — así que se replica aquí para seguir la misma cadena de Enter.
+                    if (e.key !== 'Enter') return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setQuiereFirmar(prev => !prev);
+                    setError(null);
+                  }}
                 />
                 Firmar esta cotización
               </label>
@@ -3515,7 +4021,7 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
     if (!data) return;
     setSendingWhatsapp(true);
     try {
-      const resultado = await enviarCotizacionPorWhatsapp(data);
+      const resultado = await enviarCotizacionPorWhatsapp(data, isMobile);
       // En escritorio no se avisa nunca: incluso cuando el navegador sí soporta compartir
       // archivos (algunas versiones de Windows lo hacen), ahí se abre la app de WhatsApp
       // Desktop y el usuario todavía tiene que confirmar el envío ahí — no es un hecho consumado.
@@ -3932,6 +4438,7 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
         <ItemDetailModal
           item={selectedItem}
           cotizacionId={data.id}
+          totalItems={data.items.length}
           onClose={() => setSelectedItem(null)}
           onSaved={() => onNotify('Consumo actualizado')}
           onDeleted={() => onNotify('Consumo eliminado')}
@@ -4333,6 +4840,7 @@ const styles: Record<string, React.CSSProperties> = {
   medicoTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 0.9rem', borderRadius: '999px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510', fontSize: '0.8rem', fontWeight: 600, width: 'fit-content' as const },
   medicoDropdown: { position: 'absolute' as const, top: 'calc(100% + 0.35rem)', left: 0, right: 0, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', maxHeight: '220px', overflowY: 'auto' as const, zIndex: 20 },
   medicoDropdownItem: { padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#333', cursor: 'pointer' },
+  medicoDropdownItemHighlighted: { backgroundColor: '#e9f2d8' },
   addedItemsList: { display: 'flex', flexDirection: 'column' as const, maxHeight: '180px', overflowY: 'auto' as const, border: '1px solid #eeeee6', borderRadius: '8px' },
   addedItemRow: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.75rem', borderBottom: '1px solid #f4f4ee', fontSize: '0.82rem' },
   addedItemQty: { color: '#9ca3af', fontWeight: 700, flexShrink: 0 },

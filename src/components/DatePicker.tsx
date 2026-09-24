@@ -12,6 +12,9 @@ interface DatePickerProps {
   placeholder?: string;
   id?: string;
   style?: React.CSSProperties;
+  /** Estilo del <span> del texto (no del botón completo) — para, por ejemplo, centrarlo sin mover
+   * el ícono del calendario, que queda fijo a la derecha por el justifyContent del botón. */
+  labelStyle?: React.CSSProperties;
 }
 
 const DIAS_SEMANA = ['DO', 'LU', 'MA', 'MI', 'JU', 'VI', 'SA'];
@@ -27,7 +30,7 @@ const parseLocal = (isoDate: string): Date | null => {
 /** Reemplazo de <input type="date"> con el calendario propio de la app (mismos colores que el
  * resto del sistema) en vez del selector nativo del navegador, que se ve genérico y no se puede
  * personalizar. Misma API que un input controlado: value/onChange en formato "YYYY-MM-DD". */
-export default function DatePicker({ value, onChange, min, max, error, placeholder = 'Selecciona una fecha', id, style }: DatePickerProps) {
+export default function DatePicker({ value, onChange, min, max, error, placeholder = 'Selecciona una fecha', id, style, labelStyle }: DatePickerProps) {
   const [open, setOpen] = useState(false);
   const [vista, setVista] = useState<'dias' | 'meses' | 'anios'>('dias');
   const [mesVisible, setMesVisible] = useState(() => parseLocal(value) ?? new Date());
@@ -135,7 +138,7 @@ export default function DatePicker({ value, onChange, min, max, error, placehold
           ...style,
         }}
       >
-        <span>{label}</span>
+        <span style={labelStyle}>{label}</span>
         <CalendarIcon size={16} color="#6b8c1f" style={{ flexShrink: 0 }} />
       </button>
 

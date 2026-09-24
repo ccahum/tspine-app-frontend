@@ -168,6 +168,7 @@ export interface UpdateDetCotizaPayload {
   productoId: string;
   cantidad: number;
   valorUnitario: number;
+  observaciones?: string;
 }
 
 export interface CotizacionListResponse {
@@ -243,6 +244,9 @@ export const cotizacionesService = {
 
   recalcularPrecios: (id: string, tarifaId: string): Promise<{ actualizados: number; omitidos: number }> =>
     api.patch(`/operacion/cotizaciones/${id}/recalcular-precios`, { tarifaId }).then(r => r.data),
+
+  recalcularNombresEspeciales: (id: string, hospitalId: string | null): Promise<{ actualizados: number }> =>
+    api.patch(`/operacion/cotizaciones/${id}/recalcular-nombres-especiales`, { hospitalId: hospitalId ?? undefined }).then(r => r.data),
 
   setFirma: (id: string, firma: string): Promise<CotizacionDetail> =>
     api.patch(`/operacion/cotizaciones/${id}/firma`, { firma }).then(r => r.data),
