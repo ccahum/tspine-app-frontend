@@ -22,10 +22,12 @@ import {
   Car,
   Route,
   Contact,
+  KeyRound,
   X,
   LogOut,
 } from 'lucide-react';
 import { esSuperAdmin } from '../../lib/auth.utils';
+import { tieneAccesoAVista } from '../../lib/permissions.utils';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 import { useNavigateWithLoading } from '../../hooks/useNavigateWithLoading';
 import { prefetchRoute } from '../../routeImports';
@@ -49,6 +51,7 @@ const operacionSubmodules = [
 const administracionSubmodules = [
   { icon: Users, label: 'Usuarios', path: '/administracion/usuarios' },
   { icon: Contact, label: 'Terceros', path: '/administracion/terceros' },
+  { icon: KeyRound, label: 'Perfiles', path: '/administracion/perfiles' },
 ];
 
 const vehicularSubmodules = [
@@ -101,8 +104,20 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
   };
 
   // Administración solo se ofrece a superadmins — el backend ya la rechaza para los demás, pero
-  // ni siquiera debería aparecer en el menú.
-  const visibleNavItems = navItems.filter(item => item.path !== '/administracion' || esSuperAdmin());
+  // ni siquiera debería aparecer en el menú. Además, para un perfil restringido (ver
+  // permissions.utils.ts), cada módulo con submódulos solo muestra los que sí tiene asignados —
+  // si le queda vacío, el módulo padre desaparece del todo. Los módulos "placeholder" sin
+  // submódulos propios (Compras, Almacén, etc. — todavía no tienen página real) también se
+  // ocultan para un perfil restringido, aunque no exista ninguna vista que los cubra: no tiene
+  // sentido mostrar algo a lo que nunca se le podría dar acceso.
+  const visibleNavItems = navItems
+    .filter(item => item.path !== '/administracion' || esSuperAdmin())
+    .map(item => (item.submodules ? { ...item, submodules: item.submodules.filter(s => tieneAccesoAVista(s.path)) } : item))
+    .filter(item => {
+      if (item.submodules) return item.submodules.length > 0;
+      if (item.path === '/dashboard') return true;
+      return tieneAccesoAVista(item.path);
+    });
 
   // Al llegar a una ruta de un módulo con submódulos (ej. /operacion/programaciones), abre ese
   // módulo automáticamente para que el usuario vea en qué submódulo está parado.

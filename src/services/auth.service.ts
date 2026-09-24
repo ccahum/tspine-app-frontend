@@ -16,6 +16,9 @@ export interface Usuario {
   reglas: string;
   sedeId: string | null;
   tieneFirma: boolean;
+  accesoRestringido: boolean;
+  vistas: string[];
+  vistaInicial: string | null;
 }
 
 export interface LoginResponse {

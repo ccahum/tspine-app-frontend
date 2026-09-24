@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 import { esSuperAdmin } from '../../lib/auth.utils';
+import { tieneAccesoAVista, moduloTieneAlgunAcceso } from '../../lib/permissions.utils';
 import { useNavigateWithLoading } from '../../hooks/useNavigateWithLoading';
 
 const ACCENT = '#4a7c59';
@@ -47,8 +48,14 @@ function ModuleCard({ icon: Icon, label, description, path }: typeof modules[0])
 
 export default function DashboardPage() {
   const { isMobile } = useResponsiveStyles();
-  // Administración solo se ofrece a superadmins — mismo criterio que Sidebar.tsx.
-  const modulosVisibles = modules.filter(mod => mod.path !== '/administracion' || esSuperAdmin());
+  // Mismo criterio que Sidebar.tsx: Administración solo para superadmins; Operación/Vehicular
+  // (módulos con submódulos propios) se muestran si el perfil tiene acceso a alguno de ellos;
+  // el resto (módulos placeholder sin submódulos reales) se oculta para un perfil restringido.
+  const modulosVisibles = modules.filter(mod => {
+    if (mod.path === '/administracion') return esSuperAdmin();
+    if (mod.path === '/operacion' || mod.path === '/vehicular') return moduloTieneAlgunAcceso(mod.path);
+    return tieneAccesoAVista(mod.path);
+  });
 
   // Mismo patrón que OperacionPage/CotizacionesPage: pageWrapper anclado al viewport +
   // scroll del body bloqueado mientras esta página está montada, para que todos los módulos

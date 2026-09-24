@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { UserCog, Users, Contact } from 'lucide-react';
+import { UserCog, Users, Contact, KeyRound } from 'lucide-react';
 import HeaderBackReveal from '../../components/HeaderBackReveal';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 import { useNavigateWithLoading } from '../../hooks/useNavigateWithLoading';
@@ -9,6 +9,7 @@ const ACCENT = '#4a7c59';
 const submodules = [
   { icon: Users, label: 'Usuarios', description: 'Crea usuarios y asigna su perfil de acceso', path: '/administracion/usuarios' },
   { icon: Contact, label: 'Terceros', description: 'Consulta y agrega terceros del sistema', path: '/administracion/terceros' },
+  { icon: KeyRound, label: 'Perfiles', description: 'Configura qué módulos puede ver cada perfil', path: '/administracion/perfiles' },
 ];
 
 function SubmoduleCard({ icon: Icon, label, description, path }: typeof submodules[0]) {

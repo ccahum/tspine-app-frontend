@@ -15,6 +15,7 @@ export const routeImports: Record<string, () => Promise<unknown>> = {
   '/administracion': () => import('./pages/administracion/AdministracionPage'),
   '/administracion/usuarios': () => import('./pages/administracion/usuarios/UsuariosAdminPage'),
   '/administracion/terceros': () => import('./pages/administracion/terceros/TercerosAdminPage'),
+  '/administracion/perfiles': () => import('./pages/administracion/perfiles/PerfilesAdminPage'),
   '/vehicular': () => import('./pages/vehicular/VehicularPage'),
   '/vehicular/catalogo': () => import('./pages/vehicular/catalogo/CatalogoVehicularPage'),
   '/vehicular/control-viajes': () => import('./pages/vehicular/control-viajes/ControlViajesPage'),

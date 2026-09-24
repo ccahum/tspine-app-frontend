@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Truck, Car, Route } from 'lucide-react';
 import { MaterialIcon } from '../../components/icons/MaterialIcon';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
+import { tieneAccesoAVista } from '../../lib/permissions.utils';
 import { useNavigateWithLoading } from '../../hooks/useNavigateWithLoading';
 
 const ACCENT = '#4a7c59';
@@ -37,6 +38,7 @@ function SubmoduleCard({ icon: Icon, label, description, path }: typeof submodul
 export default function VehicularPage() {
   const navigate = useNavigateWithLoading();
   const { isMobile } = useResponsiveStyles();
+  const submodulosVisibles = submodules.filter(mod => tieneAccesoAVista(mod.path));
 
   return (
       <div style={{ ...styles.container, paddingLeft: isMobile ? '1rem' : '2rem', paddingRight: isMobile ? '1rem' : '2rem' }}>
@@ -57,12 +59,12 @@ export default function VehicularPage() {
           </div>
           <div>
             <h1 style={styles.headerTitle}>Gestión Vehicular</h1>
-            <p style={styles.headerSub}>{submodules.length} submódulos disponibles</p>
+            <p style={styles.headerSub}>{submodulosVisibles.length} submódulos disponibles</p>
           </div>
         </div>
 
         <div style={{ ...styles.grid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(240px, 1fr))' }}>
-          {submodules.map((mod) => (
+          {submodulosVisibles.map((mod) => (
             <SubmoduleCard key={mod.path} {...mod} />
           ))}
         </div>

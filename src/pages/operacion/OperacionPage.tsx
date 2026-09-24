@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import HeaderBackReveal from '../../components/HeaderBackReveal';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
+import { tieneAccesoAVista } from '../../lib/permissions.utils';
 import { useNavigateWithLoading } from '../../hooks/useNavigateWithLoading';
 
 const ACCENT = '#4a7c59';
@@ -45,6 +46,7 @@ function SubmoduleCard({ icon: Icon, label, description, path }: typeof submodul
 export default function OperacionPage() {
   const navigate = useNavigateWithLoading();
   const { isMobile } = useResponsiveStyles();
+  const submodulosVisibles = submodules.filter(mod => tieneAccesoAVista(mod.path));
 
   // Misma solución que Cotizaciones: pageWrapper anclado al viewport (position:fixed) más el
   // scroll del body bloqueado mientras esta página está montada, para que todo el contenido
@@ -66,14 +68,14 @@ export default function OperacionPage() {
           >
             <div>
               <h1 style={styles.headerTitle}>Operación</h1>
-              <p style={styles.headerSub}>{submodules.length} submódulos disponibles</p>
+              <p style={styles.headerSub}>{submodulosVisibles.length} submódulos disponibles</p>
             </div>
           </HeaderBackReveal>
         </div>
 
         <div style={styles.gridWrap}>
           <div style={{ ...styles.grid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(240px, 1fr))' }}>
-            {submodules.map((mod) => (
+            {submodulosVisibles.map((mod) => (
               <SubmoduleCard key={mod.path} {...mod} />
             ))}
           </div>

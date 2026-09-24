@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Loader } from 'lucide-react';
 import LoginPage from './pages/login/LoginPage';
 // Página casi universal justo después del login — se deja en el bundle principal (pesa poco)
@@ -7,8 +7,13 @@ import LoginPage from './pages/login/LoginPage';
 import DashboardPage from './pages/dashboard/DashboardPage';
 import Layout from './components/layout/Layout';
 import { esSuperAdmin } from './lib/auth.utils';
+import { tieneAccesoAVista, moduloTieneAlgunAcceso } from './lib/permissions.utils';
 import { routeImports } from './routeImports';
 import { useMobileEnterAsTab } from './hooks/useMobileEnterAsTab';
+
+// Rutas "raíz" de un módulo (ej. /operacion, /vehicular) no son una vista propia del registro de
+// permisos — se validan por si el perfil tiene algún submódulo de ese módulo asignado.
+const MODULO_ROOT_PATHS = ['/operacion', '/vehicular'];
 
 // as any: routeImports está tipado como () => Promise<unknown> para que Sidebar no necesite
 // conocer el tipo real del módulo — cada entrada individual sí es un import() válido de
@@ -31,6 +36,7 @@ const AutorizacionConsumosPage = lazy(routeImports['/operacion/autorizacion-cons
 const AdministracionPage = lazy(routeImports['/administracion'] as any);
 const UsuariosAdminPage = lazy(routeImports['/administracion/usuarios'] as any);
 const TercerosAdminPage = lazy(routeImports['/administracion/terceros'] as any);
+const PerfilesAdminPage = lazy(routeImports['/administracion/perfiles'] as any);
 const VehicularPage = lazy(routeImports['/vehicular'] as any);
 const CatalogoVehicularPage = lazy(routeImports['/vehicular/catalogo'] as any);
 const ControlViajesPage = lazy(routeImports['/vehicular/control-viajes'] as any);
@@ -58,6 +64,17 @@ function SuperAdminGuard() {
   return esSuperAdmin() ? <Outlet /> : <Navigate to="/dashboard" replace />;
 }
 
+// Mismo criterio: el backend (PerfilAccessGuard) ya rechaza estas llamadas si el perfil está
+// restringido y no tiene la vista asignada — este guard solo evita que se vea la pantalla o se
+// pueda navegar a mano por la URL.
+function SubmoduleAccessGuard() {
+  const location = useLocation();
+  const permitido = MODULO_ROOT_PATHS.includes(location.pathname)
+    ? moduloTieneAlgunAcceso(location.pathname)
+    : tieneAccesoAVista(location.pathname);
+  return permitido ? <Outlet /> : <Navigate to="/dashboard" replace />;
+}
+
 export default function App() {
   useMobileEnterAsTab();
 
@@ -76,28 +93,32 @@ export default function App() {
 
         <Route element={<PrivateShell />}>
           <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/operacion" element={<OperacionPage />} />
-          <Route path="/operacion/programaciones" element={<ProgramacionesPage />} />
-          <Route path="/operacion/programaciones/:id" element={<ProgramacionDetailPage />} />
-          <Route path="/operacion/remision" element={<RemisionesPage />} />
-          <Route path="/operacion/remisiones/:id" element={<RemisionDetailPage />} />
-          <Route path="/operacion/consumos/:id" element={<ConsumoDetailPage />} />
-          <Route path="/operacion/producto-validado/:id" element={<ProductoValidadoDetailPage />} />
-          <Route path="/operacion/comisiones/:id" element={<ComisionDetailPage />} />
-          <Route path="/operacion/requisiciones/:id" element={<RequisicionDetailPage />} />
-          <Route path="/operacion/calendario" element={<CalendarPage />} />
-          <Route path="/operacion/listas-precio" element={<ListasPrecioPage />} />
-          <Route path="/operacion/precios-especiales" element={<PreciosEspecialesPage />} />
-          <Route path="/operacion/cotizaciones" element={<CotizacionesPage />} />
-          <Route path="/operacion/autorizacion-consumos" element={<AutorizacionConsumosPage />} />
-          <Route path="/vehicular" element={<VehicularPage />} />
-          <Route path="/vehicular/catalogo" element={<CatalogoVehicularPage />} />
-          <Route path="/vehicular/control-viajes" element={<ControlViajesPage />} />
+
+          <Route element={<SubmoduleAccessGuard />}>
+            <Route path="/operacion" element={<OperacionPage />} />
+            <Route path="/operacion/programaciones" element={<ProgramacionesPage />} />
+            <Route path="/operacion/programaciones/:id" element={<ProgramacionDetailPage />} />
+            <Route path="/operacion/remision" element={<RemisionesPage />} />
+            <Route path="/operacion/remisiones/:id" element={<RemisionDetailPage />} />
+            <Route path="/operacion/consumos/:id" element={<ConsumoDetailPage />} />
+            <Route path="/operacion/producto-validado/:id" element={<ProductoValidadoDetailPage />} />
+            <Route path="/operacion/comisiones/:id" element={<ComisionDetailPage />} />
+            <Route path="/operacion/requisiciones/:id" element={<RequisicionDetailPage />} />
+            <Route path="/operacion/calendario" element={<CalendarPage />} />
+            <Route path="/operacion/listas-precio" element={<ListasPrecioPage />} />
+            <Route path="/operacion/precios-especiales" element={<PreciosEspecialesPage />} />
+            <Route path="/operacion/cotizaciones" element={<CotizacionesPage />} />
+            <Route path="/operacion/autorizacion-consumos" element={<AutorizacionConsumosPage />} />
+            <Route path="/vehicular" element={<VehicularPage />} />
+            <Route path="/vehicular/catalogo" element={<CatalogoVehicularPage />} />
+            <Route path="/vehicular/control-viajes" element={<ControlViajesPage />} />
+          </Route>
 
           <Route element={<SuperAdminGuard />}>
             <Route path="/administracion" element={<AdministracionPage />} />
             <Route path="/administracion/usuarios" element={<UsuariosAdminPage />} />
             <Route path="/administracion/terceros" element={<TercerosAdminPage />} />
+            <Route path="/administracion/perfiles" element={<PerfilesAdminPage />} />
           </Route>
         </Route>
 
