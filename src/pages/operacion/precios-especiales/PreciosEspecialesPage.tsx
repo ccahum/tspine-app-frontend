@@ -365,6 +365,7 @@ function ProductoPicker({ valueId, valueLabel, onSelect, id, error }: {
                   <div
                     key={p.id}
                     style={styles.dropdownItem}
+                    onMouseDown={e => e.preventDefault()}
                     onClick={() => { onSelect(p.id, [p.referencia, p.nombre].filter(Boolean).join(' / '), p.referencia); setSearch(''); }}
                   >
                     {p.referencia && <span style={styles.productoCode}>{p.referencia}</span>}
@@ -419,7 +420,7 @@ function ContactoPicker({ valueId, valueLabel, onSelect, id, error }: {
                 <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
               ) : (
                 results.map(c => (
-                  <div key={c.id} style={styles.dropdownItem} onClick={() => { onSelect(c.id, c.nombreCompleto); setSearch(''); }}>
+                  <div key={c.id} style={styles.dropdownItem} onMouseDown={e => e.preventDefault()} onClick={() => { onSelect(c.id, c.nombreCompleto); setSearch(''); }}>
                     {c.nombreCompleto}
                   </div>
                 ))

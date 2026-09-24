@@ -2598,6 +2598,7 @@ export default function ProgramacionDetailPage() {
                               key={h.id}
                               className="dropdown-item-hover"
                               style={styles.medicoDropdownItem}
+                              onMouseDown={e => e.preventDefault()}
                               onClick={() => { setEditForm({ ...editForm, hospitalId: h.id }); setEditHospitalSearch(''); setEditProgramacionError(null); }}
                             >
                               {h.nombre}
@@ -2696,6 +2697,7 @@ export default function ProgramacionDetailPage() {
                               key={c.id}
                               className="dropdown-item-hover"
                               style={styles.medicoDropdownItem}
+                              onMouseDown={e => e.preventDefault()}
                               onClick={() => { setEditCotizaciones([...editCotizaciones, c]); setEditCotizacionFilterText(''); }}
                             >
                               <span style={{ flexShrink: 0, color: '#4d7a13', fontWeight: 700 }}>{c.numCotizacion ?? c.id}</span>
@@ -2807,6 +2809,7 @@ export default function ProgramacionDetailPage() {
                                       key={p.id}
                                       className="dropdown-item-hover"
                                       style={styles.medicoDropdownItem}
+                                      onMouseDown={e => e.preventDefault()}
                                       onClick={() => {
                                         const texto = p.nombre ?? '';
                                         setEditConsumo(prev => (prev.trim() ? `${prev.trim()}, ${texto}` : texto));
@@ -3400,6 +3403,7 @@ export default function ProgramacionDetailPage() {
                               key={t.id}
                               className="dropdown-item-hover"
                               style={styles.medicoDropdownItem}
+                              onMouseDown={e => e.preventDefault()}
                               onClick={() => {
                                 setRequisicionTarifaId(t.id);
                                 setRequisicionTarifaSearch('');
@@ -3502,7 +3506,7 @@ export default function ProgramacionDetailPage() {
                           <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
                         ) : (
                           insumoLoteResults.map(l => (
-                            <div key={l.id} className="dropdown-item-hover" style={styles.medicoDropdownItem} onClick={() => { setInsumoLote(l); setInsumoLoteSearch(''); }}>
+                            <div key={l.id} className="dropdown-item-hover" style={styles.medicoDropdownItem} onMouseDown={e => e.preventDefault()} onClick={() => { setInsumoLote(l); setInsumoLoteSearch(''); }}>
                               <Plus size={14} /> {l.lote}
                             </div>
                           ))
@@ -3541,7 +3545,7 @@ export default function ProgramacionDetailPage() {
                           <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
                         ) : (
                           insumoProductoResults.map(p => (
-                            <div key={p.id} className="dropdown-item-hover" style={styles.medicoDropdownItem} onClick={() => handleSelectInsumoProducto(p)}>
+                            <div key={p.id} className="dropdown-item-hover" style={styles.medicoDropdownItem} onMouseDown={e => e.preventDefault()} onClick={() => handleSelectInsumoProducto(p)}>
                               <Plus size={14} /> {formatProductoLabel(p)}
                             </div>
                           ))

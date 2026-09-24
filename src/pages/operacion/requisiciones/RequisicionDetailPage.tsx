@@ -575,6 +575,7 @@ export default function RequisicionDetailPage() {
                                 key={t.id}
                                 className="dropdown-item-hover"
                                 style={styles.dropdownItem}
+                                onMouseDown={e => e.preventDefault()}
                                 onClick={() => { setEditTarifaId(t.id); setEditTarifaSearch(''); setEditError(null); }}
                               >
                                 {t.nombre}
@@ -668,7 +669,7 @@ export default function RequisicionDetailPage() {
                           <div style={{ ...styles.dropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
                         ) : (
                           loteResults.map(l => (
-                            <div key={l.id} className="dropdown-item-hover" style={styles.dropdownItem} onClick={() => { setInsumoLote(l); setLoteSearch(''); }}>
+                            <div key={l.id} className="dropdown-item-hover" style={styles.dropdownItem} onMouseDown={e => e.preventDefault()} onClick={() => { setInsumoLote(l); setLoteSearch(''); }}>
                               <Plus size={14} /> {l.lote}
                             </div>
                           ))
@@ -704,7 +705,7 @@ export default function RequisicionDetailPage() {
                           <div style={{ ...styles.dropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
                         ) : (
                           productoResults.map(p => (
-                            <div key={p.id} className="dropdown-item-hover" style={styles.dropdownItem} onClick={() => handleSelectProducto(p)}>
+                            <div key={p.id} className="dropdown-item-hover" style={styles.dropdownItem} onMouseDown={e => e.preventDefault()} onClick={() => handleSelectProducto(p)}>
                               <Plus size={14} /> {formatProductoLabel(p)}
                             </div>
                           ))

@@ -186,6 +186,7 @@ function NuevoUsuarioModal({
                           key={t.id}
                           type="button"
                           style={styles.terceroDropdownItem}
+                          onMouseDown={e => e.preventDefault()}
                           onClick={() => {
                             setTerceroSeleccionado(t);
                             setTerceroOpciones([]);
@@ -272,6 +273,7 @@ function NuevoUsuarioModal({
                           key={p.id}
                           type="button"
                           style={styles.terceroDropdownItem}
+                          onMouseDown={e => e.preventDefault()}
                           onClick={() => { setPerfilId(p.id); setPerfilQuery(''); setError(null); }}
                         >
                           {p.nombre}
@@ -318,6 +320,7 @@ function NuevoUsuarioModal({
                           key={s.id}
                           type="button"
                           style={styles.terceroDropdownItem}
+                          onMouseDown={e => e.preventDefault()}
                           onClick={() => { setSedeId(s.id); setSedeQuery(''); }}
                         >
                           {s.nombre}
