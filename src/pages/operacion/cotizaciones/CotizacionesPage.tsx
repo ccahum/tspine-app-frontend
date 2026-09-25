@@ -2465,6 +2465,50 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     },
   });
 
+  // Igual que en Nueva Cotización: en vez de avisar con un toast pasajero, se muestra como nota
+  // fija debajo del aviso de tarifa mientras siga aplicando.
+  const [paqueteNota, setPaqueteNota] = useState<string | null>(null);
+
+  // Si la cotización sigue vinculada a un paquete (form.paqueteId) y cambia la tarifa resuelta,
+  // puede haber productos del paquete que se excluyeron al crearla (denegados para la tarifa de
+  // ese momento — ver getPaqueteConsumos) y que ya NO estén denegados para la tarifa nueva. Se
+  // vuelven a agregar solos. Es aditivo nada más: nunca quita nada, porque no hay forma de
+  // distinguir un producto que falta por haber sido denegado de uno que el usuario borró a mano
+  // por otra razón — quitarlo solo también sería sorprendente.
+  const paqueteSyncMutation = useMutation({
+    mutationFn: async (nuevoTarifaId: string) => {
+      const { items: paqueteItems, denegadosIds } = await cotizacionesService.getPaqueteConsumos(form.paqueteId, form.nivel, nuevoTarifaId);
+      const idsExistentes = new Set(cotizacion.items.map(i => i.productoId).filter(Boolean));
+      const faltantes = paqueteItems.filter(p => !idsExistentes.has(p.id));
+      // Ítems ya agregados (vienen del paquete, siguen en la cotización) cuyo producto ahora queda
+      // denegado para la tarifa nueva — el simétrico de "faltantes": se quitan solos.
+      const denegadosSet = new Set(denegadosIds);
+      const aEliminar = cotizacion.items.filter(i => i.productoId && denegadosSet.has(i.productoId));
+
+      if (aEliminar.length > 0) {
+        await Promise.all(aEliminar.map(i => cotizacionesService.deleteItem(i.id)));
+      }
+      if (faltantes.length > 0) {
+        await cotizacionesService.createItemsBulk(cotizacion.id, faltantes.map(p => ({
+          productoId: p.id,
+          cantidad: p.cantidad,
+          valorUnitario: p.precioSugerido ?? 0,
+          hospitalId: form.hospitalId,
+        })));
+      }
+      return { agregados: faltantes.length, eliminados: aEliminar.length };
+    },
+    onSuccess: ({ agregados, eliminados }) => {
+      if (agregados === 0 && eliminados === 0) { setPaqueteNota(null); return; }
+      queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacion.id] });
+      setItemsChanged(true);
+      const partes: string[] = [];
+      if (agregados > 0) partes.push(`se volvió a agregar ${agregados === 1 ? '1 producto' : `${agregados} productos`} del paquete que ya no está${agregados === 1 ? '' : 'n'} denegado${agregados === 1 ? '' : 's'} para la tarifa actual`);
+      if (eliminados > 0) partes.push(`se eliminó ${eliminados === 1 ? '1 producto' : `${eliminados} productos`} del paquete que ahora está${eliminados === 1 ? '' : 'n'} denegado${eliminados === 1 ? '' : 's'} para la tarifa actual`);
+      setPaqueteNota(`${partes.join('; ')}.`.replace(/^./, c => c.toUpperCase()));
+    },
+  });
+
   useEffect(() => {
     if (terceroTarifaLoading || !tarifaId) return;
     if (!tarifaBaselineEstablecidaRef.current) {
@@ -2476,6 +2520,9 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     recalculatedTarifaRef.current = tarifaId;
     if (cotizacion.items.length > 0) {
       recalcPreciosMutation.mutate(tarifaId);
+    }
+    if (form.paqueteId && form.nivel) {
+      paqueteSyncMutation.mutate(tarifaId);
     }
   }, [tarifaId, terceroTarifaLoading]);
 
@@ -2779,6 +2826,12 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
         {cotizacion.items.length > 0 && tarifaLabel && (
           <div style={styles.tarifaHint}>
             El valor unitario de los consumos es referente a la tarifa <strong style={{ color: '#3f6510' }}>{tarifaLabel}</strong>.
+          </div>
+        )}
+
+        {form.paqueteId && paqueteNota && (
+          <div style={styles.tarifaHint}>
+            {paqueteNota}
           </div>
         )}
 
@@ -3146,6 +3199,11 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
     enabled: !!form.paqueteId && !!form.nivel && !!tarifaId,
   });
 
+  // Productos del paquete que están denegados para la tarifa resuelta — se excluyeron en el
+  // backend (ver getPaqueteConsumos). En vez de avisar con un toast pasajero (que el usuario
+  // podía perderse), se muestra como nota fija debajo del aviso de tarifa mientras siga aplicando.
+  const [paqueteNota, setPaqueteNota] = useState<string | null>(null);
+
   useEffect(() => {
     if (!form.paqueteId || !form.nivel || !tarifaId || !paqueteConsumosQuery.data) return;
     setStagedItems(paqueteConsumosQuery.data.items.map(p => {
@@ -3162,12 +3220,10 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
         observaciones: '',
       };
     }));
-    // Productos del paquete que están denegados para la tarifa resuelta — se excluyeron en el
-    // backend (ver getPaqueteConsumos), acá solo se avisa para que no quede en silencio.
     const { excluidosPorDenegado } = paqueteConsumosQuery.data;
-    if (excluidosPorDenegado > 0) {
-      onNotify(`Se ${excluidosPorDenegado === 1 ? 'eliminó 1 producto denegado' : `eliminaron ${excluidosPorDenegado} productos denegados`} del paquete para esta tarifa`, 'info');
-    }
+    setPaqueteNota(excluidosPorDenegado > 0
+      ? `Se ${excluidosPorDenegado === 1 ? 'eliminó 1 producto denegado' : `eliminaron ${excluidosPorDenegado} productos denegados`} del paquete para esta tarifa.`
+      : null);
   }, [paqueteConsumosQuery.data]);
 
   // Si cambia el Cubrimiento o el Responsable Económico (y con eso la tarifa resuelta) y ya hay
@@ -3641,11 +3697,9 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                 </div>
               )}
 
-              {form.paqueteId && (
+              {form.paqueteId && paqueteNota && (
                 <div style={styles.tarifaHint}>
-                  {paqueteConsumosQuery.isFetching
-                    ? 'Cargando consumos del paquete...'
-                    : 'Estos consumos se cargaron según el paquete y nivel seleccionados. Si agregas un consumo manualmente, la cotización dejará de estar asociada al paquete.'}
+                  {paqueteNota}
                 </div>
               )}
 
@@ -3680,7 +3734,11 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                               type="button"
                               style={styles.rowDeleteBtn}
                               title="Eliminar"
-                              onClick={() => { setStagedItems(prev => prev.filter(x => x.localId !== it.localId)); onNotify('Consumo eliminado'); }}
+                              onClick={() => {
+                                setStagedItems(prev => prev.filter(x => x.localId !== it.localId));
+                                onNotify('Consumo eliminado');
+                                if (form.paqueteId) setForm(prev => ({ ...prev, paqueteId: '', paqueteLabel: '', nivel: '' }));
+                              }}
                             >
                               <Trash2 size={14} />
                             </button>
