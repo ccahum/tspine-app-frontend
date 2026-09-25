@@ -2,7 +2,8 @@ import { useState, useEffect, useLayoutEffect, useRef, memo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { Search, X, Plus, Trash2, Pencil, FileDown, MoreHorizontal, Check, PenTool, ArrowUp, ArrowDown } from 'lucide-react';
+import { Search, X, Plus, Trash2, Pencil, FileDown, MoreHorizontal, Check, PenTool, ArrowUp, ArrowDown, Send } from 'lucide-react';
+import { SiGmail } from 'react-icons/si';
 // jsPDF (+ jspdf-autotable, html2canvas, dompurify) pesa ~380kB/124kB gzip — es más de lo que
 // pesa toda esta página. Se carga con import() dinámico dentro de buildCotizacionPdf, solo
 // cuando el usuario realmente pide un PDF, en vez de venir incluido desde que se abre Cotizaciones.
@@ -21,6 +22,7 @@ import { toLocalDateString } from '../../../lib/date.utils';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import { authService } from '../../../services/auth.service';
+import { api } from '../../../lib/axios';
 import FirmaModal from '../../../components/layout/FirmaModal';
 import {
   cotizacionesService,
@@ -760,10 +762,12 @@ async function generarPdfCotizacion(data: CotizacionDetail, isMobile: boolean) {
   const doc = await buildCotizacionPdf(data);
   const fileName = cotizacionPdfFileName(data);
 
-  // En móvil (sobre todo iOS Safari) doc.save() no descarga nada: el navegador solo ABRE el PDF
-  // en su visor, porque el atributo download del <a> que usa jsPDF por debajo no se respeta ahí.
-  // El share sheet nativo sí ofrece "Guardar en Archivos"/"Guardar en el dispositivo".
-  if (isMobile) {
+  // Solo hace falta el share sheet nativo en iOS Safari: ahí doc.save() no descarga nada, el
+  // navegador solo ABRE el PDF en su visor, porque el atributo download del <a> que usa jsPDF por
+  // debajo no se respeta ahí — el share sheet es el único camino que ofrece "Guardar en Archivos".
+  // En Android sí funciona la descarga directa normal, así que ahí no hace falta ese paso de más.
+  const esIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  if (isMobile && esIOS) {
     const nav = navigator as Navigator & { canShare?: (data?: ShareData) => boolean; share?: (data: ShareData) => Promise<void> };
     if (nav.canShare && nav.share) {
       const blob: Blob = doc.output('blob');
@@ -851,6 +855,37 @@ async function enviarCotizacionPorWhatsapp(data: CotizacionDetail, isMobile: boo
     window.open(webFallbackUrl, '_blank');
   }
   return 'respaldo';
+}
+
+interface DirectorioUsuario {
+  nombre: string;
+  correo: string;
+  id: string;
+}
+
+// Envía el PDF de la cotización por Google Chat a una persona interna elegida del directorio de
+// Workspace (ver GoogleChatService.sendCotizacionDm en el backend) — mismo PDF que genera/comparte
+// "Generar PDF"/WhatsApp, solo que acá se sube en vez de descargarse. Se manda el id del directorio,
+// no el correo: spaces.findDirectMessage con auth de app no acepta correos que sean alias.
+async function enviarCotizacionPorGmail(data: CotizacionDetail, destinatarioId: string): Promise<void> {
+  const doc = await buildCotizacionPdf(data);
+  const fileName = cotizacionPdfFileName(data);
+  const blob: Blob = doc.output('blob');
+  const { total } = computeTotales(data.items, data.tieneDcto, data.porcentajeDcto, data.vrDctoPesos, data.impuestos);
+
+  const formData = new FormData();
+  formData.append('cotizacionId', data.id);
+  formData.append('destinatarioId', destinatarioId);
+  formData.append('numCotizacion', data.numCotizacion || data.id);
+  formData.append('hospital', data.hospital || '-');
+  formData.append('medico', data.medico || '-');
+  formData.append('cirugia', data.cirugia || '-');
+  formData.append('total', formatMoney(total));
+  formData.append('file', new File([blob], fileName, { type: 'application/pdf' }));
+
+  await api.post('/integraciones/google-chat/send-cotizacion', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
 }
 
 const CotizacionRow = memo(({ item, index, onSelect, compact }: { item: CotizacionListItem; index: number; onSelect: (id: string) => void; compact?: boolean }) => (
@@ -4030,7 +4065,13 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showSignaturePad, setShowSignaturePad] = useState(false);
   const [showFirmaSetup, setShowFirmaSetup] = useState(false);
+  const [showEnviarGmail, setShowEnviarGmail] = useState(false);
+  const [gmailSearch, setGmailSearch] = useState('');
+  const [sendingGmail, setSendingGmail] = useState(false);
+  const [gmailError, setGmailError] = useState<string | null>(null);
+  const [showEnviarMenu, setShowEnviarMenu] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const enviarMenuRef = useRef<HTMLDivElement>(null);
   const { data, isLoading } = useQuery<CotizacionDetail>({
     queryKey: ['cotizacion', id],
     queryFn: () => cotizacionesService.getById(id),
@@ -4084,6 +4125,17 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, [showMoreMenu]);
 
+  useEffect(() => {
+    if (!showEnviarMenu) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (enviarMenuRef.current && !enviarMenuRef.current.contains(e.target as Node)) {
+        setShowEnviarMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [showEnviarMenu]);
+
   const handleGenerarPdf = async () => {
     if (!data) return;
     setGeneratingPdf(true);
@@ -4114,6 +4166,29 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
     }
   };
 
+  const { data: directorioResultados = [], isFetching: buscandoDirectorio } = useQuery<DirectorioUsuario[]>({
+    queryKey: ['google-directorio', gmailSearch],
+    queryFn: () => api.get('/integraciones/google-chat/directorio', { params: { search: gmailSearch } }).then(r => r.data),
+    enabled: showEnviarGmail && gmailSearch.trim().length >= 2,
+  });
+
+  const handleEnviarGmail = async (destinatario: DirectorioUsuario) => {
+    if (!data) return;
+    setSendingGmail(true);
+    setGmailError(null);
+    try {
+      await enviarCotizacionPorGmail(data, destinatario.id);
+      setShowEnviarGmail(false);
+      setGmailSearch('');
+      onNotify(`Cotización enviada a ${destinatario.nombre}`);
+    } catch (err) {
+      setGmailError('No se pudo enviar. Intenta de nuevo.');
+      console.error(err);
+    } finally {
+      setSendingGmail(false);
+    }
+  };
+
   const deleteMutation = useMutation({
     mutationFn: () => cotizacionesService.deleteCotizacion(id),
     onSuccess: () => {
@@ -4125,15 +4200,39 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
 
   const actionButtons = data && !editing && !confirmDelete && (
     <>
-      <button
-        className="btn-press header-btn-secondary"
-        style={{ ...styles.pillBtn, ...(isMobile ? { flex: 1, justifyContent: 'center' as const } : {}) }}
-        onClick={handleEnviarWhatsapp}
-        disabled={sendingWhatsapp}
-      >
-        <i className="fa-brands fa-whatsapp" style={{ fontSize: 16, color: '#4d7a13' }} />
-        {sendingWhatsapp ? 'Enviando...' : isMobile ? 'WhatsApp' : 'Enviar por WhatsApp'}
-      </button>
+      <div style={{ position: 'relative' as const, ...(isMobile ? { flex: 1 } : {}) }} ref={enviarMenuRef}>
+        <button
+          className="btn-press header-btn-secondary"
+          style={{ ...styles.pillBtn, ...(isMobile ? { flex: 1, justifyContent: 'center' as const } : {}) }}
+          onClick={() => setShowEnviarMenu(o => !o)}
+          disabled={sendingWhatsapp || sendingGmail}
+        >
+          <Send size={15} style={{ color: '#4d7a13' }} />
+          {sendingWhatsapp || sendingGmail ? 'Enviando...' : 'Enviar'}
+        </button>
+        {showEnviarMenu && (
+          <div style={{ ...styles.moreMenu, right: 'auto' as const, left: 0 }}>
+            <button
+              style={styles.moreMenuItem}
+              onClick={() => { setShowEnviarMenu(false); handleEnviarWhatsapp(); }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+            >
+              <i className="fa-brands fa-whatsapp" style={{ fontSize: 15, color: '#4d7a13', width: 15, textAlign: 'center' as const }} />
+              WhatsApp
+            </button>
+            <button
+              style={styles.moreMenuItem}
+              onClick={() => { setShowEnviarMenu(false); setShowEnviarGmail(true); }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+            >
+              <SiGmail size={14} color="#8a8a80" style={{ width: 15, textAlign: 'center' as const }} />
+              Gmail
+            </button>
+          </div>
+        )}
+      </div>
       <button
         className="btn-press header-btn-primary"
         style={{ ...styles.pillBtnPrimary, ...(isMobile ? { flex: 1, justifyContent: 'center' as const } : {}) }}
@@ -4544,6 +4643,63 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
             if (nuevaFirma) setFirmaMutation.mutate(nuevaFirma);
           }}
         />
+      )}
+
+      {showEnviarGmail && (
+        <div
+          className="modal-overlay-anim"
+          style={styles.modalOverlay}
+          onClick={() => { if (!sendingGmail) { setShowEnviarGmail(false); setGmailSearch(''); setGmailError(null); } }}
+        >
+          <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>Enviar por Gmail</h2>
+              <button
+                style={styles.closeBtn}
+                onClick={() => { setShowEnviarGmail(false); setGmailSearch(''); setGmailError(null); }}
+                disabled={sendingGmail}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ ...styles.modalBody, paddingTop: '1rem' }}>
+              <div style={styles.formGroup}>
+                <label style={styles.formLabel}>Buscar persona (directorio de la empresa)</label>
+                <input
+                  autoFocus
+                  style={styles.formInput}
+                  placeholder="Nombre o correo..."
+                  value={gmailSearch}
+                  onChange={e => { setGmailSearch(e.target.value); setGmailError(null); }}
+                  disabled={sendingGmail}
+                />
+              </div>
+              {gmailError && <span style={styles.errorText}>{gmailError}</span>}
+              <div style={{ marginTop: '0.5rem', maxHeight: '260px', overflowY: 'auto' as const }}>
+                {gmailSearch.trim().length < 2 ? (
+                  <div style={{ padding: '0.6rem 0.2rem', color: '#9ca3af', fontSize: '0.85rem' }}>Escribe al menos 2 letras para buscar.</div>
+                ) : buscandoDirectorio ? (
+                  <div style={{ padding: '0.6rem 0.2rem', color: '#9ca3af', fontSize: '0.85rem' }}>Buscando...</div>
+                ) : directorioResultados.length === 0 ? (
+                  <div style={{ padding: '0.6rem 0.2rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
+                ) : (
+                  directorioResultados.map(u => (
+                    <div
+                      key={u.correo}
+                      className="dropdown-item-hover"
+                      style={{ ...styles.medicoDropdownItem, cursor: sendingGmail ? 'not-allowed' : 'pointer', opacity: sendingGmail ? 0.6 : 1 }}
+                      onClick={() => { if (!sendingGmail) handleEnviarGmail(u); }}
+                    >
+                      <div>{u.nombre}</div>
+                      <div style={{ fontSize: '0.78rem', fontWeight: 400, color: '#6b6b60' }}>{u.correo}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+              {sendingGmail && <div style={{ marginTop: '0.75rem', color: '#6b6b60', fontSize: '0.85rem' }}>Enviando...</div>}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
