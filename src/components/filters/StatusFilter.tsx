@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown, X } from 'lucide-react';
 
 const OPTIONS = [
@@ -15,15 +16,48 @@ interface Props {
 
 export default function StatusFilter({ selected, onChange }: Props) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  // menu se porta a document.body (ver abajo) para que no lo recorte ningún contenedor con
+  // scroll/overflow propio — antes, al abrirlo cerca del borde inferior de la pantalla, el
+  // recuadro se veía cortado sin forma de hacer scroll para ver el resto de las opciones.
+  const [menuPos, setMenuPos] = useState<{ top?: number; bottom?: number; left: number }>({ left: 0 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (triggerRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const reposition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const menuWidth = 240;
+      const menuHeightEstimada = 260;
+      const left = Math.min(rect.left, window.innerWidth - menuWidth - 12);
+      // Si no alcanza el espacio hacia abajo, se abre hacia arriba del botón en vez de quedar
+      // cortado contra el borde de la ventana.
+      if (rect.bottom + menuHeightEstimada > window.innerHeight && rect.top > menuHeightEstimada) {
+        setMenuPos({ bottom: window.innerHeight - rect.top + 6, left: Math.max(12, left) });
+      } else {
+        setMenuPos({ top: rect.bottom + 6, left: Math.max(12, left) });
+      }
+    };
+    reposition();
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [open]);
 
   const toggle = (key: string) => {
     onChange(selected.includes(key) ? selected.filter(k => k !== key) : [...selected, key]);
@@ -38,8 +72,9 @@ export default function StatusFilter({ selected, onChange }: Props) {
   };
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div style={{ position: 'relative' }}>
       <button
+        ref={triggerRef}
         onClick={() => setOpen(o => !o)}
         onMouseEnter={e => {
           e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)';
@@ -80,8 +115,8 @@ export default function StatusFilter({ selected, onChange }: Props) {
           : <ChevronDown size={13} />}
       </button>
 
-      {open && (
-        <div style={menu}>
+      {open && createPortal(
+        <div ref={menuRef} style={{ ...menu, ...menuPos }}>
           <p style={hint}>Selecciona uno o varios estados</p>
           <div style={grid}>
             {OPTIONS.map(opt => {
@@ -140,17 +175,18 @@ export default function StatusFilter({ selected, onChange }: Props) {
               Limpiar selección
             </button>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
 }
 
 const menu: React.CSSProperties = {
-  position: 'absolute', top: '110%', left: 0, zIndex: 300,
+  position: 'fixed', zIndex: 300,
   backgroundColor: '#fff', borderRadius: '12px', padding: '0.875rem',
   boxShadow: '0 8px 28px rgba(0,0,0,0.13)', border: '1px solid #e5e7eb',
-  minWidth: '240px',
+  minWidth: '240px', maxHeight: '70vh', overflowY: 'auto',
 };
 const hint: React.CSSProperties = {
   fontSize: '0.72rem', color: '#999', margin: '0 0 0.6rem 0', textAlign: 'center',

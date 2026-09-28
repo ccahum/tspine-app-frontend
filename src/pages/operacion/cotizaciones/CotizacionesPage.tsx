@@ -867,7 +867,7 @@ interface DirectorioUsuario {
 // Workspace (ver GoogleChatService.sendCotizacionDm en el backend) — mismo PDF que genera/comparte
 // "Generar PDF"/WhatsApp, solo que acá se sube en vez de descargarse. Se manda el id del directorio,
 // no el correo: spaces.findDirectMessage con auth de app no acepta correos que sean alias.
-async function enviarCotizacionPorGmail(data: CotizacionDetail, destinatarioId: string): Promise<void> {
+async function enviarCotizacionPorGmail(data: CotizacionDetail, destinatarioId: string, onProgress?: (pct: number) => void): Promise<void> {
   const doc = await buildCotizacionPdf(data);
   const fileName = cotizacionPdfFileName(data);
   const blob: Blob = doc.output('blob');
@@ -885,6 +885,10 @@ async function enviarCotizacionPorGmail(data: CotizacionDetail, destinatarioId: 
 
   await api.post('/integraciones/google-chat/send-cotizacion', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: evt => {
+      if (!evt.total || !onProgress) return;
+      onProgress(Math.round((evt.loaded / evt.total) * 100));
+    },
   });
 }
 
@@ -4068,6 +4072,7 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
   const [showEnviarGmail, setShowEnviarGmail] = useState(false);
   const [gmailSearch, setGmailSearch] = useState('');
   const [sendingGmail, setSendingGmail] = useState(false);
+  const [gmailProgress, setGmailProgress] = useState(0);
   const [gmailError, setGmailError] = useState<string | null>(null);
   const [showEnviarMenu, setShowEnviarMenu] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -4175,9 +4180,14 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
   const handleEnviarGmail = async (destinatario: DirectorioUsuario) => {
     if (!data) return;
     setSendingGmail(true);
+    setGmailProgress(0);
     setGmailError(null);
     try {
-      await enviarCotizacionPorGmail(data, destinatario.id);
+      // El progreso solo mide la subida del PDF (lo único que el navegador puede reportar) — se
+      // detiene en 90 aunque la subida ya haya terminado, para no dejarlo "pegado" en 100 mientras
+      // el backend todavía está resolviendo el DM y mandando el mensaje en Google Chat.
+      await enviarCotizacionPorGmail(data, destinatario.id, pct => setGmailProgress(Math.min(pct, 90)));
+      setGmailProgress(100);
       setShowEnviarGmail(false);
       setGmailSearch('');
       onNotify(`Cotización enviada a ${destinatario.nombre}`);
@@ -4186,6 +4196,7 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
       console.error(err);
     } finally {
       setSendingGmail(false);
+      setGmailProgress(0);
     }
   };
 
@@ -4696,7 +4707,14 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
                   ))
                 )}
               </div>
-              {sendingGmail && <div style={{ marginTop: '0.75rem', color: '#6b6b60', fontSize: '0.85rem' }}>Enviando...</div>}
+              {sendingGmail && (
+                <div style={{ marginTop: '0.75rem' }}>
+                  <div style={{ height: '6px', borderRadius: '999px', backgroundColor: '#eeeee6', overflow: 'hidden' as const }}>
+                    <div style={{ height: '100%', width: `${gmailProgress}%`, backgroundColor: '#4d7a13', borderRadius: '999px', transition: 'width 0.2s ease' }} />
+                  </div>
+                  <div style={{ marginTop: '0.35rem', color: '#6b6b60', fontSize: '0.85rem' }}>Enviando... {gmailProgress}%</div>
+                </div>
+              )}
             </div>
           </div>
         </div>
