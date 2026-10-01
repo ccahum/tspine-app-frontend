@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, memo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { Search, X, Plus, Trash2, Pencil, FileDown, MoreHorizontal, Check, PenTool, ArrowUp, ArrowDown, Send } from 'lucide-react';
+import { Search, X, Plus, Trash2, Pencil, FileDown, MoreHorizontal, Check, PenTool, ArrowUp, ArrowDown, Send, AlertCircle } from 'lucide-react';
 import { SiGmail } from 'react-icons/si';
 // jsPDF (+ jspdf-autotable, html2canvas, dompurify) pesa ~380kB/124kB gzip — es más de lo que
 // pesa toda esta página. Se carga con import() dinámico dentro de buildCotizacionPdf, solo
@@ -19,6 +19,7 @@ import SuccessToast from '../../../components/SuccessToast';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import { toLocalDateString } from '../../../lib/date.utils';
+import { focusNextInEnterNavRoot } from '../../../lib/keyboardNav.utils';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import { authService } from '../../../services/auth.service';
@@ -197,6 +198,45 @@ function computeTotales(items: CotizacionItem[], tieneDcto: boolean, porcentajeD
   return computeTotalesFromSubtotal(subtotal, tieneDcto, porcentajeDcto, vrDctoPesos, impuestos);
 }
 
+/** Aviso flotante para notas informativas de importación (ej. paqueteNota: cuántos productos se
+ * agregaron/quitaron al resolver la tarifa) — mismo formato que el de Remisión (fondo verde sólido,
+ * franja lateral, ícono y X blancos) en vez de la caja fija (tarifaHint) que se quedaba pegada al
+ * formulario para siempre. Se autodesaparece a los 5.5s, pero se puede cerrar antes con la X. */
+function ImportNotaBanner({ message, onClose }: { message: string; onClose: () => void }) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const timer = setTimeout(() => onCloseRef.current(), 5500);
+    return () => clearTimeout(timer);
+  }, [message]);
+
+  return (
+    <div
+      key={message}
+      style={{
+        position: 'fixed' as const,
+        top: '76px',
+        left: '50%',
+        zIndex: 10100,
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.65rem',
+        padding: '0.65rem 0.9rem',
+        backgroundColor: '#6b8c1f',
+        borderLeft: '5px solid #3f6510',
+        borderRadius: '10px',
+        boxShadow: '0 12px 30px rgba(107,140,31,0.35), 0 2px 8px rgba(0,0,0,0.1)',
+        maxWidth: '90vw',
+        animation: 'toast-slide-in 280ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
+      }}
+    >
+      <AlertCircle size={19} color="#fff" style={{ flexShrink: 0 }} />
+      <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#fff' }}>{message}</span>
+      <X size={17} style={{ cursor: 'pointer', color: '#fff', flexShrink: 0 }} onClick={onClose} />
+    </div>
+  );
+}
+
 const EMPRESA_INFO = {
   nombre: 'Tecnología Spine S. de R.L de C.V.',
   rfc: 'TSP191206KT8',
@@ -287,7 +327,7 @@ function drawField(doc: AutoTableDoc, label: string, value: string, x: number, m
   return y + Math.max(1, lines.length) * lineHeight;
 }
 
-async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc> {
+export async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc> {
   const { subtotal, iva, retencion, total } = computeTotales(data.items, data.tieneDcto, data.porcentajeDcto, data.vrDctoPesos, data.impuestos);
   const empresaEsCabcari = isCabcari(data.empresa);
   const empresaEsNeurotec = isNeurotec(data.empresa);
@@ -754,7 +794,7 @@ async function buildCotizacionPdf(data: CotizacionDetail): Promise<AutoTableDoc>
   return doc;
 }
 
-function cotizacionPdfFileName(data: CotizacionDetail): string {
+export function cotizacionPdfFileName(data: CotizacionDetail): string {
   return `Cotizacion-${data.numCotizacion || data.id}.pdf`;
 }
 
@@ -964,31 +1004,6 @@ const recalcValor = (cantidad: string, valorUnitario: string): string => {
   if (!cantidad || !valorUnitario || isNaN(c) || isNaN(vu)) return '';
   return (Math.round(c * vu * 100) / 100).toString();
 };
-
-// Al presionar Enter en un campo dentro de un contenedor marcado con data-enter-nav-root, mueve
-// el foco al siguiente input/textarea/button habilitado y visible dentro de ese contenedor. No
-// hace nada si el campo no está dentro de uno (p. ej. en Editar Cotización, donde este salto no
-// aplica todavía).
-function focusNextInEnterNavRoot(current: HTMLElement) {
-  const root = current.closest('[data-enter-nav-root]');
-  if (!root) return;
-  const listFocusable = () => Array.from(
-    root.querySelectorAll<HTMLElement>('input:not([disabled]), textarea:not([disabled]), button:not([disabled])'),
-  ).filter(el => el.offsetParent !== null);
-  const idx = listFocusable().indexOf(current);
-  if (idx < 0) return;
-  // Se espera un tick porque seleccionar un valor (p. ej. el Hospital) puede hacer que el
-  // siguiente campo (p. ej. Cirugía) pase de deshabilitado/oculto a habilitado recién en el
-  // siguiente render — antes de eso, no existe todavía como elemento enfocable.
-  setTimeout(() => {
-    const fresh = listFocusable();
-    // Si el campo actual sigue en la lista (p. ej. un input de texto simple), el siguiente sigue
-    // un índice adelante; si desapareció (p. ej. el buscador de Hospital se reemplazó por su
-    // etiqueta ya seleccionada), lo que antes era el siguiente ahora quedó en su mismo índice.
-    const target = fresh.includes(current) ? fresh[idx + 1] : fresh[idx];
-    target?.focus();
-  }, 0);
-}
 
 function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, hospitalId, items, onSelectItem, onDone, onSaved }: { cotizacionId: string; tarifaId?: string | null; tarifaLabel?: string | null; hospitalId?: string; items: CotizacionItem[]; onSelectItem: (item: CotizacionItem) => void; onDone: () => void; onSaved: () => void }) {
   const queryClient = useQueryClient();
@@ -1249,7 +1264,7 @@ function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, hospitalId, items, o
   );
 }
 
-interface StagedItem {
+export interface StagedItem {
   localId: string;
   productoId: string;
   productoLabel: string;
@@ -1259,14 +1274,30 @@ interface StagedItem {
   observaciones: string;
 }
 
+/** Forma mínima que necesita AddStagedItemForm/StagedItemDetailModal de cada producto — las 5
+ * columnas propias de Cotizaciones (nombreEspecial/referenciaEspecial) quedan opcionales para que
+ * otros módulos (ej. Remisiones, que no tiene ese concepto ni restringe por categoría) puedan
+ * inyectar su propio buscador de productos vía el prop `searchProductos` sin tener que simularlas. */
+export interface StagedItemProductoOption {
+  id: string;
+  nombre: string | null;
+  referencia: string | null;
+  sistema: string | null;
+  precioSugerido: number | null;
+  nombreEspecial?: string | null;
+  referenciaEspecial?: string | null;
+}
+
 /** Igual a AddItemForm, pero agrega el ítem a una lista en memoria en vez de guardarlo en el
  * servidor — se usa al crear una cotización nueva, que todavía no tiene id (no se puede llamar
  * a POST :id/items). Los ítems en memoria se envían al servidor recién cuando se crea la
  * cotización (ver NuevaCotizacionModal). Por eso tampoco se le pasa cotizacionId a
  * searchProductos: sin cotización aún no hay tarifa para sugerir precio, el usuario lo ingresa —
  * hospitalId sí se pasa directo (el Hospital ya se eligió en el formulario padre), para poder
- * marcar los productos con nombre/referencia especial aunque la cotización no exista todavía. */
-function AddStagedItemForm({ tarifaId, tarifaLabel, hospitalId, items, onSelectItem, onAdd, onDone }: { tarifaId?: string; tarifaLabel?: string | null; hospitalId?: string; items: StagedItem[]; onSelectItem: (item: StagedItem) => void; onAdd: (item: StagedItem) => void; onDone: () => void }) {
+ * marcar los productos con nombre/referencia especial aunque la cotización no exista todavía.
+ * `searchProductos` es inyectable para que otros módulos (Remisiones) reutilicen este mismo
+ * componente con su propio buscador (todas las categorías, sin nombre/referencia especial). */
+export function AddStagedItemForm({ tarifaId, tarifaLabel, hospitalId, items, onSelectItem, onAdd, onDone, searchProductos }: { tarifaId?: string; tarifaLabel?: string | null; hospitalId?: string; items: StagedItem[]; onSelectItem: (item: StagedItem) => void; onAdd: (item: StagedItem) => void; onDone: () => void; searchProductos: (search: string, tarifaId?: string, hospitalId?: string) => Promise<StagedItemProductoOption[]> }) {
   const [form, setForm] = useState(emptyItemForm);
   const [productoSearch, setProductoSearch] = useState('');
   const [productoFocused, setProductoFocused] = useState(false);
@@ -1280,9 +1311,9 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, hospitalId, items, onSelectI
     if (addedListRef.current) addedListRef.current.scrollTop = addedListRef.current.scrollHeight;
   }, [items.length]);
 
-  const { data: productoResults = [] } = useQuery<ProductoOption[]>({
+  const { data: productoResults = [] } = useQuery<StagedItemProductoOption[]>({
     queryKey: ['cotizaciones-productos', productoSearch, tarifaId, hospitalId],
-    queryFn: () => cotizacionesService.searchProductos(productoSearch, undefined, tarifaId, hospitalId),
+    queryFn: () => searchProductos(productoSearch, tarifaId, hospitalId),
     enabled: productoFocused,
   });
   useEffect(() => { setProductoHighlighted(0); }, [productoResults]);
@@ -1290,7 +1321,7 @@ function AddStagedItemForm({ tarifaId, tarifaLabel, hospitalId, items, onSelectI
     productoOptionRefs.current[productoHighlighted]?.scrollIntoView({ block: 'nearest' });
   }, [productoHighlighted]);
 
-  const selectProducto = (p: ProductoOption) => {
+  const selectProducto = (p: StagedItemProductoOption) => {
     const nuevoValorUnitario = p.precioSugerido !== null ? String(p.precioSugerido) : form.valorUnitario;
     const nuevaCantidad = form.cantidad || '1';
     setForm({
@@ -1619,14 +1650,16 @@ function SignaturePadModal({ onClose, onSave, saving }: {
 
 /** Igual a ItemDetailModal, pero para un consumo que todavía vive en memoria (formulario de
  * Crear cotización, aún sin id): en vez de mutaciones al servidor, onSave/onDelete solo tocan
- * el arreglo local de stagedItems del formulario padre. */
-function StagedItemDetailModal({ item, tarifaId, hospitalId, onClose, onSave, onDelete }: {
+ * el arreglo local de stagedItems del formulario padre. `searchProductos` inyectable — ver
+ * AddStagedItemForm. */
+export function StagedItemDetailModal({ item, tarifaId, hospitalId, onClose, onSave, onDelete, searchProductos }: {
   item: StagedItem;
   tarifaId?: string;
   hospitalId?: string;
   onClose: () => void;
   onSave: (updated: StagedItem) => void;
   onDelete: () => void;
+  searchProductos: (search: string, tarifaId?: string, hospitalId?: string) => Promise<StagedItemProductoOption[]>;
 }) {
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -1640,9 +1673,9 @@ function StagedItemDetailModal({ item, tarifaId, hospitalId, onClose, onSave, on
   const [productoSearch, setProductoSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const { data: productoResults = [] } = useQuery<ProductoOption[]>({
+  const { data: productoResults = [] } = useQuery<StagedItemProductoOption[]>({
     queryKey: ['cotizaciones-productos', productoSearch, tarifaId, hospitalId],
-    queryFn: () => cotizacionesService.searchProductos(productoSearch, undefined, tarifaId, hospitalId),
+    queryFn: () => searchProductos(productoSearch, tarifaId, hospitalId),
     enabled: editing && !!productoSearch.trim(),
   });
 
@@ -2869,9 +2902,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
         )}
 
         {form.paqueteId && paqueteNota && (
-          <div style={styles.tarifaHint}>
-            {paqueteNota}
-          </div>
+          <ImportNotaBanner message={paqueteNota} onClose={() => setPaqueteNota(null)} />
         )}
 
         {cotizacion.items.length === 0 ? (
@@ -3737,9 +3768,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
               )}
 
               {form.paqueteId && paqueteNota && (
-                <div style={styles.tarifaHint}>
-                  {paqueteNota}
-                </div>
+                <ImportNotaBanner message={paqueteNota} onClose={() => setPaqueteNota(null)} />
               )}
 
               {stagedItems.length === 0 ? (
@@ -3827,6 +3856,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                   tarifaLabel={tarifaLabel}
                   hospitalId={form.hospitalId}
                   items={stagedItems}
+                  searchProductos={(search, tId, hId) => cotizacionesService.searchProductos(search, undefined, tId, hId)}
                   onSelectItem={setSelectedStagedItem}
                   onAdd={item => {
                     // Si el producto ya tenía una fila en la lista, no se agrega una segunda — se
@@ -3852,6 +3882,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
                   item={selectedStagedItem}
                   tarifaId={tarifaId}
                   hospitalId={form.hospitalId}
+                  searchProductos={(search, tId, hId) => cotizacionesService.searchProductos(search, undefined, tId, hId)}
                   onClose={() => setSelectedStagedItem(null)}
                   onSave={updated => {
                     setStagedItems(prev => prev.map(x => (x.localId === updated.localId ? updated : x)));

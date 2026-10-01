@@ -1,8 +1,8 @@
-import { useState, useMemo, useEffect, useRef, Fragment, lazy, Suspense } from 'react';
+import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader, FileText, CheckCircle, Circle, X, Plus, Lock, AlertCircle, CircleX, DollarSign, Trash2 } from 'lucide-react';
+import { Loader, FileText, CheckCircle, Circle, X, Plus, Lock, AlertCircle, CircleX, DollarSign, Trash2, ChevronDown } from 'lucide-react';
 import { SiGmail } from 'react-icons/si';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import HeaderBackReveal from '../../../components/HeaderBackReveal';
@@ -11,21 +11,23 @@ import OptionDropdown from '../../../components/OptionDropdown';
 import SignaturePad from '../../../components/SignaturePad';
 import SuccessToast from '../../../components/SuccessToast';
 import { programacionesService, type ProgramacionDetail, type SedeOption, type HospitalOption, type MedicoOption, type CotizacionOption } from '../../../services/programaciones.service';
+import { cotizacionesService } from '../../../services/cotizaciones.service';
+import { DetalleModal as CotizacionDetalleModal } from '../cotizaciones/CotizacionesPage';
 import { api } from '../../../lib/axios';
 import { toLocalDateString } from '../../../lib/date.utils';
+import { focusNextInEnterNavRoot } from '../../../lib/keyboardNav.utils';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
-import { remisionesService, CATEGORIAS_COMISION, TIPOS_COMISION, SELECCIONE_TIPO_COMISION, IMPUESTOS_REMISION, type RemisionItem, type RemTecnicoItem, type ConsumoGrupo, type ValidacionConsumoGrupo, type ComisionGrupo, type RequisicionItem, type NotaCreditoItem, type GastoRelacionadoItem, type FuenteRelacionadaItem, type DocumentoProgramacionItem, type TecnicoSugeridoItem, type TecnicoOption, type CubrimientoOption, type TarifaOption, type LoteOption, type ProductoOption } from '../../../services/remisiones.service';
+import { remisionesService, CATEGORIAS_COMISION, TIPOS_COMISION, SELECCIONE_TIPO_COMISION, type RemisionItem, type RemTecnicoItem, type ConsumoGrupo, type ValidacionConsumoGrupo, type ComisionGrupo, type RequisicionItem, type NotaCreditoItem, type GastoRelacionadoItem, type FuenteRelacionadaItem, type DocumentoProgramacionItem, type TecnicoSugeridoItem, type TecnicoOption, type CubrimientoOption, type TarifaOption, type LoteOption, type ProductoOption } from '../../../services/remisiones.service';
+import AgregarRemisionModal from './AgregarRemisionModal';
+import ValidarConsumoModal from './ValidarConsumoModal';
+import ConsumoDetalleModal from '../consumos/ConsumoDetalleModal';
+import ComisionDetalleModal from '../consumos/ComisionDetalleModal';
+import RequisicionDetalleModal from '../requisiciones/RequisicionDetalleModal';
 
-// lazy() para no meter todo CotizacionesPage.tsx (~4200 líneas) en el bundle inicial de
-// Programaciones — solo se descarga si de verdad se abre el detalle de una cotización desde acá.
-const CotizacionDetalleModal = lazy(() =>
-  import('../cotizaciones/CotizacionesPage').then(m => ({ default: m.DetalleModal })),
-);
-
-// ID de Tarifa/Cubrimiento "Hospitales" (ver prisma/seed-catalogos.ts) — usado para autoseleccionar
-// el Tercero del Hospital de la programación como Responsable Económico en Agregar Remisión.
-const HOSPITALES_CUBRIMIENTO_ID = 'Zd5c45';
+// El estado y la lógica de "Agregar remisión" viven en su propio componente
+// (AgregarRemisionModal.tsx) para que escribir en ese formulario no re-renderice toda esta página
+// (antes vivía todo en este mismo componente gigante) — ver comentario en ese archivo.
 
 const formatProductoLabel = (p: ProductoOption): string =>
   p.referencia ? `${p.referencia} / ${p.nombre}` : p.nombre ?? '-';
@@ -38,7 +40,7 @@ const getTecnicoInitials = (nombreCompleto: string): string => {
   return (words[0][0] + words[words.length - 2][0]).toUpperCase();
 };
 
-const formatMoney = (value: any): string => {
+export const formatMoney = (value: any): string => {
   if (value === null || value === undefined) return '-';
   const num = typeof value === 'string' ? Number.parseFloat(value) : Number(value);
   return Number.isNaN(num) ? '-' : `$${num.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -66,7 +68,9 @@ function AnimatedMoney({ value, start, duration = 500 }: { value: unknown; start
   return <>{`$${display.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</>;
 }
 
-const formatDate = (dateString: string | null): string => {
+const toSentenceCase = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+
+export const formatDate = (dateString: string | null): string => {
   if (!dateString) return '-';
   try {
     // Si es ISO timestamp (2026-12-01T00:00:00.000Z)
@@ -162,11 +166,11 @@ export default function ProgramacionDetailPage() {
   const tecnicosSugeridosScrollRef = useRef<HTMLDivElement>(null);
   useSmoothWheelScroll(tecnicosSugeridosScrollRef, [mainTab]);
   const consumosScrollRef = useRef<HTMLDivElement>(null);
-  useSmoothWheelScroll(consumosScrollRef, [mainTab]);
+  useSmoothWheelScroll(consumosScrollRef, [mainTab], 6);
   const validacionScrollRef = useRef<HTMLDivElement>(null);
   useSmoothWheelScroll(validacionScrollRef, [mainTab]);
   const comisionesScrollRef = useRef<HTMLDivElement>(null);
-  useSmoothWheelScroll(comisionesScrollRef, [mainTab]);
+  useSmoothWheelScroll(comisionesScrollRef, [mainTab], 3);
   const gastosScrollRef = useRef<HTMLDivElement>(null);
   useSmoothWheelScroll(gastosScrollRef, [mainTab]);
   const fuentesScrollRef = useRef<HTMLDivElement>(null);
@@ -186,8 +190,6 @@ export default function ProgramacionDetailPage() {
     }, 120);
     return () => clearTimeout(timer);
   }, [isScrolled, showCompactHeader]);
-  const [hoveredConsumoId, setHoveredConsumoId] = useState<string | null>(null);
-  const [hoveredValidacionId, setHoveredValidacionId] = useState<string | null>(null);
   const [hoveredTecnicoId, setHoveredTecnicoId] = useState<string | null>(null);
   const [hoveredComisionId, setHoveredComisionId] = useState<string | null>(null);
   const [hoveredRequisicionId, setHoveredRequisicionId] = useState<string | null>(null);
@@ -228,12 +230,18 @@ export default function ProgramacionDetailPage() {
   // a Chrome el gesto de usuario que navigator.share() exige — no es opcional evitarlo, así que
   // se pide un clic más, ya sin diálogo nativo de por medio, justo antes de llamar a share().
   const [pendingWhatsappShare, setPendingWhatsappShare] = useState<{ file: File; mensaje: string } | null>(null);
-  const gmailFileInputRef = useRef<HTMLInputElement>(null);
   const [showGmailConfirm, setShowGmailConfirm] = useState(false);
   const [gmailSending, setGmailSending] = useState(false);
   const [gmailProgress, setGmailProgress] = useState(0);
   const [showGmailSuccess, setShowGmailSuccess] = useState(false);
   const [gmailError, setGmailError] = useState<string | null>(null);
+  // En vez de subir un PDF cualquiera desde el dispositivo, se elige una cotización ya guardada en
+  // el sistema (mismo buscador que ya usa Editar) y se genera su PDF al vuelo, igual que "Generar
+  // PDF"/"Enviar por Gmail" en Cotizaciones — reutiliza esas mismas funciones con import() dinámico
+  // para no meter CotizacionesPage.tsx entero en el bundle de Programaciones sin necesidad.
+  const [showGmailCotizacionPicker, setShowGmailCotizacionPicker] = useState(false);
+  const [gmailCotizacionSearch, setGmailCotizacionSearch] = useState('');
+  const [generandoPdfGmail, setGenerandoPdfGmail] = useState(false);
 
   const enviarAGmail = async (file?: File) => {
     if (!id) return;
@@ -269,14 +277,29 @@ export default function ProgramacionDetailPage() {
 
   const handleGmailConArchivo = () => {
     setShowGmailConfirm(false);
-    gmailFileInputRef.current?.click();
+    setShowGmailCotizacionPicker(true);
   };
 
-  const handleGmailFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    await enviarAGmail(file);
+  const handleSeleccionarCotizacionGmail = async (cotizacionId: string) => {
+    setShowGmailCotizacionPicker(false);
+    setGmailCotizacionSearch('');
+    setGenerandoPdfGmail(true);
+    try {
+      const [{ buildCotizacionPdf, cotizacionPdfFileName }, detalle] = await Promise.all([
+        import('../cotizaciones/CotizacionesPage'),
+        cotizacionesService.getById(cotizacionId),
+      ]);
+      const doc = await buildCotizacionPdf(detalle);
+      const fileName = cotizacionPdfFileName(detalle);
+      const blob: Blob = doc.output('blob');
+      const file = new File([blob], fileName, { type: 'application/pdf' });
+      await enviarAGmail(file);
+    } catch {
+      setGmailError('No se pudo generar el PDF de esa cotización');
+      setTimeout(() => setGmailError(null), 4000);
+    } finally {
+      setGenerandoPdfGmail(false);
+    }
   };
 
   // Mismos datos que se usan para la card de Google Chat, en texto plano con el formato ligero
@@ -475,6 +498,33 @@ export default function ProgramacionDetailPage() {
   });
   const [comisionTecnico, setComisionTecnico] = useState<TecnicoOption | null>(null);
   const [tecnicoSearch, setTecnicoSearch] = useState('');
+  const [inversionistaDetalles, setInversionistaDetalles] = useState<{ localId: string; remisionId: string; remisionLabel: string; productoId: string; productoLabel: string; valor: string }[]>([]);
+  const [showDetalleInversionista, setShowDetalleInversionista] = useState(false);
+  const [detalleForm, setDetalleForm] = useState({ remisionId: '', productoId: '', valor: '' });
+  const [detalleRemisionFocused, setDetalleRemisionFocused] = useState(false);
+  const [detalleProductoFocused, setDetalleProductoFocused] = useState(false);
+  const [detalleError, setDetalleError] = useState<{ field: string; message: string } | null>(null);
+  const [showDetalleInversionistaSuccess, setShowDetalleInversionistaSuccess] = useState(false);
+  const [showComisionSuccess, setShowComisionSuccess] = useState(false);
+  const [hoveredDetalleRemisionId, setHoveredDetalleRemisionId] = useState<string | null>(null);
+  const [hoveredDetalleProductoId, setHoveredDetalleProductoId] = useState<string | null>(null);
+  const [expandedComisionKeys, setExpandedComisionKeys] = useState<Set<string>>(new Set());
+  const [hoveredComisionLineaKey, setHoveredComisionLineaKey] = useState<string | null>(null);
+  const [selectedComisionId, setSelectedComisionId] = useState<string | null>(null);
+  const [detalleRemisionHighlighted, setDetalleRemisionHighlighted] = useState(0);
+  const detalleRemisionBtnRef = useRef<HTMLButtonElement>(null);
+  const comisionModalContentRef = useRef<HTMLDivElement>(null);
+  const detalleProductoBtnRef = useRef<HTMLButtonElement>(null);
+  const detalleValorInputRef = useRef<HTMLInputElement>(null);
+  const [detalleProductoHighlighted, setDetalleProductoHighlighted] = useState(0);
+  const [remisionFocused, setRemisionFocused] = useState(false);
+  const [comisionConsumoExpanded, setComisionConsumoExpanded] = useState(false);
+  const [finConsumoExpanded, setFinConsumoExpanded] = useState(false);
+  const tecnicoInputRef = useRef<HTMLInputElement>(null);
+  const cargarPorcentajeRef = useRef<HTMLInputElement>(null);
+  const [tecnicoFocused, setTecnicoFocused] = useState(false);
+  const [hoveredTecnicoOptionId, setHoveredTecnicoOptionId] = useState<string | null>(null);
+  const [hoveredRemisionOptionId, setHoveredRemisionOptionId] = useState<string | null>(null);
   const [comisionError, setComisionError] = useState<{ field: string; message: string } | null>(null);
   const [showConfirmComision, setShowConfirmComision] = useState(false);
 
@@ -498,6 +548,10 @@ export default function ProgramacionDetailPage() {
   const [requisicionFecha, setRequisicionFecha] = useState('');
   const [requisicionCubrimiento, setRequisicionCubrimiento] = useState<CubrimientoOption | null>(null);
   const [requisicionTarifaId, setRequisicionTarifaId] = useState('');
+  // Aparte del id por lo mismo que en Editar Requisición: la tarifa propia del hospital puede no
+  // pertenecer al cubrimiento elegido, así que no siempre se puede resolver su nombre buscándola
+  // en tarifasCubrimiento.
+  const [requisicionTarifaLabel, setRequisicionTarifaLabel] = useState('');
   const [requisicionTarifaSearch, setRequisicionTarifaSearch] = useState('');
   const [requisicionTarifaFocused, setRequisicionTarifaFocused] = useState(false);
   const [requisicionError, setRequisicionError] = useState<{ field: string; message: string } | null>(null);
@@ -521,29 +575,23 @@ export default function ProgramacionDetailPage() {
   const [insumoProducto, setInsumoProducto] = useState<ProductoOption | null>(null);
   const [insumoProductoSearch, setInsumoProductoSearch] = useState('');
   const [insumoProductoFocused, setInsumoProductoFocused] = useState(false);
+  const [insumoProductoHighlighted, setInsumoProductoHighlighted] = useState(0);
+  const insumoProductoOptionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [insumoCantidad, setInsumoCantidad] = useState('');
   const [insumoPrecio, setInsumoPrecio] = useState('');
   const [insumoSubError, setInsumoSubError] = useState<{ field: string; message: string } | null>(null);
 
   const [showRemisionModal, setShowRemisionModal] = useState(false);
-  const [remisionForm, setRemisionForm] = useState({
-    paciente: '',
-    cirugiaRealizada: '',
-    anestesiologo: '',
-    impuestos: '',
-    tieneDcto: false,
-    porcentajeDcto: '',
-    vrDctoPesos: '',
-    firma: null as string | null,
-  });
-  const [remisionCubrimiento, setRemisionCubrimiento] = useState<CubrimientoOption | null>(null);
-  const [remisionTarifaId, setRemisionTarifaId] = useState('');
-  const [remisionEmpresa, setRemisionEmpresa] = useState<TecnicoOption | null>(null);
-  const [remisionResponsable, setRemisionResponsable] = useState<TecnicoOption | null>(null);
-  const [responsableSearch, setResponsableSearch] = useState('');
-  const [remisionError, setRemisionError] = useState<{ field: string; message: string } | null>(null);
   const [showRemisionSuccess, setShowRemisionSuccess] = useState(false);
   const [remisionCreatedId, setRemisionCreatedId] = useState<string | null>(null);
+
+  const [validarConsumoId, setValidarConsumoId] = useState<string | null>(null);
+  const [showValidarConsumoSuccess, setShowValidarConsumoSuccess] = useState(false);
+  const [selectedConsumoId, setSelectedConsumoId] = useState<string | null>(null);
+  const [selectedValConsumoId, setSelectedValConsumoId] = useState<string | null>(null);
+  const [selectedRequisicionId, setSelectedRequisicionId] = useState<string | null>(null);
+  const [hoveredConsumoRowId, setHoveredConsumoRowId] = useState<string | null>(null);
+  const [hoveredValidacionRowId, setHoveredValidacionRowId] = useState<string | null>(null);
 
   const [showTecnicoSugeridoModal, setShowTecnicoSugeridoModal] = useState(false);
   const [tecnicoSugeridoSeleccionados, setTecnicoSugeridoSeleccionados] = useState<TecnicoOption[]>([]);
@@ -552,9 +600,9 @@ export default function ProgramacionDetailPage() {
   const [tecnicoSugeridoError, setTecnicoSugeridoError] = useState<{ field: string; message: string } | null>(null);
 
   useEffect(() => {
-    document.body.style.overflow = (selectedTecnico || showEditModal || showComisionModal || showConfirmComision || showDocumentoModal || showRequisicionModal || showInsumoSubModal || showRemisionModal || showTecnicoSugeridoModal || selectedCotizacionId) ? 'hidden' : '';
+    document.body.style.overflow = (selectedTecnico || showEditModal || showComisionModal || showConfirmComision || showDocumentoModal || showRequisicionModal || showInsumoSubModal || showRemisionModal || showTecnicoSugeridoModal || selectedCotizacionId || validarConsumoId) ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
-  }, [selectedTecnico, showEditModal, showComisionModal, showConfirmComision, showDocumentoModal, showRequisicionModal, showInsumoSubModal, showRemisionModal, showTecnicoSugeridoModal, selectedCotizacionId]);
+  }, [selectedTecnico, showEditModal, showComisionModal, showConfirmComision, showDocumentoModal, showRequisicionModal, showInsumoSubModal, showRemisionModal, showTecnicoSugeridoModal, selectedCotizacionId, validarConsumoId]);
 
   const { data: programacion, isLoading, error } = useQuery<ProgramacionDetail | null>({
     queryKey: ['programacion', id],
@@ -626,6 +674,28 @@ export default function ProgramacionDetailPage() {
     queryFn: () => remisionesService.searchTecnicosComisionistas(editTecnicoSugeridoSearch),
     enabled: showEditModal && editTecnicoSugeridoFocused,
   });
+
+  // Cotizaciones para el picker de "Enviar por Gmail" — acotadas a los médicos YA guardados en
+  // esta programación (no a los del formulario de edición, que pueden estar a medio cambiar).
+  const gmailMedicoNombres = programacion?.medicos.map(m => m.medico.nombreCompleto) ?? [];
+  const { data: gmailCotizacionResults = [] } = useQuery<CotizacionOption[]>({
+    queryKey: ['programaciones-cotizaciones', gmailMedicoNombres],
+    queryFn: () => programacionesService.searchCotizaciones(undefined, gmailMedicoNombres),
+    enabled: showGmailCotizacionPicker && gmailMedicoNombres.length > 0,
+  });
+  const gmailCotizacionFilterQuery = gmailCotizacionSearch.trim().toLowerCase();
+  const gmailCotizacionResultsFiltradas = gmailCotizacionFilterQuery
+    ? gmailCotizacionResults.filter(c => {
+        const folio = (c.numCotizacion ?? c.id).toLowerCase();
+        const cirugia = (c.cirugia ?? '').toLowerCase();
+        const fecha = formatDate(c.fecha).toLowerCase();
+        const total = formatMoney(c.total).toLowerCase();
+        return folio.includes(gmailCotizacionFilterQuery)
+          || cirugia.includes(gmailCotizacionFilterQuery)
+          || fecha.includes(gmailCotizacionFilterQuery)
+          || total.includes(gmailCotizacionFilterQuery);
+      })
+    : gmailCotizacionResults;
 
   const handleImportarEditConsumosCotizacion = async () => {
     if (editCotizaciones.length === 0 || importandoEditConsumos) return;
@@ -851,9 +921,12 @@ export default function ProgramacionDetailPage() {
   });
   const totalComisiones = comisionGrupos.reduce((sum, g) => sum + g.items.length, 0);
 
+  const clasificacionPorCategoria: Record<string, string> = { 'TÉCNICOS': 'COMISIONISTA', 'INVERSIONISTAS': 'INVERSIONISTA' };
+  const comisionClasificacion = clasificacionPorCategoria[comisionForm.categoria];
+
   const { data: tecnicoResults = [] } = useQuery<TecnicoOption[]>({
-    queryKey: ['comisiones-tecnicos', tecnicoSearch],
-    queryFn: () => remisionesService.searchTecnicos(tecnicoSearch),
+    queryKey: ['comisiones-tecnicos', tecnicoSearch, comisionClasificacion],
+    queryFn: () => remisionesService.searchTecnicos(tecnicoSearch, comisionClasificacion),
     enabled: showComisionModal,
   });
 
@@ -864,7 +937,10 @@ export default function ProgramacionDetailPage() {
       tipo: comisionForm.tipo || undefined,
       tecnicoId: comisionTecnico?.id,
       remisionId: comisionForm.remisionId || undefined,
-      vrComision: Number(comisionForm.vrComision),
+      vrComision: esCategoriaInversionistas ? undefined : Number(comisionForm.vrComision),
+      detalles: esCategoriaInversionistas
+        ? inversionistaDetalles.map(d => ({ remisionId: d.remisionId, productoId: d.productoId, valor: Number(d.valor) }))
+        : undefined,
       observaciones: comisionForm.observaciones || undefined,
       agregarIva: comisionForm.agregarIva,
       cargarPorcentaje: comisionForm.agregarIva && comisionForm.cargarPorcentaje ? Number(comisionForm.cargarPorcentaje) : undefined,
@@ -876,6 +952,7 @@ export default function ProgramacionDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['programacion', id] });
       setShowConfirmComision(false);
       setShowComisionModal(false);
+      setShowComisionSuccess(true);
     },
   });
 
@@ -893,13 +970,78 @@ export default function ProgramacionDetailPage() {
     });
     setComisionTecnico(null);
     setTecnicoSearch('');
+    setTecnicoFocused(false);
+    setRemisionFocused(false);
+    setComisionConsumoExpanded(false);
+    setInversionistaDetalles([]);
+    setShowDetalleInversionista(false);
+    setShowDetalleInversionistaSuccess(false);
+    setShowComisionSuccess(false);
     setComisionError(null);
     setShowConfirmComision(false);
     setShowComisionModal(true);
+    setTimeout(() => { if (comisionModalContentRef.current) comisionModalContentRef.current.scrollTop = 0; }, 0);
+  };
+
+  const esCategoriaInversionistas = comisionForm.categoria === 'INVERSIONISTAS';
+  const totalInversionistaDetalles = inversionistaDetalles.reduce((sum, d) => sum + (Number(d.valor) || 0), 0);
+
+  // Validación secuencial del formulario de Agregar Comisión: cada campo solo se habilita una vez
+  // que el anterior ya quedó lleno, para que no se pueda "saltar" a llenar uno de más abajo.
+  const comisionTipoReady = !!comisionForm.remisionId;
+  const comisionCategoriaReady = comisionTipoReady && !!comisionForm.tipo;
+  const comisionTecnicoReady = comisionCategoriaReady && !!comisionForm.categoria;
+  const comisionValorReady = comisionTecnicoReady && !!comisionTecnico;
+  const comisionValorCompleto = comisionValorReady && (esCategoriaInversionistas ? inversionistaDetalles.length > 0 : !!comisionForm.vrComision);
+
+  const openDetalleInversionista = () => {
+    setDetalleForm({ remisionId: '', productoId: '', valor: '' });
+    setDetalleRemisionFocused(true);
+    setDetalleRemisionHighlighted(0);
+    setDetalleProductoFocused(false);
+    setDetalleError(null);
+    setShowDetalleInversionista(true);
+    setTimeout(() => detalleRemisionBtnRef.current?.focus(), 0);
+  };
+
+  const selectDetalleRemision = (remisionId: string) => {
+    setDetalleForm({ ...detalleForm, remisionId, productoId: '' });
+    setDetalleRemisionFocused(false);
+    setDetalleError(null);
+    setDetalleProductoHighlighted(0);
+    setDetalleProductoFocused(true);
+    setTimeout(() => detalleProductoBtnRef.current?.focus(), 0);
+  };
+
+  const selectDetalleProducto = (productoId: string) => {
+    setDetalleForm({ ...detalleForm, productoId });
+    setDetalleProductoFocused(false);
+    setDetalleError(null);
+    setTimeout(() => detalleValorInputRef.current?.focus(), 0);
+  };
+
+  const handleGuardarDetalleInversionista = () => {
+    if (!detalleForm.remisionId) { setDetalleError({ field: 'remisionId', message: 'Selecciona la remisión.' }); return; }
+    if (!detalleForm.productoId) { setDetalleError({ field: 'productoId', message: 'Selecciona el producto.' }); return; }
+    if (!detalleForm.valor || Number(detalleForm.valor) <= 0) { setDetalleError({ field: 'valor', message: 'El valor debe ser mayor a cero.' }); return; }
+    const remisionSel = remisiones.find(r => r.id === detalleForm.remisionId);
+    const grupoSel = consumoGrupos.find(g => g.remisionId === detalleForm.remisionId);
+    const itemSel = grupoSel?.items.find(it => it.productoId === detalleForm.productoId);
+    setInversionistaDetalles(prev => [...prev, {
+      localId: `${Date.now()}-${Math.random()}`,
+      remisionId: detalleForm.remisionId,
+      remisionLabel: remisionSel?.numRemision || remisionSel?.id || '-',
+      productoId: detalleForm.productoId,
+      productoLabel: itemSel?.productoNombre || itemSel?.productoReferencia || '-',
+      valor: detalleForm.valor,
+    }]);
+    setShowDetalleInversionista(false);
+    setShowDetalleInversionistaSuccess(true);
+    if (comisionError?.field === 'detalles') setComisionError(null);
   };
 
   // TOTAL FACTURA (preview) — misma fórmula que getDetTecnicoDetalle
-  const comisionVrComision = Number(comisionForm.vrComision) || 0;
+  const comisionVrComision = esCategoriaInversionistas ? totalInversionistaDetalles : (Number(comisionForm.vrComision) || 0);
   const comisionSubTotal = comisionForm.agregarIva ? comisionVrComision : comisionVrComision / 1.16;
   const comisionIva = comisionForm.quieresDesglosar ? comisionSubTotal * 0.16 : 0;
   const comisionRetIva = comisionForm.quieresDesglosar ? comisionSubTotal * 0.10667 : 0;
@@ -914,8 +1056,13 @@ export default function ProgramacionDetailPage() {
     if (!comisionForm.tipo) { setComisionError({ field: 'tipo', message: 'Selecciona el tipo de comisión.' }); return; }
     if (!comisionForm.categoria) { setComisionError({ field: 'categoria', message: 'Selecciona la categoría.' }); return; }
     if (!comisionTecnico) { setComisionError({ field: 'tecnico', message: 'Selecciona el nombre de contacto.' }); return; }
-    if (!comisionForm.vrComision || Number(comisionForm.vrComision) <= 0) { setComisionError({ field: 'vrComision', message: 'El valor de asignación debe ser mayor a cero.' }); return; }
-    if (comisionForm.quieresDesglosar && !comisionForm.seleccioneTipo) { setComisionError({ field: 'seleccioneTipo', message: 'Selecciona el tipo (Actividad Empresarial o Resico).' }); return; }
+    if (esCategoriaInversionistas) {
+      if (inversionistaDetalles.length === 0) { setComisionError({ field: 'detalles', message: 'Agrega al menos un detalle de inversionista.' }); return; }
+    } else if (!comisionForm.vrComision || Number(comisionForm.vrComision) <= 0) {
+      setComisionError({ field: 'vrComision', message: 'El valor de asignación debe ser mayor a cero.' }); return;
+    }
+    if (comisionForm.agregarIva && (!comisionForm.cargarPorcentaje || Number(comisionForm.cargarPorcentaje) < 1)) { setComisionError({ field: 'cargarPorcentaje', message: 'Ingresa el porcentaje de IVA a cargar.' }); return; }
+    if (!comisionForm.seleccioneTipo) { setComisionError({ field: 'seleccioneTipo', message: 'Selecciona el tipo (Actividad Empresarial o Resico).' }); return; }
     setComisionError(null);
     setShowConfirmComision(true);
   };
@@ -945,6 +1092,32 @@ export default function ProgramacionDetailPage() {
     queryFn: () => remisionesService.findTarifasByCubrimiento(requisicionCubrimiento!.id),
     enabled: !!requisicionCubrimiento,
   });
+
+  // Si el hospital de la programación (mismo Tercero que el backend usa como "contacto" al crear
+  // la requisición, ver createRequisicion) tiene tarifa propia asignada, se autocompleta el campo
+  // Tarifa — el usuario todavía puede cambiarla a mano desde el buscador de abajo.
+  const requisicionContactoTerceroId = programacion?.hospital?.tercero?.id;
+  const { data: requisicionContactoTarifa } = useQuery({
+    queryKey: ['requisicion-contacto-tarifa', requisicionContactoTerceroId],
+    queryFn: () => remisionesService.getTerceroTarifa(requisicionContactoTerceroId!),
+    enabled: showRequisicionModal && !!requisicionContactoTerceroId,
+  });
+  useEffect(() => {
+    // showRequisicionModal en las dependencias a propósito: si ya se había abierto este modal
+    // antes para la misma programación, React Query devuelve el mismo objeto en caché para
+    // requisicionContactoTarifa (no "cambia" de referencia), así que sin esto el efecto no volvía
+    // a correr en una segunda apertura — dejaba los campos en blanco que openRequisicionModal
+    // acababa de resetear, en vez de autocompletarlos de nuevo.
+    if (!showRequisicionModal || !requisicionContactoTarifa?.tarifaId) return;
+    // Una tarifa propia de hospital solo tiene sentido bajo el cubrimiento "Hospitales" — se
+    // preselecciona también, igual que ya hace Cotizaciones. Si el usuario cambia el cubrimiento
+    // a mano después, el propio manejador de ese click ya pisa la tarifa con la del cubrimiento
+    // nuevo, así que no hace falta nada extra para que "cambie con él".
+    const cubrimientoHospitales = cubrimientos.find(c => c.nombre?.trim().toUpperCase() === 'HOSPITALES');
+    if (cubrimientoHospitales) setRequisicionCubrimiento(cubrimientoHospitales);
+    setRequisicionTarifaId(requisicionContactoTarifa.tarifaId);
+    setRequisicionTarifaLabel(requisicionContactoTarifa.tarifaNombre ?? '');
+  }, [requisicionContactoTarifa, cubrimientos, showRequisicionModal]);
   // Sin texto se muestran todas las opciones (normalmente pocas por cubrimiento) — mismo criterio
   // que los demás buscadores de este formulario.
   const requisicionTarifaResults = requisicionTarifaSearch.trim()
@@ -962,6 +1135,8 @@ export default function ProgramacionDetailPage() {
     queryFn: () => remisionesService.searchProductos(insumoProductoSearch, requisicionTarifaId || undefined),
     enabled: showInsumoSubModal,
   });
+  useEffect(() => { setInsumoProductoHighlighted(0); }, [insumoProductoResults.length, insumoProductoSearch]);
+  useEffect(() => { insumoProductoOptionRefs.current[insumoProductoHighlighted]?.scrollIntoView({ block: 'nearest' }); }, [insumoProductoHighlighted]);
 
   const PRECIO_POR_CUBRIMIENTO: Record<string, keyof ProductoOption> = {
     PARTICULARES: 'particulares',
@@ -970,6 +1145,11 @@ export default function ProgramacionDetailPage() {
     ASEGURADORA: 'aseguradora',
   };
 
+  // Búsqueda de productos para "Agregar consumo" en Remisión (reutiliza AddStagedItemForm/
+  // StagedItemDetailModal de Cotizaciones, ver más abajo) — a propósito usa la búsqueda REAL de
+  // Cotizaciones (mismas 5 categorías "cotizables"), no la de Requisición (todas las categorías):
+  // productos como Instrumental (reutilizable, nunca se factura) no tienen precio cargado en
+  // ningún lado y no deben poder agregarse como consumo de una remisión.
   const createRequisicionMutation = useMutation({
     mutationFn: () => remisionesService.createRequisicion({
       programacionId: id!,
@@ -995,6 +1175,7 @@ export default function ProgramacionDetailPage() {
     setRequisicionFecha(toLocalDateString(new Date()));
     setRequisicionCubrimiento(null);
     setRequisicionTarifaId('');
+    setRequisicionTarifaLabel('');
     setRequisicionTarifaSearch('');
     setRequisicionError(null);
     setRequisicionInsumos([]);
@@ -1030,8 +1211,11 @@ export default function ProgramacionDetailPage() {
     setInsumoProducto(p);
     setInsumoProductoSearch('');
     setInsumoSubError(null);
+    // Precio de la tarifa específica de la requisición (ListaPrecio) si existe; si ese producto no
+    // tiene precio cargado para esa tarifa puntual, se cae a la columna genérica por categoría de
+    // cubrimiento (mismo respaldo de siempre).
     const key = PRECIO_POR_CUBRIMIENTO[(requisicionCubrimiento?.nombre ?? '').trim().toUpperCase()];
-    const precio = key ? p[key] : null;
+    const precio = p.precioSugerido ?? (key ? p[key] : null);
     setInsumoPrecio(precio !== null && precio !== undefined ? String(precio) : '');
   };
 
@@ -1064,122 +1248,16 @@ export default function ProgramacionDetailPage() {
     document.getElementById(`insumo-field-${insumoSubError.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [insumoSubError]);
 
-  const { data: cubrimientosRemision = [] } = useQuery<CubrimientoOption[]>({
-    queryKey: ['cubrimientos'],
-    queryFn: () => remisionesService.findCubrimientos(),
-    enabled: showRemisionModal,
-  });
-
-  const { data: responsableResults = [] } = useQuery<TecnicoOption[]>({
-    queryKey: ['comisiones-tecnicos', responsableSearch],
-    queryFn: () => remisionesService.searchTecnicos(responsableSearch),
-    enabled: showRemisionModal,
-  });
-
-  const { data: empresaResults = [] } = useQuery<TecnicoOption[]>({
-    queryKey: ['empresas'],
-    queryFn: () => remisionesService.searchEmpresas(),
-    enabled: showRemisionModal && !!remisionCubrimiento,
-  });
-
-  const { data: empresaSugerida = null } = useQuery<TecnicoOption | null>({
-    queryKey: ['empresa-sugerida', remisionCubrimiento?.id, programacion?.sede?.id],
-    queryFn: () => remisionesService.getEmpresaSugerida(remisionCubrimiento!.id, programacion!.sede!.id),
-    enabled: showRemisionModal && !!remisionCubrimiento && !!programacion?.sede?.id,
-  });
-
-  useEffect(() => {
-    if (showRemisionModal && remisionCubrimiento) {
-      setRemisionEmpresa(empresaSugerida);
-    }
-  }, [empresaSugerida, showRemisionModal, remisionCubrimiento]);
-
-  const createRemisionMutation = useMutation({
-    mutationFn: () => remisionesService.createRemision({
-      programacionId: id!,
-      paciente: remisionForm.paciente,
-      cirugiaRealizada: remisionForm.cirugiaRealizada,
-      cubrimientoId: remisionCubrimiento!.id,
-      tarifaId: remisionTarifaId,
-      empresaId: remisionEmpresa!.id,
-      responsableEconomicoId: remisionResponsable!.id,
-      anestesiologo: remisionForm.anestesiologo,
-      impuestos: remisionForm.impuestos || undefined,
-      tieneDcto: remisionForm.tieneDcto,
-      porcentajeDcto: remisionForm.tieneDcto && remisionForm.porcentajeDcto ? Number(remisionForm.porcentajeDcto) : undefined,
-      vrDctoPesos: remisionForm.tieneDcto && remisionForm.vrDctoPesos ? Number(remisionForm.vrDctoPesos) : undefined,
-      firma: remisionForm.firma!,
-    }),
-    onSuccess: (created) => {
-      queryClient.invalidateQueries({ queryKey: ['remisiones', id] });
-      queryClient.invalidateQueries({ queryKey: ['programacion', id] });
-      setShowRemisionModal(false);
-      setRemisionCreatedId(created.id);
-      setShowRemisionSuccess(true);
-    },
-  });
-
-  const openRemisionModal = () => {
-    setRemisionForm({
-      paciente: '',
-      cirugiaRealizada: '',
-      anestesiologo: '',
-      impuestos: '',
-      tieneDcto: false,
-      porcentajeDcto: '',
-      vrDctoPesos: '',
-      firma: null,
-    });
-    setRemisionCubrimiento(null);
-    setRemisionTarifaId('');
-    setRemisionEmpresa(null);
-    setRemisionResponsable(null);
-    setResponsableSearch('');
-    setRemisionError(null);
-    setShowRemisionModal(true);
-  };
-
   // Deep-link desde el selector de programación de Remisiones (?agregarRemision=1). Reacciona a
   // cambios en searchParams (no solo al montar) porque, al llegar navegando desde otra vista de
   // detalle con el mismo componente ya montado, React Router no lo remonta. Espera a que
   // puedeAgregarRemision esté disponible (requiere que carguen las requisiciones) antes de abrir.
   useEffect(() => {
     if (searchParams.get('agregarRemision') === '1' && puedeAgregarRemision) {
-      openRemisionModal();
+      setShowRemisionModal(true);
       setSearchParams(params => { params.delete('agregarRemision'); return params; }, { replace: true });
     }
   }, [searchParams, puedeAgregarRemision, setSearchParams]);
-
-  // Preview financiero — misma fórmula que remisiones.repository.service.ts (getById). Al crear,
-  // aún no hay Det_Consumo asociados, por lo que Subtotal parte de 0.
-  const round2 = (n: number) => Math.round(n * 100) / 100;
-  const remisionSubtotal = 0;
-  const remisionDescuentos = remisionForm.tieneDcto
-    ? remisionSubtotal * (Number(remisionForm.porcentajeDcto || 0) / 100) + Number(remisionForm.vrDctoPesos || 0)
-    : 0;
-  const remisionTotalAntesImp = round2(remisionSubtotal - remisionDescuentos);
-  const remisionIva = round2((remisionForm.impuestos === 'I.V.A.' || remisionForm.impuestos === 'Todos') ? remisionTotalAntesImp * 0.16 : 0);
-  const remisionRetencion = round2((remisionForm.impuestos === 'Retención' || remisionForm.impuestos === 'Todos') ? remisionTotalAntesImp * 0.106667 : 0);
-  const remisionTotalPagar = round2(remisionTotalAntesImp + remisionIva - remisionRetencion);
-  const remisionSaldo = remisionTotalPagar;
-
-  const handleGuardarRemision = () => {
-    if (!remisionForm.paciente.trim()) { setRemisionError({ field: 'paciente', message: 'Ingresa el nombre del paciente.' }); return; }
-    if (!remisionCubrimiento) { setRemisionError({ field: 'cubrimiento', message: 'Selecciona el cubrimiento.' }); return; }
-    if (!remisionTarifaId) { setRemisionError({ field: 'tarifa', message: 'Selecciona la tarifa.' }); return; }
-    if (!remisionEmpresa) { setRemisionError({ field: 'empresa', message: 'Selecciona la empresa.' }); return; }
-    if (!remisionResponsable) { setRemisionError({ field: 'responsable', message: 'Selecciona el responsable económico.' }); return; }
-    if (!remisionForm.anestesiologo.trim()) { setRemisionError({ field: 'anestesiologo', message: 'Ingresa el anestesiólogo.' }); return; }
-    if (!remisionForm.cirugiaRealizada.trim()) { setRemisionError({ field: 'cirugiaRealizada', message: 'Ingresa la cirugía realizada.' }); return; }
-    if (!remisionForm.firma) { setRemisionError({ field: 'firma', message: 'La firma es obligatoria.' }); return; }
-    setRemisionError(null);
-    createRemisionMutation.mutate();
-  };
-
-  useEffect(() => {
-    if (!remisionError) return;
-    document.getElementById(`remision-field-${remisionError.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [remisionError]);
 
   const { data: notasCredito = [] } = useQuery<NotaCreditoItem[]>({
     queryKey: ['remisiones-notas-credito', id],
@@ -1385,13 +1463,6 @@ export default function ProgramacionDetailPage() {
               <i className="fa-brands fa-whatsapp" style={{ fontSize: 16, color: '#4d7a13' }} />
               Enviar por WhatsApp
             </button>
-            <input
-              ref={gmailFileInputRef}
-              type="file"
-              accept="application/pdf"
-              style={{ display: 'none' }}
-              onChange={handleGmailFileSelected}
-            />
             {/* Gmail + divisor + Agregar van agrupados en un mismo contenedor flex para que, al
                 envolver en móvil, siempre queden juntos en la misma línea (nunca "Agregar" solo,
                 separado de "Enviar por Gmail"). */}
@@ -1402,10 +1473,10 @@ export default function ProgramacionDetailPage() {
                   ...styles.btnPill,
                   position: 'relative' as const,
                   overflow: 'hidden' as const,
-                  ...(gmailSending ? { pointerEvents: 'none' as const } : {}),
+                  ...((gmailSending || generandoPdfGmail) ? { pointerEvents: 'none' as const } : {}),
                 }}
                 onClick={() => setShowGmailConfirm(true)}
-                disabled={gmailSending}
+                disabled={gmailSending || generandoPdfGmail}
               >
                 {gmailSending && (
                   <span
@@ -1421,7 +1492,7 @@ export default function ProgramacionDetailPage() {
                 )}
                 <span style={{ position: 'relative' as const, zIndex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <SiGmail size={14} color="#8a8a80" />
-                  {gmailSending ? 'Enviando...' : 'Enviar por Gmail'}
+                  {generandoPdfGmail ? 'Generando PDF...' : gmailSending ? 'Enviando...' : 'Enviar por Gmail'}
                 </span>
               </button>
 
@@ -1440,7 +1511,7 @@ export default function ProgramacionDetailPage() {
                   <div style={styles.dropdown}>
                     <button
                       style={{ ...styles.dropdownItem, ...(!puedeAgregarRemision ? styles.dropdownItemDisabled : {}) }}
-                      onClick={() => { setShowAgregarMenu(false); openRemisionModal(); }}
+                      onClick={() => { setShowAgregarMenu(false); setShowRemisionModal(true); }}
                       disabled={!puedeAgregarRemision}
                       title={!puedeAgregarRemision ? 'Necesitas al menos una requisición para poder agregar una remisión.' : undefined}
                       onMouseEnter={e => { if (puedeAgregarRemision) e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
@@ -1623,32 +1694,32 @@ export default function ProgramacionDetailPage() {
 
             <div style={styles.financialGrid}>
               <div style={styles.finRow}>
-                <span>SubTotal</span>
+                <span style={{ ...styles.extraLabel, marginBottom: 0 }}>SubTotal</span>
                 <span style={styles.finValue}><AnimatedMoney value={programacion.total} start={finBarMounted} /></span>
               </div>
               <div style={styles.finRow}>
-                <span>Descuentos</span>
+                <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Descuentos</span>
                 <span style={styles.finValue}><AnimatedMoney value={programacion.descuentos} start={finBarMounted} /></span>
               </div>
               <div style={styles.finRow}>
-                <span>Notas Crédito</span>
+                <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Notas Crédito</span>
                 <span style={styles.finValue}><AnimatedMoney value={programacion.nc} start={finBarMounted} /></span>
               </div>
               <div style={styles.finRow}>
-                <span>Ingreso Base</span>
+                <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Ingreso Base</span>
                 <span style={styles.finValue}><AnimatedMoney value={programacion.baseIngreso} start={finBarMounted} /></span>
               </div>
               <div style={styles.divider}></div>
               <div style={styles.finRow}>
-                <span>Comisiones/Pus/Invers.</span>
+                <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Comisiones/Pus/Invers.</span>
                 <span style={styles.finValue}><AnimatedMoney value={programacion.comisiones} start={finBarMounted} /></span>
               </div>
               <div style={styles.finRow}>
-                <span>Costo Total</span>
+                <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Costo Total</span>
                 <span style={styles.finValue}><AnimatedMoney value={programacion.costoTotal} start={finBarMounted} /></span>
               </div>
               <div style={styles.finRow}>
-                <span>Utilidad Bruta</span>
+                <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Utilidad Bruta</span>
                 <span style={styles.finValue}><AnimatedMoney value={programacion.utilidadBruta} start={finBarMounted} /></span>
               </div>
             </div>
@@ -1656,7 +1727,12 @@ export default function ProgramacionDetailPage() {
             <div style={styles.divider}></div>
             <div style={styles.extraField}>
               <span style={styles.extraLabel}>Consumo</span>
-              <span style={styles.extraValue}>{programacion.consumo || '-'}</span>
+              <span style={{ ...styles.extraValue, ...(finConsumoExpanded ? {} : styles.consumoClamp) }}>{programacion.consumo || '-'}</span>
+              {(programacion.consumo?.length ?? 0) > 180 && (
+                <button type="button" style={styles.verMasBtn} onClick={() => setFinConsumoExpanded(v => !v)}>
+                  {finConsumoExpanded ? 'Ver menos' : 'Ver más'}
+                </button>
+              )}
             </div>
             <div style={styles.extraField}>
               <span style={styles.extraLabel}>Observaciones</span>
@@ -1775,13 +1851,7 @@ export default function ProgramacionDetailPage() {
                       key={c.id}
                       style={{ ...(isMobile ? styles.cotizacionCardMobile : styles.cotizacionRow), ...(i > 0 ? styles.remRowBorder : {}), cursor: 'pointer' }}
                       onClick={() => setSelectedCotizacionId(c.id)}
-                      onMouseEnter={e => {
-                        e.currentTarget.style.backgroundColor = '#f3f4f6';
-                        // Precarga el chunk de Cotizaciones al pasar el mouse, para que ya esté
-                        // descargado cuando de verdad haga clic (mismo criterio que el prefetch de
-                        // useNavigateWithLoading) — así el modal no tarda en aparecer al abrir.
-                        import('../cotizaciones/CotizacionesPage');
-                      }}
+                      onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f3f4f6'; }}
                       onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; }}
                     >
                       {isMobile ? (
@@ -1800,8 +1870,8 @@ export default function ProgramacionDetailPage() {
                         </>
                       ) : (
                         <>
-                          <span style={{ ...styles.requisicionCellText, fontWeight: 700, color: '#4d7a13' }}>
-                            <FileText size={13} style={{ marginRight: '0.3rem', verticalAlign: 'text-bottom' }} />
+                          <span style={{ ...styles.requisicionCellText, fontWeight: 700, color: '#4d7a13', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                            <FileText size={13} style={{ flexShrink: 0 }} />
                             {c.numCotizacion ?? c.id}
                           </span>
                           <span style={styles.requisicionCellText}>{formatDate(c.fecha)}</span>
@@ -1840,13 +1910,13 @@ export default function ProgramacionDetailPage() {
                       <div
                         key={req.id}
                         style={{ ...styles.requisicionRow, ...(i > 0 ? styles.remRowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
-                        onClick={() => navigate(`/operacion/requisiciones/${req.id}`, '/operacion/requisiciones/:id')}
+                        onClick={() => setSelectedRequisicionId(req.id)}
                         onMouseEnter={() => setHoveredRequisicionId(req.id)}
                         onMouseLeave={() => setHoveredRequisicionId(null)}
                       >
                         <div style={styles.remRowLeft}>
-                          <FileText size={13} color="#6b8c1f" style={{ flexShrink: 0 }} />
-                          <span style={{ ...styles.remRowCode, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{req.id}</span>
+                          <MaterialIcon name="inventory_2" size={14} color="#6b8c1f" style={{ flexShrink: 0 }} />
+                          <span style={{ ...styles.remRowCode, color: '#6b8c1f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{req.id}</span>
                         </div>
                         <span style={styles.requisicionCellText}>{formatDateTime(req.marcaDeTiempo)}</span>
                         <span style={styles.requisicionCellText}>{req.usuario ?? '-'}</span>
@@ -1882,6 +1952,7 @@ export default function ProgramacionDetailPage() {
                   <span style={styles.colHeaderText}>N° Remisión</span>
                   <span style={styles.colHeaderText}>Estado</span>
                   <span style={styles.colHeaderText}>CxC</span>
+                  <span style={{ ...styles.colHeaderText, textAlign: 'right' as const }}>Total</span>
                 </div>
                 <div ref={remisionesScrollRef} style={styles.scrollBody}>
                   {remisiones.map((rem, i) => (
@@ -1893,8 +1964,8 @@ export default function ProgramacionDetailPage() {
                       onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; }}
                     >
                       <div style={styles.remRowLeft}>
-                        <FileText size={14} color="#6b8c1f" style={{ flexShrink: 0 }} />
-                        <span style={styles.remRowCode}>{rem.numRemision || rem.id}</span>
+                        <MaterialIcon name="receipt_long" size={14} color="#6b8c1f" style={{ flexShrink: 0 }} />
+                        <span style={{ ...styles.remRowCode, color: '#6b8c1f' }}>{rem.numRemision || rem.id}</span>
                       </div>
                       {rem.estado ? (
                         <span style={{ ...styles.estadoBadge, ...(rem.estado === 'Definitiva' ? styles.estadoDefinitiva : styles.estadoOtro) }}>
@@ -1907,6 +1978,7 @@ export default function ProgramacionDetailPage() {
                           : <><Circle size={13} color="#9ca3af" /><span style={{ color: '#9ca3af' }}>Pendiente</span></>
                         }
                       </div>
+                      <span style={{ ...styles.requisicionCellText, textAlign: 'right' as const, fontWeight: 600, color: '#333' }}>{formatMoney(rem.total)}</span>
                     </div>
                   ))}
                 </div>
@@ -1915,7 +1987,7 @@ export default function ProgramacionDetailPage() {
             <div style={{ position: 'relative' as const }}>
               <button
                 style={{ ...styles.addComisionBtnBelow, ...(!puedeAgregarRemision ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
-                onClick={() => { if (puedeAgregarRemision) openRemisionModal(); }}
+                onClick={() => { if (puedeAgregarRemision) setShowRemisionModal(true); }}
                 onMouseEnter={e => {
                   const rect = e.currentTarget.getBoundingClientRect();
                   setRemisionBtnTooltipPos({ top: rect.top, left: rect.left + rect.width / 2 });
@@ -2034,124 +2106,66 @@ export default function ProgramacionDetailPage() {
 
         {mainTab === 'consumos' && (
         <div style={{ marginBottom: '2rem' }}>
+          <div style={{ backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #e5e7eb', padding: '1.75rem' }}>
           <div style={styles.remisionesTitleRow}>
             <h2 style={styles.sectionTitle}>Consumos</h2>
             <span style={styles.badge}>{totalConsumos}</span>
           </div>
           {consumoGrupos.length === 0 ? (
-            <div style={styles.emptyState}>No hay datos relacionados</div>
+            <div style={styles.emptySection}>No hay consumos</div>
           ) : (
-            <div style={styles.remList}>
-              <div style={{ ...styles.consumoRow, ...styles.colHeader }}>
-                <span style={styles.colHeaderText}>Remisión</span>
-                <span style={{ ...styles.colHeaderText, paddingLeft: '0.75rem' }}>Cant.</span>
-                <span style={{ ...styles.colHeaderText, paddingLeft: '0.75rem' }}>Referencia</span>
-                <span style={{ ...styles.colHeaderText, paddingLeft: '0.75rem' }}>Producto</span>
-                <span style={{ ...styles.colHeaderText, textAlign: 'right' }}>Valor Unitario</span>
-                <span style={{ ...styles.colHeaderText, textAlign: 'right' }}>Valor</span>
-              </div>
-              <div ref={consumosScrollRef} style={styles.consumosScrollBody}>
-                <div style={styles.consumoGrid}>
-                  {consumoGrupos.map((grupo, gi) => {
-                    const subtotalGrupo = grupo.items.reduce((sum, it) => sum + it.valor, 0);
-                    return (
+            <div style={{ border: '1px solid #eeeee6', borderRadius: '10px', overflow: 'hidden' as const }}>
+              <div ref={consumosScrollRef} style={{ overflow: 'auto' as const, maxHeight: '320px', overflowAnchor: 'none' as const }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'max-content 50px 1fr 110px 110px 140px', fontSize: '0.72rem' }}>
+                  {['Remisión', 'Cant.', 'Producto', 'Valor Unit.', 'Valor', ''].map((h, i) => (
+                    <div key={i} style={{ ...styles.consumosTh, zIndex: 2, textAlign: (i >= 3 && i < 5 ? 'right' as const : 'left' as const), ...(i === 0 ? { borderRight: '1px solid #e5e7eb' } : {}) }}>{h}</div>
+                  ))}
+                  {consumoGrupos.map((grupo, gi) => (
                     <Fragment key={grupo.remisionId ?? `sin-remision-${gi}`}>
                       <div
                         style={{
-                          ...styles.consumoRemisionCell,
+                          ...styles.consumosTd,
                           gridRow: `span ${grupo.items.length}`,
+                          backgroundColor: '#fff',
+                          borderRight: '1px solid #e5e7eb',
                         }}
                       >
-                        {grupo.numRemision ?? 'Sin remisión'}
+                        <div
+                          style={{
+                            position: 'sticky' as const,
+                            top: '25px',
+                            fontWeight: 700,
+                            color: '#6b8c1f',
+                          }}
+                        >
+                          {grupo.numRemision ?? 'Sin remisión'}
+                        </div>
                       </div>
-                      {grupo.items.map((item, ii) => {
-                        const borderStyle = ii > 0 ? styles.remRowBorder : {};
-                        const hoverStyle = hoveredConsumoId === item.id ? styles.consumoCellHover : {};
-                        const cellProps = {
-                          onMouseEnter: () => setHoveredConsumoId(item.id),
-                          onMouseLeave: () => setHoveredConsumoId(null),
-                          onClick: () => navigate(`/operacion/consumos/${item.id}`, '/operacion/consumos/:id'),
+                      {grupo.items.map(item => {
+                        const producto = `${item.productoReferencia ? `${item.productoReferencia} / ` : ''}${item.productoNombre ?? '-'}`;
+                        const rowHover = hoveredConsumoRowId === item.id ? { backgroundColor: '#f3faec' } : {};
+                        const cellHandlers = {
+                          onClick: () => { setSelectedValConsumoId(null); setSelectedConsumoId(item.id); },
+                          onMouseEnter: () => setHoveredConsumoRowId(item.id),
+                          onMouseLeave: () => setHoveredConsumoRowId(null),
                         };
                         return (
                           <Fragment key={item.id}>
-                            <span style={{ ...styles.consumoCellCant, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>{item.cantidad}</span>
-                            <span style={{ ...styles.consumoCellReferencia, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>{item.productoReferencia || item.productoId || '-'}</span>
-                            <div style={{ ...styles.consumoProducto, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>
-                              <span style={styles.consumoNombre}>{item.productoNombre ?? '-'}</span>
+                            <div style={{ ...styles.consumosTd, ...rowHover, cursor: 'pointer' as const }} {...cellHandlers}>{item.cantidad}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const }} title={producto} {...cellHandlers}>{producto}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, textAlign: 'right' as const, cursor: 'pointer' as const }} {...cellHandlers}>{formatMoney(item.valorUnitario)}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, textAlign: 'right' as const, fontWeight: 700, color: '#3f6510', cursor: 'pointer' as const }} {...cellHandlers}>{formatMoney(item.valor)}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover }} onMouseEnter={() => setHoveredConsumoRowId(item.id)} onMouseLeave={() => setHoveredConsumoRowId(null)}>
+                              <button
+                                type="button"
+                                className={item.validado ? undefined : 'btn-press'}
+                                disabled={item.validado}
+                                style={{ ...styles.pickBtn, fontSize: '0.72rem', padding: '0.2rem 0.6rem', width: '116px', justifyContent: 'center', ...(item.validado ? {} : styles.pickBtnActive), ...(item.validado ? { cursor: 'not-allowed' as const } : {}) }}
+                                onClick={e => { e.stopPropagation(); if (!item.validado) setValidarConsumoId(item.id); }}
+                              >
+                                {item.validado ? <><CheckCircle size={13} /> Validado</> : 'Validar consumo'}
+                              </button>
                             </div>
-                            <span style={{ ...styles.consumoCellValorUnit, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>{formatMoney(item.valorUnitario)}</span>
-                            <span style={{ ...styles.consumoCellValor, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>{formatMoney(item.valor)}</span>
-                          </Fragment>
-                        );
-                      })}
-                      <div style={{ ...styles.consumoSubtotalRow, ...(gi < consumoGrupos.length - 1 ? styles.consumoGrupoDivider : {}) }}>
-                        <span style={styles.consumoSubtotalLabel}>Subtotal</span>
-                        <span style={styles.consumoSubtotalValue}>{formatMoney(subtotalGrupo)}</span>
-                      </div>
-                    </Fragment>
-                    );
-                  })}
-                </div>
-              </div>
-              <div style={styles.consumoTotalRow}>
-                <span style={styles.consumoTotalLabel}>Total consumos</span>
-                <span style={styles.consumoTotalValue}>
-                  {formatMoney(consumoGrupos.reduce((sum, g) => sum + g.items.reduce((s, it) => s + it.valor, 0), 0))}
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
-        )}
-
-        {mainTab === 'validar-consumos' && (
-        <div style={{ marginBottom: '2rem' }}>
-          <div style={styles.remisionesTitleRow}>
-            <h2 style={styles.sectionTitle}>Validar consumos</h2>
-            <span style={styles.badge}>{totalValidacion}</span>
-          </div>
-          {validacionGrupos.length === 0 ? (
-            <div style={styles.emptyState}>No hay datos relacionados</div>
-          ) : (
-            <div style={styles.remList}>
-              <div style={{ ...styles.validacionRow, ...styles.colHeader }}>
-                <span style={styles.colHeaderText}>Remisión</span>
-                <span style={{ ...styles.colHeaderText, paddingLeft: '0.75rem' }}>Can Rem</span>
-                <span style={{ ...styles.colHeaderText, paddingLeft: '0.75rem' }}>Real Validada</span>
-                <span style={{ ...styles.colHeaderText, paddingLeft: '0.75rem' }}>Referencia</span>
-                <span style={{ ...styles.colHeaderText, paddingLeft: '0.75rem' }}>Referencia Validada</span>
-                <span style={{ ...styles.colHeaderText, paddingLeft: '0.75rem' }}>Nombre Remisionado</span>
-                <span style={{ ...styles.colHeaderText, paddingLeft: '0.75rem' }}>Nombre Validado</span>
-              </div>
-              <div ref={validacionScrollRef} style={styles.consumosScrollBody}>
-                <div style={styles.validacionGrid}>
-                  {validacionGrupos.map((grupo, gi) => (
-                    <Fragment key={grupo.remisionId ?? `sin-remision-${gi}`}>
-                      <div
-                        style={{
-                          ...styles.consumoRemisionCell,
-                          gridRow: `span ${grupo.items.length}`,
-                          ...(gi > 0 ? styles.validacionGrupoDivider : {}),
-                        }}
-                      >
-                        {grupo.numRemision ?? 'Sin remisión'}
-                      </div>
-                      {grupo.items.map((item, ii) => {
-                        const borderStyle = ii === 0 ? (gi > 0 ? styles.validacionGrupoDivider : {}) : styles.remRowBorder;
-                        const hoverStyle = hoveredValidacionId === item.id ? styles.consumoCellHover : {};
-                        const cellProps = {
-                          onMouseEnter: () => setHoveredValidacionId(item.id),
-                          onMouseLeave: () => setHoveredValidacionId(null),
-                          onClick: () => navigate(`/operacion/producto-validado/${item.id}`, '/operacion/producto-validado/:id'),
-                        };
-                        return (
-                          <Fragment key={item.id}>
-                            <span style={{ ...styles.consumoCellCant, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>{item.cantRemisionada}</span>
-                            <span style={{ ...styles.consumoCellCant, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>{item.cantRealValidada}</span>
-                            <span style={{ ...styles.consumoCellReferencia, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>{item.referenciaRemisionada ?? '-'}</span>
-                            <span style={{ ...styles.consumoCellReferencia, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>{item.referenciaValidada ?? '-'}</span>
-                            <span style={{ ...styles.consumoNombreCell, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>{item.nombreRemisionado ?? '-'}</span>
-                            <span style={{ ...styles.consumoNombreCellUltima, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>{item.nombreValidado ?? '-'}</span>
                           </Fragment>
                         );
                       })}
@@ -2159,8 +2173,86 @@ export default function ProgramacionDetailPage() {
                   ))}
                 </div>
               </div>
+              <div style={{ ...styles.consumoTotalRow, borderRadius: 0 }}>
+                <span style={styles.consumoTotalLabel}>Total consumos</span>
+                <span style={styles.consumoTotalValue}>
+                  {formatMoney(consumoGrupos.reduce((sum, g) => sum + g.items.reduce((s, it) => s + it.valor, 0), 0))}
+                </span>
+              </div>
             </div>
           )}
+          </div>
+        </div>
+        )}
+
+        {mainTab === 'validar-consumos' && (
+        <div style={{ marginBottom: '2rem' }}>
+          <div style={{ backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #e5e7eb', padding: '1.75rem' }}>
+          <div style={styles.remisionesTitleRow}>
+            <h2 style={styles.sectionTitle}>Validar consumos</h2>
+            <span style={styles.badge}>{totalValidacion}</span>
+          </div>
+          {validacionGrupos.length === 0 ? (
+            <div style={styles.emptySection}>No hay datos relacionados</div>
+          ) : (
+            <div style={{ border: '1px solid #eeeee6', borderRadius: '10px', overflow: 'hidden' as const }}>
+              <div ref={validacionScrollRef} style={{ overflow: 'auto' as const, maxHeight: '320px', overflowAnchor: 'none' as const }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'max-content 90px 110px 110px 130px 1fr 1fr', fontSize: '0.72rem', minWidth: '850px' }}>
+                  {['Remisión', 'Can Rem', 'Real Validada', 'Referencia', 'Referencia Validada', 'Nombre Remisionado', 'Nombre Validado'].map((h, i) => (
+                    <div key={i} style={{ ...styles.consumosTh, zIndex: 2, textAlign: (i === 1 || i === 2 ? 'right' as const : 'left' as const), ...(i === 0 ? { borderRight: '1px solid #e5e7eb' } : {}) }}>{h}</div>
+                  ))}
+                  {validacionGrupos.map((grupo, gi) => (
+                    <Fragment key={grupo.remisionId ?? `sin-remision-${gi}`}>
+                      <div
+                        style={{
+                          ...styles.consumosTd,
+                          gridRow: `span ${grupo.items.length}`,
+                          backgroundColor: '#fff',
+                          borderRight: '1px solid #e5e7eb',
+                        }}
+                      >
+                        <div
+                          style={{
+                            position: 'sticky' as const,
+                            top: '25px',
+                            fontWeight: 700,
+                            color: '#6b8c1f',
+                          }}
+                        >
+                          {grupo.numRemision ?? 'Sin remisión'}
+                        </div>
+                      </div>
+                      {grupo.items.map(item => {
+                        const rowHover = hoveredValidacionRowId === item.id ? { backgroundColor: '#f3faec' } : {};
+                        const cellHandlers = {
+                          onClick: () => { if (item.detConsumoId) { setSelectedValConsumoId(item.id); setSelectedConsumoId(item.detConsumoId); } },
+                          onMouseEnter: () => setHoveredValidacionRowId(item.id),
+                          onMouseLeave: () => setHoveredValidacionRowId(null),
+                        };
+                        return (
+                          <Fragment key={item.id}>
+                            <div style={{ ...styles.consumosTd, ...rowHover, textAlign: 'right' as const, cursor: 'pointer' as const }} {...cellHandlers}>{item.cantRemisionada}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, textAlign: 'right' as const, cursor: 'pointer' as const }} {...cellHandlers}>{item.cantRealValidada}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const }} title={item.referenciaRemisionada ?? '-'} {...cellHandlers}>{item.referenciaRemisionada ?? '-'}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const }} title={item.referenciaValidada ?? '-'} {...cellHandlers}>{item.referenciaValidada ?? '-'}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const }} title={item.nombreRemisionado ?? '-'} {...cellHandlers}>{item.nombreRemisionado ?? '-'}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const }} title={item.nombreValidado ?? '-'} {...cellHandlers}>{item.nombreValidado ?? '-'}</div>
+                          </Fragment>
+                        );
+                      })}
+                    </Fragment>
+                  ))}
+                </div>
+              </div>
+              <div style={{ ...styles.consumoTotalRow, borderRadius: 0 }}>
+                <span style={styles.consumoTotalLabel}>Total consumos validados</span>
+                <span style={styles.consumoTotalValue}>
+                  {formatMoney(validacionGrupos.reduce((sum, g) => sum + g.items.reduce((s, it) => s + it.valor, 0), 0))}
+                </span>
+              </div>
+            </div>
+          )}
+          </div>
         </div>
         )}
 
@@ -2183,31 +2275,83 @@ export default function ProgramacionDetailPage() {
                 <div style={styles.comisionGrid}>
                   {comisionGrupos.map((grupo, gi) => {
                     const subtotalGrupo = grupo.items.reduce((sum, it) => sum + it.monto, 0);
+                    const totalFilasGrupo = grupo.items.reduce((sum, item) => {
+                      const key = `${grupo.categoria}__${item.id}`;
+                      const esMultiple = item.detalle.length > 1;
+                      const expandido = esMultiple && expandedComisionKeys.has(key);
+                      return sum + 1 + (expandido ? item.detalle.length : 0);
+                    }, 0);
                     return (
                       <Fragment key={grupo.categoria}>
                         <div
                           style={{
                             ...styles.comisionCategoriaCell,
-                            gridRow: `span ${grupo.items.length}`,
+                            gridRow: `span ${totalFilasGrupo}`,
                           }}
                         >
                           {grupo.categoria}
                         </div>
                         {grupo.items.map((item, ii) => {
+                          const key = `${grupo.categoria}__${item.id}`;
+                          const esMultiple = item.detalle.length > 1;
+                          const expandido = esMultiple && expandedComisionKeys.has(key);
                           const borderStyle = ii > 0 ? styles.remRowBorder : {};
-                          const hoverStyle = hoveredComisionId === item.id ? styles.consumoCellHover : {};
-                          const cellProps = {
-                            onMouseEnter: () => setHoveredComisionId(item.id),
-                            onMouseLeave: () => setHoveredComisionId(null),
-                            onClick: () => navigate(`/operacion/comisiones/${item.id}`, '/operacion/comisiones/:id'),
-                          };
+                          const hoverStyle = hoveredComisionId === item.id ? styles.comisionRowHover : {};
+                          const cellProps = esMultiple
+                            ? {
+                                onMouseEnter: () => setHoveredComisionId(item.id),
+                                onMouseLeave: () => setHoveredComisionId(null),
+                                onClick: () => setExpandedComisionKeys(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(key)) next.delete(key); else next.add(key);
+                                  return next;
+                                }),
+                              }
+                            : {
+                                onMouseEnter: () => setHoveredComisionId(item.id),
+                                onMouseLeave: () => setHoveredComisionId(null),
+                                onClick: () => setSelectedComisionId(item.detalle[0]?.comisionId ?? item.id),
+                              };
                           return (
                             <Fragment key={item.id}>
                               <div style={{ ...styles.comisionTecnicoCell, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>
                                 {item.tecnico && <span style={styles.tecnicoAvatar}>{getTecnicoInitials(item.tecnico)}</span>}
-                                <span>{item.tecnico ?? '-'}</span>
+                                <span style={{ flexShrink: 0 }}>{item.tecnico ?? '-'}</span>
+                                {!esMultiple && (
+                                  <span style={{ fontSize: '0.72rem', color: '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+                                    {[item.detalle[0]?.tipo, item.detalle[0]?.remisionLabel, item.detalle[0]?.productoLabel].filter(Boolean).join(' | ') || '-'}
+                                  </span>
+                                )}
+                                {esMultiple && (
+                                  <ChevronDown size={14} style={{ color: '#9ca3af', flexShrink: 0, transform: expandido ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s ease' }} />
+                                )}
                               </div>
                               <span style={{ ...styles.comisionMontoCell, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>{formatMoney(item.monto)}</span>
+                              {expandido && item.detalle.map(linea => {
+                                const lineaKey = linea.comisionId + (linea.remisionLabel ?? '') + linea.valor;
+                                const lineaHoverStyle = hoveredComisionLineaKey === lineaKey ? styles.comisionRowHover : {};
+                                const lineaProps = {
+                                  onMouseEnter: () => setHoveredComisionLineaKey(lineaKey),
+                                  onMouseLeave: () => setHoveredComisionLineaKey(null),
+                                  onClick: () => setSelectedComisionId(linea.comisionId),
+                                };
+                                return (
+                                  <Fragment key={lineaKey}>
+                                    <div
+                                      style={{ ...styles.comisionTecnicoCell, ...styles.remRowBorder, ...lineaHoverStyle, paddingLeft: '2rem', fontSize: '0.78rem', color: '#6b7280' }}
+                                      {...lineaProps}
+                                    >
+                                      {[linea.tipo, linea.remisionLabel, linea.productoLabel].filter(Boolean).join(' | ') || '-'}
+                                    </div>
+                                    <span
+                                      style={{ ...styles.comisionMontoCell, ...styles.remRowBorder, ...lineaHoverStyle, fontSize: '0.78rem', fontWeight: 500, color: '#6b7280' }}
+                                      {...lineaProps}
+                                    >
+                                      {formatMoney(linea.valor)}
+                                    </span>
+                                  </Fragment>
+                                );
+                              })}
                             </Fragment>
                           );
                         })}
@@ -2861,7 +3005,7 @@ export default function ProgramacionDetailPage() {
 
       {showComisionModal && (
         <div className="modal-overlay-anim" style={styles.modalOverlay}>
-          <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
+          <div ref={comisionModalContentRef} className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setShowComisionModal(false)}>
                 <X size={18} />
@@ -2871,244 +3015,402 @@ export default function ProgramacionDetailPage() {
 
             <div style={styles.editModalBody}>
               <div style={styles.formGroup}>
-                <label style={styles.label}>N° Programación *</label>
+                <label style={styles.remisionLabel}>N° Programación *</label>
                 <span style={styles.readOnlyPill}>{programacion?.id}</span>
               </div>
 
               <div style={styles.formGroup} id="comision-field-remisionId">
-                <label style={styles.label}>No Remisión *</label>
-                <select
-                  style={{ ...styles.input, ...(comisionError?.field === 'remisionId' ? styles.inputError : {}) }}
-                  value={comisionForm.remisionId}
-                  onChange={e => { setComisionForm({ ...comisionForm, remisionId: e.target.value }); setComisionError(null); }}
-                >
-                  <option value="">Seleccionar remisión</option>
-                  {remisiones.map(r => (
-                    <option key={r.id} value={r.id}>{r.numRemision || r.id}</option>
-                  ))}
-                </select>
-                {comisionError?.field === 'remisionId' && <span style={styles.errorText}>{comisionError.message}</span>}
-              </div>
-
-              {comisionForm.remisionId && (
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Paciente</label>
-                  <span style={styles.readOnlyField}>{comisionRemisionSeleccionada?.paciente || '-'}</span>
-                </div>
-              )}
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Fecha QX *</label>
-                <span style={styles.readOnlyField}>{formatDate(programacion?.fechaQx ?? null)}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Doctor *</label>
-                <div style={styles.medicoTagsWrap}>
-                  {programacion?.medicos.length ? programacion.medicos.map(m => (
-                    <span key={m.medico.id} style={styles.medicoTag}>{m.medico.nombreCompleto}</span>
-                  )) : <span style={styles.readOnlyField}>-</span>}
-                </div>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Hospital *</label>
-                <span style={styles.medicoTag}>{programacion?.hospital?.nombre ?? '-'}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Consumo *</label>
-                <span style={{ ...styles.readOnlyField, whiteSpace: 'pre-wrap' as const, minHeight: '44px', display: 'block' }}>
-                  {programacion?.consumo || '-'}
-                </span>
-              </div>
-
-              <div style={styles.formGroup} id="comision-field-tipo">
-                <label style={styles.label}>Tipo</label>
-                <div style={styles.horaGrid}>
-                  {TIPOS_COMISION.map(t => (
-                    <button
-                      key={t}
-                      type="button"
-                      style={{ ...styles.sedeBtn, ...(comisionForm.tipo === t ? styles.sedeBtnActive : {}), ...(comisionError?.field === 'tipo' ? styles.inputError : {}) }}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={e => { setComisionForm({ ...comisionForm, tipo: t }); setComisionError(null); e.currentTarget.blur(); }}
-                    >
-                      {comisionForm.tipo === t ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
-                      {t}
-                    </button>
-                  ))}
-                </div>
-                {comisionError?.field === 'tipo' && <span style={styles.errorText}>{comisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="comision-field-categoria">
-                <label style={styles.label}>Categoría *</label>
-                <div style={styles.sedeGrid}>
-                  {CATEGORIAS_COMISION.map(c => (
-                    <button
-                      key={c}
-                      type="button"
-                      style={{ ...styles.sedeBtn, ...(comisionForm.categoria === c ? styles.sedeBtnActive : {}), ...(comisionError?.field === 'categoria' ? styles.inputError : {}) }}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={e => { setComisionForm({ ...comisionForm, categoria: c }); setComisionError(null); e.currentTarget.blur(); }}
-                    >
-                      {comisionForm.categoria === c ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
-                      {c}
-                    </button>
-                  ))}
-                </div>
-                {comisionError?.field === 'categoria' && <span style={styles.errorText}>{comisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="comision-field-tecnico">
-                <label style={styles.label}>Nombre Contacto</label>
-                {comisionTecnico && (
-                  <div style={styles.medicoTagsWrap}>
-                    <span style={styles.medicoTag}>
-                      {comisionTecnico.nombreCompleto}
-                      <X size={12} style={{ cursor: 'pointer' }} onClick={() => setComisionTecnico(null)} />
-                    </span>
+                <label style={styles.remisionLabel}>No Remisión *</label>
+                {comisionRemisionSeleccionada && (
+                  <div style={{ ...styles.readOnlyField, backgroundColor: '#f3faec', border: '1px solid #dbe8c2', color: '#3f6510', fontWeight: 600, position: 'relative' as const, textAlign: 'center' as const }}>
+                    {comisionRemisionSeleccionada.numRemision || comisionRemisionSeleccionada.id}
+                    <X
+                      size={14}
+                      style={{ cursor: 'pointer', position: 'absolute' as const, right: '0.75rem', top: '50%', transform: 'translateY(-50%)' }}
+                      onClick={() => { setComisionForm({ ...comisionForm, remisionId: '' }); setRemisionFocused(true); }}
+                    />
                   </div>
                 )}
-                {!comisionTecnico && (
+                {!comisionRemisionSeleccionada && (
                   <div style={{ position: 'relative' as const }}>
-                    <input
-                      style={{ ...styles.input, ...(comisionError?.field === 'tecnico' ? styles.inputError : {}) }}
-                      placeholder="Buscar técnico o contacto..."
-                      value={tecnicoSearch}
-                      onChange={e => { setTecnicoSearch(e.target.value); setComisionError(null); }}
-                    />
-                    {tecnicoSearch.trim() && (
+                    <button
+                      type="button"
+                      style={{ ...styles.input, ...(comisionError?.field === 'remisionId' ? styles.inputError : {}), display: 'flex', alignItems: 'center', justifyContent: 'space-between', textAlign: 'left' as const, color: '#9ca3af', backgroundColor: '#fff', cursor: 'pointer' }}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => setRemisionFocused(f => !f)}
+                      onBlur={() => setTimeout(() => setRemisionFocused(false), 150)}
+                    >
+                      Seleccionar remisión
+                      <ChevronDown size={16} style={{ color: '#9ca3af', flexShrink: 0, transform: remisionFocused ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s ease' }} />
+                    </button>
+                    {remisionFocused && (
                       <div style={styles.medicoDropdown}>
-                        {tecnicoResults.length === 0 ? (
+                        {remisiones.length === 0 ? (
                           <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
                         ) : (
-                          tecnicoResults.map(t => (
-                            <div
-                              key={t.id}
-                              style={styles.medicoDropdownItem}
-                              onClick={() => { setComisionTecnico(t); setTecnicoSearch(''); setComisionError(null); }}
-                            >
-                              <Plus size={14} /> {t.nombreCompleto}
-                            </div>
-                          ))
+                          remisiones.map(r => (
+                              <div
+                                key={r.id}
+                                style={{ ...styles.medicoDropdownItem, ...(hoveredRemisionOptionId === r.id ? styles.medicoDropdownItemHighlighted : {}) }}
+                                onMouseDown={e => e.preventDefault()}
+                                onMouseEnter={() => setHoveredRemisionOptionId(r.id)}
+                                onMouseLeave={() => setHoveredRemisionOptionId(null)}
+                                onClick={() => { setComisionForm({ ...comisionForm, remisionId: r.id }); setRemisionFocused(false); setComisionError(null); }}
+                              >
+                                {r.numRemision || r.id}
+                              </div>
+                            ))
                         )}
                       </div>
                     )}
                   </div>
                 )}
-                {comisionError?.field === 'tecnico' && <span style={styles.errorText}>{comisionError.message}</span>}
+                {comisionError?.field === 'remisionId' && <span style={styles.errorText}>{comisionError.message}</span>}
               </div>
 
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Base Ingreso</label>
-                <span style={styles.readOnlyField}>{formatMoney(programacion?.baseIngreso ?? null)}</span>
-              </div>
-
-              <div style={styles.formGroup} id="comision-field-vrComision">
-                <label style={styles.label}>Valor Asignación *</label>
-                <div style={styles.stepperWrap}>
-                  <input
-                    type="number"
-                    step="0.01"
-                    style={{ ...styles.input, paddingRight: '5rem', ...(comisionError?.field === 'vrComision' ? styles.inputError : {}) }}
-                    placeholder="$ 0.00"
-                    value={comisionForm.vrComision}
-                    onChange={e => { setComisionForm({ ...comisionForm, vrComision: e.target.value }); setComisionError(null); }}
-                  />
-                  <div style={styles.stepperBtns}>
-                    <button type="button" style={styles.stepperBtn} onClick={() => { setComisionForm({ ...comisionForm, vrComision: String((Number(comisionForm.vrComision) || 0) - 100) }); setComisionError(null); }}>−</button>
-                    <button type="button" style={styles.stepperBtn} onClick={() => { setComisionForm({ ...comisionForm, vrComision: String((Number(comisionForm.vrComision) || 0) + 100) }); setComisionError(null); }}>+</button>
-                  </div>
-                </div>
-                {comisionError?.field === 'vrComision' && <span style={styles.errorText}>{comisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Observaciones</label>
-                <textarea
-                  ref={autoResizeTextarea}
-                  style={{ ...styles.input, minHeight: '44px', resize: 'none' as const, overflow: 'hidden' as const }}
-                  value={comisionForm.observaciones}
-                  onChange={e => { setComisionForm({ ...comisionForm, observaciones: e.target.value }); autoResizeTextarea(e.target); }}
-                />
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>¿Agregar IVA?</label>
-                <div style={styles.horaGrid}>
-                  <button
-                    type="button"
-                    style={{ ...styles.sedeBtn, ...(!comisionForm.agregarIva ? styles.sedeBtnActive : {}) }}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => { setComisionForm({ ...comisionForm, agregarIva: false }); e.currentTarget.blur(); }}
-                  >
-                    No
-                  </button>
-                  <button
-                    type="button"
-                    style={{ ...styles.sedeBtn, ...(comisionForm.agregarIva ? styles.sedeBtnActive : {}) }}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => { setComisionForm({ ...comisionForm, agregarIva: true }); e.currentTarget.blur(); }}
-                  >
-                    Sí
-                  </button>
-                </div>
-              </div>
-
-              {comisionForm.agregarIva && (
+              {comisionForm.remisionId && (
                 <div style={styles.formGroup}>
-                  <label style={styles.label}>Porcentaje de IVA a Cargar</label>
-                  <div style={{ position: 'relative' as const }}>
-                    <input
-                      type="number"
-                      step="0.01"
-                      style={{ ...styles.input, paddingRight: '2.5rem' }}
-                      placeholder="16.00"
-                      value={comisionForm.cargarPorcentaje}
-                      onChange={e => setComisionForm({ ...comisionForm, cargarPorcentaje: e.target.value })}
-                    />
-                    <span style={styles.percentSuffix}>%</span>
-                  </div>
+                  <label style={styles.remisionLabel}>Paciente</label>
+                  <span style={styles.readOnlyField}>{comisionRemisionSeleccionada?.paciente || '-'}</span>
                 </div>
               )}
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>¿Quieres Desglosar?</label>
-                <div style={styles.horaGrid}>
-                  <button
-                    type="button"
-                    style={{ ...styles.sedeBtn, ...(!comisionForm.quieresDesglosar ? styles.sedeBtnActive : {}) }}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => { setComisionForm({ ...comisionForm, quieresDesglosar: false }); e.currentTarget.blur(); }}
-                  >
-                    No
-                  </button>
-                  <button
-                    type="button"
-                    style={{ ...styles.sedeBtn, ...(comisionForm.quieresDesglosar ? styles.sedeBtnActive : {}) }}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => { setComisionForm({ ...comisionForm, quieresDesglosar: true }); e.currentTarget.blur(); }}
-                  >
-                    Sí
-                  </button>
+                <label style={styles.remisionLabel}>Fecha QX *</label>
+                <span style={{ ...styles.readOnlyField, backgroundColor: '#f3faec', border: '1px solid #dbe8c2', color: '#3f6510', fontWeight: 600, textAlign: 'center' as const }}>{formatDate(programacion?.fechaQx ?? null)}</span>
+              </div>
+
+              <div style={styles.formGroup}>
+                <label style={styles.remisionLabel}>Doctor *</label>
+                <div style={styles.medicoTagsWrap}>
+                  {programacion?.medicos.length ? programacion.medicos.map(m => (
+                    <span key={m.medico.id} style={styles.editMedicoTag}>{m.medico.nombreCompleto}</span>
+                  )) : <span style={styles.readOnlyField}>-</span>}
                 </div>
               </div>
 
-              {comisionForm.quieresDesglosar && (
+              <div style={styles.formGroup}>
+                <label style={styles.remisionLabel}>Hospital *</label>
+                <span style={{ ...styles.editMedicoTag, alignSelf: 'flex-start' as const }}>{programacion?.hospital?.nombre ?? '-'}</span>
+              </div>
+
+              <div style={styles.formGroup}>
+                <label style={styles.remisionLabel}>Consumo *</label>
+                <div style={{ ...styles.readOnlyField, whiteSpace: 'pre-wrap' as const, minHeight: '44px', display: 'block' }}>
+                  <span style={comisionConsumoExpanded ? undefined : styles.consumoClamp}>{programacion?.consumo || '-'}</span>
+                  {(programacion?.consumo?.length ?? 0) > 180 && (
+                    <button type="button" style={{ ...styles.verMasBtn, display: 'block' }} onClick={() => setComisionConsumoExpanded(v => !v)}>
+                      {comisionConsumoExpanded ? 'Ver menos' : 'Ver más'}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div style={styles.formGroup} id="comision-field-tipo">
+                <label style={styles.remisionLabel}>Tipo</label>
+                {!comisionTipoReady ? (
+                  <span style={{ ...styles.readOnlyField, color: '#9ca3af' }}>Selecciona primero la remisión</span>
+                ) : (
+                  <div style={styles.pickBtnGrid}>
+                    {TIPOS_COMISION.map(t => (
+                      <button
+                        key={t}
+                        type="button"
+                        style={{ ...styles.pickBtn, ...(comisionForm.tipo === t ? styles.pickBtnActive : {}), ...(comisionError?.field === 'tipo' ? styles.inputError : {}) }}
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={e => { setComisionForm({ ...comisionForm, tipo: t }); setComisionError(null); e.currentTarget.blur(); }}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {comisionError?.field === 'tipo' && <span style={styles.errorText}>{comisionError.message}</span>}
+              </div>
+
+              <div style={styles.formGroup} id="comision-field-categoria">
+                <label style={styles.remisionLabel}>Categoría *</label>
+                {!comisionCategoriaReady ? (
+                  <span style={{ ...styles.readOnlyField, color: '#9ca3af' }}>Selecciona primero el tipo</span>
+                ) : (
+                  <div style={styles.pickBtnGrid}>
+                    {CATEGORIAS_COMISION.map(c => (
+                      <button
+                        key={c}
+                        type="button"
+                        style={{ ...styles.pickBtn, ...(comisionForm.categoria === c ? styles.pickBtnActive : {}), ...(comisionError?.field === 'categoria' ? styles.inputError : {}) }}
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={e => {
+                          const cambioCategoria = comisionForm.categoria !== c;
+                          setComisionForm({
+                            ...comisionForm,
+                            categoria: c,
+                            ...(cambioCategoria ? {
+                              vrComision: '',
+                              observaciones: '',
+                              agregarIva: false,
+                              cargarPorcentaje: '',
+                              quieresDesglosar: false,
+                              seleccioneTipo: '',
+                            } : {}),
+                          });
+                          setComisionTecnico(null);
+                          setTecnicoSearch('');
+                          if (cambioCategoria) setInversionistaDetalles([]);
+                          setComisionError(null);
+                          e.currentTarget.blur();
+                          setTimeout(() => tecnicoInputRef.current?.focus(), 0);
+                        }}
+                      >
+                        {toSentenceCase(c)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {comisionError?.field === 'categoria' && <span style={styles.errorText}>{comisionError.message}</span>}
+              </div>
+
+              <div style={styles.formGroup} id="comision-field-tecnico">
+                <label style={styles.remisionLabel}>Nombre Contacto *</label>
+                {!comisionTecnicoReady ? (
+                  <span style={{ ...styles.readOnlyField, color: '#9ca3af' }}>Selecciona primero la categoría</span>
+                ) : (
+                  <>
+                    {comisionTecnico && (
+                      <div style={styles.medicoTagsWrap}>
+                        <span style={styles.editMedicoTag}>
+                          {comisionTecnico.nombreCompleto}
+                          <X size={12} style={{ cursor: 'pointer' }} onClick={() => setComisionTecnico(null)} />
+                        </span>
+                      </div>
+                    )}
+                    {!comisionTecnico && (
+                      <div style={{ position: 'relative' as const }}>
+                        <input
+                          ref={tecnicoInputRef}
+                          style={{ ...styles.input, ...(comisionError?.field === 'tecnico' ? styles.inputError : {}) }}
+                          placeholder="Buscar técnico o contacto..."
+                          value={tecnicoSearch}
+                          onChange={e => { setTecnicoSearch(e.target.value); setComisionError(null); }}
+                          onFocus={() => setTecnicoFocused(true)}
+                          onBlur={() => setTimeout(() => setTecnicoFocused(false), 150)}
+                        />
+                        {tecnicoFocused && (
+                          <div style={styles.medicoDropdown}>
+                            {tecnicoResults.length === 0 ? (
+                              <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
+                            ) : (
+                              tecnicoResults.map(t => (
+                                <div
+                                  key={t.id}
+                                  style={{ ...styles.medicoDropdownItem, ...(hoveredTecnicoOptionId === t.id ? styles.medicoDropdownItemHighlighted : {}) }}
+                                  onMouseDown={e => e.preventDefault()}
+                                  onMouseEnter={() => setHoveredTecnicoOptionId(t.id)}
+                                  onMouseLeave={() => setHoveredTecnicoOptionId(null)}
+                                  onClick={() => { setComisionTecnico(t); setTecnicoSearch(''); setComisionError(null); }}
+                                >
+                                  {t.nombreCompleto}
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+                {comisionError?.field === 'tecnico' && <span style={styles.errorText}>{comisionError.message}</span>}
+              </div>
+
+              <div style={styles.formGroup}>
+                <label style={styles.remisionLabel}>Base Ingreso</label>
+                <span style={styles.readOnlyField}>{formatMoney(programacion?.baseIngreso ?? null)}</span>
+              </div>
+
+              {!esCategoriaInversionistas && (
+                <div style={styles.formGroup} id="comision-field-vrComision">
+                  <label style={styles.remisionLabel}>Valor Asignación *</label>
+                  {!comisionValorReady ? (
+                    <span style={{ ...styles.readOnlyField, color: '#9ca3af' }}>Selecciona primero el nombre de contacto</span>
+                  ) : (
+                    <div style={styles.stepperWrap}>
+                      <input
+                        type="number"
+                        step="0.01"
+                        style={{ ...styles.input, paddingRight: '5rem', ...(comisionError?.field === 'vrComision' ? styles.inputError : {}) }}
+                        placeholder="$ 0.00"
+                        value={comisionForm.vrComision}
+                        onChange={e => { setComisionForm({ ...comisionForm, vrComision: e.target.value }); setComisionError(null); }}
+                      />
+                      <div style={styles.stepperBtns}>
+                        <button type="button" style={styles.stepperBtn} onClick={() => { setComisionForm({ ...comisionForm, vrComision: String((Number(comisionForm.vrComision) || 0) - 100) }); setComisionError(null); }}>−</button>
+                        <button type="button" style={styles.stepperBtn} onClick={() => { setComisionForm({ ...comisionForm, vrComision: String((Number(comisionForm.vrComision) || 0) + 100) }); setComisionError(null); }}>+</button>
+                      </div>
+                    </div>
+                  )}
+                  {comisionError?.field === 'vrComision' && <span style={styles.errorText}>{comisionError.message}</span>}
+                </div>
+              )}
+
+              {esCategoriaInversionistas && (
+                <div style={styles.formGroup} id="comision-field-detalles">
+                  <label style={styles.remisionLabel}>Detalle de inversionistas *{inversionistaDetalles.length > 0 ? ` · Total ${formatMoney(totalInversionistaDetalles)}` : ''}</label>
+                  {!comisionValorReady && (
+                    <span style={{ ...styles.readOnlyField, color: '#9ca3af' }}>Selecciona primero el nombre de contacto</span>
+                  )}
+                  {comisionValorReady && inversionistaDetalles.length > 0 && (
+                    <div style={styles.consumosTableWrap}>
+                      <table style={styles.consumosTable}>
+                        <thead>
+                          <tr>
+                            <th style={styles.consumosTh}>No Programación</th>
+                            <th style={styles.consumosTh}>No Remisión</th>
+                            <th style={styles.consumosTh}>Producto</th>
+                            <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Valor</th>
+                            <th style={styles.consumosTh}></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {inversionistaDetalles.map(d => (
+                            <tr key={d.localId}>
+                              <td style={styles.consumosTd}>{id}</td>
+                              <td style={styles.consumosTd}>{d.remisionLabel}</td>
+                              <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={d.productoLabel}>{d.productoLabel}</td>
+                              <td style={{ ...styles.consumosTd, textAlign: 'right' as const, fontWeight: 700 }}>{formatMoney(Number(d.valor))}</td>
+                              <td style={styles.consumosTd}>
+                                <X size={14} style={{ cursor: 'pointer', color: '#9ca3af' }} onClick={() => setInversionistaDetalles(prev => prev.filter(x => x.localId !== d.localId))} />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {comisionValorReady && inversionistaDetalles.length === 0 && (
+                    <div style={{ ...styles.emptyState, backgroundColor: '#f9fafb' }}>No hay datos relacionados</div>
+                  )}
+                  {comisionValorReady && (
+                    <button type="button" className="btn-press" style={styles.nuevoDetalleBtn} onClick={openDetalleInversionista}>
+                      <Plus size={14} /> Nuevo
+                    </button>
+                  )}
+                  {comisionError?.field === 'detalles' && <span style={styles.errorText}>{comisionError.message}</span>}
+                </div>
+              )}
+
+              {esCategoriaInversionistas && (
+                <div style={styles.formGroup}>
+                  <label style={styles.remisionLabel}>Valor de Comisiones o Bonificaciones</label>
+                  <span style={styles.readOnlyField}>{formatMoney(totalInversionistaDetalles)}</span>
+                </div>
+              )}
+
+              <div style={styles.formGroup}>
+                <label style={styles.remisionLabel}>Observaciones</label>
+                {!comisionValorCompleto ? (
+                  <span style={{ ...styles.readOnlyField, color: '#9ca3af' }}>Completa el valor de la comisión</span>
+                ) : (
+                  <textarea
+                    ref={autoResizeTextarea}
+                    style={{ ...styles.input, minHeight: '44px', resize: 'none' as const, overflow: 'hidden' as const }}
+                    value={comisionForm.observaciones}
+                    onChange={e => { setComisionForm({ ...comisionForm, observaciones: e.target.value }); autoResizeTextarea(e.target); }}
+                  />
+                )}
+              </div>
+
+              {comisionValorCompleto && (
+                <div style={styles.formGroup}>
+                  <label style={styles.remisionLabel}>¿Agregar IVA?</label>
+                  <div style={styles.pickBtnGrid}>
+                    <button
+                      type="button"
+                      style={{ ...styles.pickBtn, ...(!comisionForm.agregarIva ? styles.pickBtnActive : {}) }}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={e => { setComisionForm({ ...comisionForm, agregarIva: false }); e.currentTarget.blur(); }}
+                    >
+                      No
+                    </button>
+                    <button
+                      type="button"
+                      style={{ ...styles.pickBtn, ...(comisionForm.agregarIva ? styles.pickBtnActive : {}) }}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={e => { setComisionForm({ ...comisionForm, agregarIva: true }); e.currentTarget.blur(); setTimeout(() => cargarPorcentajeRef.current?.focus(), 0); }}
+                    >
+                      Sí
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {comisionValorCompleto && comisionForm.agregarIva && (
+                <div style={styles.formGroup} id="comision-field-cargarPorcentaje">
+                  <label style={styles.remisionLabel}>Porcentaje de IVA a Cargar *</label>
+                  <div style={{ position: 'relative' as const }}>
+                    <input
+                      ref={cargarPorcentajeRef}
+                      type="number"
+                      min={1}
+                      max={100}
+                      step="0.01"
+                      style={{ ...styles.input, paddingRight: '2.5rem', ...(comisionError?.field === 'cargarPorcentaje' ? styles.inputError : {}) }}
+                      placeholder="16.00"
+                      value={comisionForm.cargarPorcentaje}
+                      onKeyDown={e => { if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault(); }}
+                      onChange={e => {
+                        const cleaned = e.target.value.replace(/[^0-9.]/g, '');
+                        const value = Number(cleaned) > 100 ? '100' : cleaned;
+                        setComisionForm({ ...comisionForm, cargarPorcentaje: value });
+                        setComisionError(null);
+                      }}
+                      onBlur={e => {
+                        if (!e.target.value) return;
+                        const num = Number(e.target.value);
+                        if (Number.isNaN(num) || num < 1) setComisionForm(f => ({ ...f, cargarPorcentaje: '1' }));
+                      }}
+                    />
+                    <span style={styles.percentSuffix}>%</span>
+                  </div>
+                  {comisionError?.field === 'cargarPorcentaje' && <span style={styles.errorText}>{comisionError.message}</span>}
+                </div>
+              )}
+
+              {comisionValorCompleto && (
+                <div style={styles.formGroup}>
+                  <label style={styles.remisionLabel}>¿Quieres Desglosar?</label>
+                  <div style={styles.pickBtnGrid}>
+                    <button
+                      type="button"
+                      style={{ ...styles.pickBtn, ...(!comisionForm.quieresDesglosar ? styles.pickBtnActive : {}) }}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={e => { setComisionForm({ ...comisionForm, quieresDesglosar: false }); e.currentTarget.blur(); }}
+                    >
+                      No
+                    </button>
+                    <button
+                      type="button"
+                      style={{ ...styles.pickBtn, ...(comisionForm.quieresDesglosar ? styles.pickBtnActive : {}) }}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={e => { setComisionForm({ ...comisionForm, quieresDesglosar: true }); e.currentTarget.blur(); }}
+                    >
+                      Sí
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {comisionValorCompleto && (
                 <div style={styles.formGroup} id="comision-field-seleccioneTipo">
-                  <label style={styles.label}>Seleccione Tipo</label>
-                  <div style={styles.horaGrid}>
+                  <label style={styles.remisionLabel}>Seleccione Tipo *</label>
+                  <div style={styles.pickBtnGrid}>
                     {SELECCIONE_TIPO_COMISION.map(t => (
                       <button
                         key={t}
                         type="button"
-                        style={{ ...styles.sedeBtn, ...(comisionForm.seleccioneTipo === t ? styles.sedeBtnActive : {}), ...(comisionError?.field === 'seleccioneTipo' ? styles.inputError : {}) }}
+                        style={{ ...styles.pickBtn, ...(comisionForm.seleccioneTipo === t ? styles.pickBtnActive : {}), ...(comisionError?.field === 'seleccioneTipo' ? styles.inputError : {}) }}
                         onMouseDown={e => e.preventDefault()}
                         onClick={e => { setComisionForm({ ...comisionForm, seleccioneTipo: comisionForm.seleccioneTipo === t ? '' : t }); setComisionError(null); e.currentTarget.blur(); }}
                       >
-                        {comisionForm.seleccioneTipo === t ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
                         {t}
                       </button>
                     ))}
@@ -3120,29 +3422,29 @@ export default function ProgramacionDetailPage() {
               {comisionForm.quieresDesglosar && (
                 <>
                   <div style={styles.formGroup}>
-                    <label style={styles.label}>Sub Total</label>
+                    <label style={styles.remisionLabel}>Sub Total</label>
                     <span style={styles.readOnlyField}>{formatMoney(comisionSubTotal)}</span>
                   </div>
 
                   <div style={styles.formGroup}>
-                    <label style={styles.label}>IVA</label>
+                    <label style={styles.remisionLabel}>IVA</label>
                     <span style={styles.readOnlyField}>{formatMoney(comisionIva)}</span>
                   </div>
 
                   <div style={styles.formGroup}>
-                    <label style={styles.label}>Retención IVA</label>
+                    <label style={styles.remisionLabel}>Retención IVA</label>
                     <span style={styles.readOnlyField}>{formatMoney(comisionRetIva)}</span>
                   </div>
 
                   <div style={styles.formGroup}>
-                    <label style={styles.label}>Retención ISR</label>
+                    <label style={styles.remisionLabel}>Retención ISR</label>
                     <span style={styles.readOnlyField}>{formatMoney(comisionRetIsr)}</span>
                   </div>
                 </>
               )}
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>Total Factura</label>
+                <label style={styles.remisionLabel}>Total Factura</label>
                 <span style={styles.readOnlyField}>{formatMoney(comisionTotalFactura)}</span>
               </div>
             </div>
@@ -3228,6 +3530,187 @@ export default function ProgramacionDetailPage() {
               >
                 {createComisionMutation.isPending ? 'Guardando...' : 'Sí, agregar'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDetalleInversionista && (
+        <div className="modal-overlay-anim" style={styles.modalOverlay}>
+          <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
+            <div style={styles.editModalHeader}>
+              <button style={styles.closeBtn} onClick={() => setShowDetalleInversionista(false)}><X size={18} /></button>
+              <h2 style={styles.modalTitle}>Detalle de Inversionista</h2>
+            </div>
+            <div style={styles.editModalBody}>
+              <div style={styles.formGroup}>
+                <label style={styles.remisionLabel}>No Programación</label>
+                <span style={styles.readOnlyPill}><Lock size={12} /> {id}</span>
+              </div>
+
+              <div style={styles.formGroup} id="detalle-field-remisionId">
+                <label style={styles.remisionLabel}>No Remisión *</label>
+                {(() => {
+                  const remisionSel = remisiones.find(r => r.id === detalleForm.remisionId);
+                  return remisionSel ? (
+                    <div style={{ ...styles.readOnlyField, backgroundColor: '#f3faec', border: '1px solid #dbe8c2', color: '#3f6510', fontWeight: 600, position: 'relative' as const, textAlign: 'center' as const }}>
+                      {remisionSel.numRemision || remisionSel.id}
+                      <X
+                        size={14}
+                        style={{ cursor: 'pointer', position: 'absolute' as const, right: '0.75rem', top: '50%', transform: 'translateY(-50%)' }}
+                        onClick={() => { setDetalleForm({ ...detalleForm, remisionId: '', productoId: '' }); setDetalleRemisionFocused(true); }}
+                      />
+                    </div>
+                  ) : (
+                    <div style={{ position: 'relative' as const }}>
+                      <button
+                        ref={detalleRemisionBtnRef}
+                        type="button"
+                        style={{ ...styles.input, ...(detalleError?.field === 'remisionId' ? styles.inputError : {}), display: 'flex', alignItems: 'center', justifyContent: 'space-between', textAlign: 'left' as const, color: '#9ca3af', backgroundColor: '#fff', cursor: 'pointer' }}
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={() => setDetalleRemisionFocused(f => !f)}
+                        onBlur={() => setTimeout(() => setDetalleRemisionFocused(false), 150)}
+                        onKeyDown={e => {
+                          if (e.key === 'ArrowDown' && remisiones.length > 0) {
+                            e.preventDefault();
+                            setDetalleRemisionFocused(true);
+                            setDetalleRemisionHighlighted(i => Math.min(i + 1, remisiones.length - 1));
+                          } else if (e.key === 'ArrowUp' && remisiones.length > 0) {
+                            e.preventDefault();
+                            setDetalleRemisionFocused(true);
+                            setDetalleRemisionHighlighted(i => Math.max(i - 1, 0));
+                          } else if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const r = remisiones[detalleRemisionHighlighted];
+                            if (r) selectDetalleRemision(r.id);
+                          }
+                        }}
+                      >
+                        Seleccionar remisión
+                        <ChevronDown size={16} style={{ color: '#9ca3af', flexShrink: 0, transform: detalleRemisionFocused ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s ease' }} />
+                      </button>
+                      {detalleRemisionFocused && (
+                        <div style={styles.medicoDropdown}>
+                          {remisiones.length === 0 ? (
+                            <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
+                          ) : (
+                            remisiones.map((r, i) => (
+                              <div
+                                key={r.id}
+                                style={{ ...styles.medicoDropdownItem, ...(hoveredDetalleRemisionId === r.id || i === detalleRemisionHighlighted ? styles.medicoDropdownItemHighlighted : {}) }}
+                                onMouseDown={e => e.preventDefault()}
+                                onMouseEnter={() => { setHoveredDetalleRemisionId(r.id); setDetalleRemisionHighlighted(i); }}
+                                onMouseLeave={() => setHoveredDetalleRemisionId(null)}
+                                onClick={() => selectDetalleRemision(r.id)}
+                              >
+                                {r.numRemision || r.id}
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+                {detalleError?.field === 'remisionId' && <span style={styles.errorText}>{detalleError.message}</span>}
+              </div>
+
+              <div style={styles.formGroup} id="detalle-field-productoId">
+                <label style={styles.remisionLabel}>Producto *</label>
+                {(() => {
+                  const grupoSel = consumoGrupos.find(g => g.remisionId === detalleForm.remisionId);
+                  const productosDisponibles = Array.from(
+                    new Map((grupoSel?.items ?? []).filter(it => it.productoId).map(it => [it.productoId as string, it])).values(),
+                  );
+                  const productoSel = productosDisponibles.find(it => it.productoId === detalleForm.productoId);
+                  if (!detalleForm.remisionId) {
+                    return <span style={{ ...styles.readOnlyField, color: '#9ca3af' }}>Selecciona primero la remisión</span>;
+                  }
+                  return productoSel ? (
+                    <div style={styles.medicoTagsWrap}>
+                      <span style={styles.editMedicoTag}>
+                        {productoSel.productoNombre || productoSel.productoReferencia}
+                        <X size={12} style={{ cursor: 'pointer' }} onClick={() => { setDetalleForm({ ...detalleForm, productoId: '' }); setDetalleProductoFocused(true); }} />
+                      </span>
+                    </div>
+                  ) : (
+                    <div style={{ position: 'relative' as const }}>
+                      <button
+                        ref={detalleProductoBtnRef}
+                        type="button"
+                        style={{ ...styles.input, ...(detalleError?.field === 'productoId' ? styles.inputError : {}), display: 'flex', alignItems: 'center', justifyContent: 'space-between', textAlign: 'left' as const, color: '#9ca3af', backgroundColor: '#fff', cursor: 'pointer' }}
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={() => setDetalleProductoFocused(f => !f)}
+                        onBlur={() => setTimeout(() => setDetalleProductoFocused(false), 150)}
+                        onKeyDown={e => {
+                          if (e.key === 'ArrowDown' && productosDisponibles.length > 0) {
+                            e.preventDefault();
+                            setDetalleProductoFocused(true);
+                            setDetalleProductoHighlighted(i => Math.min(i + 1, productosDisponibles.length - 1));
+                          } else if (e.key === 'ArrowUp' && productosDisponibles.length > 0) {
+                            e.preventDefault();
+                            setDetalleProductoFocused(true);
+                            setDetalleProductoHighlighted(i => Math.max(i - 1, 0));
+                          } else if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const p = productosDisponibles[detalleProductoHighlighted];
+                            if (p) selectDetalleProducto(p.productoId as string);
+                          }
+                        }}
+                      >
+                        Seleccionar producto
+                        <ChevronDown size={16} style={{ color: '#9ca3af', flexShrink: 0, transform: detalleProductoFocused ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s ease' }} />
+                      </button>
+                      {detalleProductoFocused && (
+                        <div style={styles.medicoDropdown}>
+                          {productosDisponibles.length === 0 ? (
+                            <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
+                          ) : (
+                            productosDisponibles.map((it, i) => (
+                              <div
+                                key={it.productoId}
+                                style={{ ...styles.medicoDropdownItem, ...(hoveredDetalleProductoId === it.productoId || i === detalleProductoHighlighted ? styles.medicoDropdownItemHighlighted : {}) }}
+                                onMouseDown={e => e.preventDefault()}
+                                onMouseEnter={() => { setHoveredDetalleProductoId(it.productoId); setDetalleProductoHighlighted(i); }}
+                                onMouseLeave={() => setHoveredDetalleProductoId(null)}
+                                onClick={() => selectDetalleProducto(it.productoId as string)}
+                              >
+                                {it.productoNombre || it.productoReferencia}
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+                {detalleError?.field === 'productoId' && <span style={styles.errorText}>{detalleError.message}</span>}
+              </div>
+
+              <div style={styles.formGroup} id="detalle-field-valor">
+                <label style={styles.remisionLabel}>Valor *</label>
+                <div style={styles.stepperWrap}>
+                  <input
+                    ref={detalleValorInputRef}
+                    type="number"
+                    step="0.01"
+                    style={{ ...styles.input, paddingRight: '5rem', ...(detalleError?.field === 'valor' ? styles.inputError : {}) }}
+                    placeholder="$ 0.00"
+                    value={detalleForm.valor}
+                    onKeyDown={e => { if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault(); }}
+                    onChange={e => { setDetalleForm({ ...detalleForm, valor: e.target.value.replace(/[^0-9.]/g, '') }); setDetalleError(null); }}
+                  />
+                  <div style={styles.stepperBtns}>
+                    <button type="button" style={styles.stepperBtn} onClick={() => setDetalleForm({ ...detalleForm, valor: String((Number(detalleForm.valor) || 0) - 100) })}>−</button>
+                    <button type="button" style={styles.stepperBtn} onClick={() => setDetalleForm({ ...detalleForm, valor: String((Number(detalleForm.valor) || 0) + 100) })}>+</button>
+                  </div>
+                </div>
+                {detalleError?.field === 'valor' && <span style={styles.errorText}>{detalleError.message}</span>}
+              </div>
+            </div>
+            <div style={styles.editModalFooter}>
+              <button style={styles.cancelBtn} onClick={() => setShowDetalleInversionista(false)}>Cancelar</button>
+              <button style={styles.saveBtn} onClick={handleGuardarDetalleInversionista}>Agregar</button>
             </div>
           </div>
         </div>
@@ -3330,8 +3813,20 @@ export default function ProgramacionDetailPage() {
                   error={requisicionError?.field === 'fecha'}
                   value={requisicionFecha}
                   onChange={fecha => { setRequisicionFecha(fecha); setRequisicionError(null); }}
+                  style={requisicionFecha ? { backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510', fontWeight: 600 } : undefined}
+                  labelStyle={requisicionFecha ? { flex: 1, textAlign: 'center' as const } : undefined}
                 />
                 {requisicionError?.field === 'fecha' && <span style={styles.errorText}>{requisicionError.message}</span>}
+              </div>
+
+              <div style={styles.formGroup} id="requisicion-field-contacto">
+                <label style={styles.label}>Contacto</label>
+                {/* Preseleccionado al hospital de la programación — no se puede cambiar desde acá,
+                    igual que en Editar Requisición. El backend ya usa este mismo Tercero como
+                    contacto de la requisición al crearla (ver createRequisicion). */}
+                <span style={styles.readOnlyField}>
+                  {programacion?.hospital?.tercero?.nombreCompleto ?? programacion?.hospital?.nombre ?? '-'}
+                </span>
               </div>
 
               <div style={styles.formGroup} id="requisicion-field-cubrimiento">
@@ -3345,12 +3840,22 @@ export default function ProgramacionDetailPage() {
                       onMouseDown={e => e.preventDefault()}
                       onClick={e => {
                         setRequisicionCubrimiento(c);
-                        // La tarifa "base" de un cubrimiento tiene el mismo id que el cubrimiento
-                        // (findTarifasByCubrimiento la incluye a ella misma junto con las
-                        // sub-tarifas más específicas) — se preselecciona como default razonable,
-                        // pero el usuario sigue pudiendo cambiarla desde el select de abajo, que
-                        // ya solo lista las tarifas válidas para este cubrimiento.
-                        setRequisicionTarifaId(c.id);
+                        // Si se vuelve a Hospitales y el contacto tiene tarifa propia, se restaura
+                        // esa (no la tarifa "base" genérica del cubrimiento) — así ir y volver
+                        // entre cubrimientos no pierde la tarifa personalizada del hospital.
+                        const esHospitales = c.nombre?.trim().toUpperCase() === 'HOSPITALES';
+                        if (esHospitales && requisicionContactoTarifa?.tarifaId) {
+                          setRequisicionTarifaId(requisicionContactoTarifa.tarifaId);
+                          setRequisicionTarifaLabel(requisicionContactoTarifa.tarifaNombre ?? '');
+                        } else {
+                          // La tarifa "base" de un cubrimiento tiene el mismo id que el cubrimiento
+                          // (findTarifasByCubrimiento la incluye a ella misma junto con las
+                          // sub-tarifas más específicas) — se preselecciona como default razonable,
+                          // pero el usuario sigue pudiendo cambiarla desde el select de abajo, que
+                          // ya solo lista las tarifas válidas para este cubrimiento.
+                          setRequisicionTarifaId(c.id);
+                          setRequisicionTarifaLabel(c.nombre);
+                        }
                         setRequisicionError(null);
                         e.currentTarget.blur();
                       }}
@@ -3376,8 +3881,8 @@ export default function ProgramacionDetailPage() {
                         muestra el nombre del cubrimiento en vez del id crudo (ej. "1A1") — la
                         tarifa raíz de un cubrimiento siempre se llama igual que él, así que no se
                         alcanza a notar el cambio cuando la lista sí carga. */}
-                    {tarifasCubrimiento.find(t => t.id === requisicionTarifaId)?.nombre ?? requisicionCubrimiento?.nombre ?? requisicionTarifaId}
-                    <X size={12} style={{ cursor: 'pointer' }} onClick={() => { setRequisicionTarifaId(''); setRequisicionTarifaSearch(''); }} />
+                    {requisicionTarifaLabel || tarifasCubrimiento.find(t => t.id === requisicionTarifaId)?.nombre || requisicionCubrimiento?.nombre || requisicionTarifaId}
+                    <X size={12} style={{ cursor: 'pointer' }} onClick={() => { setRequisicionTarifaId(''); setRequisicionTarifaLabel(''); setRequisicionTarifaSearch(''); }} />
                   </span>
                 ) : !requisicionCubrimiento ? (
                   <span style={{ ...styles.input, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>
@@ -3406,6 +3911,7 @@ export default function ProgramacionDetailPage() {
                               onMouseDown={e => e.preventDefault()}
                               onClick={() => {
                                 setRequisicionTarifaId(t.id);
+                                setRequisicionTarifaLabel(t.nombre);
                                 setRequisicionTarifaSearch('');
                                 setRequisicionError(null);
                               }}
@@ -3533,20 +4039,49 @@ export default function ProgramacionDetailPage() {
                   <div style={{ position: 'relative' as const }}>
                     <input
                       style={{ ...styles.input, ...(insumoSubError?.field === 'producto' ? styles.inputError : {}) }}
-                      placeholder="Buscar producto..."
+                      placeholder="Buscar por clave, nombre o sistema..."
                       value={insumoProductoSearch}
                       onChange={e => { setInsumoProductoSearch(e.target.value); setInsumoSubError(null); }}
                       onFocus={() => setInsumoProductoFocused(true)}
                       onBlur={() => setTimeout(() => setInsumoProductoFocused(false), 150)}
+                      onKeyDown={e => {
+                        if (!insumoProductoFocused || insumoProductoResults.length === 0) return;
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          setInsumoProductoHighlighted(i => Math.min(i + 1, insumoProductoResults.length - 1));
+                        } else if (e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          setInsumoProductoHighlighted(i => Math.max(i - 1, 0));
+                        } else if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const p = insumoProductoResults[insumoProductoHighlighted];
+                          if (p) handleSelectInsumoProducto(p);
+                        }
+                      }}
                     />
                     {insumoProductoFocused && (
                       <div style={styles.medicoDropdown}>
                         {insumoProductoResults.length === 0 ? (
                           <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
                         ) : (
-                          insumoProductoResults.map(p => (
-                            <div key={p.id} className="dropdown-item-hover" style={styles.medicoDropdownItem} onMouseDown={e => e.preventDefault()} onClick={() => handleSelectInsumoProducto(p)}>
-                              <Plus size={14} /> {formatProductoLabel(p)}
+                          insumoProductoResults.map((p, i) => (
+                            <div
+                              key={p.id}
+                              ref={el => { insumoProductoOptionRefs.current[i] = el; }}
+                              className="dropdown-item-hover"
+                              style={{ ...styles.medicoDropdownItem, justifyContent: 'space-between' as const, ...(i === insumoProductoHighlighted ? { backgroundColor: '#e9f2d8' } : {}) }}
+                              onMouseDown={e => e.preventDefault()}
+                              onMouseEnter={() => setInsumoProductoHighlighted(i)}
+                              onClick={() => handleSelectInsumoProducto(p)}
+                            >
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
+                                <Plus size={14} style={{ flexShrink: 0 }} />
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+                                  {p.referencia && <span style={styles.productoClaveTag}>{p.referencia}</span>}
+                                  {p.referencia ? ' / ' : ''}{p.nombre}
+                                </span>
+                              </span>
+                              {p.sistema && <span style={styles.productoSistemaTag}>{p.sistema}</span>}
                             </div>
                           ))
                         )}
@@ -3609,7 +4144,7 @@ export default function ProgramacionDetailPage() {
               <div style={styles.formGroup}>
                 <label style={styles.label}>Tarifa Asociada</label>
                 <span style={styles.readOnlyField}>
-                  {tarifasCubrimiento.find(t => t.id === requisicionTarifaId)?.nombre ?? requisicionCubrimiento?.nombre ?? '-'}
+                  {requisicionTarifaLabel || tarifasCubrimiento.find(t => t.id === requisicionTarifaId)?.nombre || requisicionCubrimiento?.nombre || '-'}
                 </span>
               </div>
 
@@ -3627,311 +4162,45 @@ export default function ProgramacionDetailPage() {
         </div>
       )}
 
-      {showRemisionModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay}>
-          <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
-            <div style={styles.editModalHeader}>
-              <button style={styles.closeBtn} onClick={() => setShowRemisionModal(false)}>
-                <X size={18} />
-              </button>
-              <h2 style={styles.modalTitle}>Agregar remisión</h2>
-            </div>
-
-            <div style={styles.editModalBody}>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Programación *</label>
-                <span style={styles.readOnlyPill}>{programacion?.id}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Sede</label>
-                <span style={styles.readOnlyField}>{programacion?.sede?.nombre ?? '-'}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Usuario *</label>
-                <span style={styles.medicoTag}>{usuarioActual?.nombreCompleto ?? '-'}</span>
-              </div>
-
-              <div style={styles.formGroup} id="remision-field-paciente">
-                <label style={styles.label}>Paciente *</label>
-                <input
-                  style={{ ...styles.input, ...(remisionError?.field === 'paciente' ? styles.inputError : {}) }}
-                  value={remisionForm.paciente}
-                  onChange={e => { setRemisionForm({ ...remisionForm, paciente: e.target.value }); setRemisionError(null); }}
-                />
-                {remisionError?.field === 'paciente' && <span style={styles.errorText}>{remisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="remision-field-cubrimiento">
-                <label style={styles.label}>Cubrimiento *</label>
-                <div style={styles.sedeGrid}>
-                  {cubrimientosRemision.map(c => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      style={{ ...styles.sedeBtn, ...(remisionCubrimiento?.id === c.id ? styles.sedeBtnActive : {}), ...(remisionError?.field === 'cubrimiento' ? styles.inputError : {}) }}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={e => {
-                        setRemisionCubrimiento(c);
-                        setRemisionTarifaId(c.id);
-                        setRemisionResponsable(c.id === HOSPITALES_CUBRIMIENTO_ID && programacion?.hospital?.tercero ? programacion.hospital.tercero : null);
-                        setRemisionError(null);
-                        e.currentTarget.blur();
-                      }}
-                    >
-                      {remisionCubrimiento?.id === c.id ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
-                      {c.nombre}
-                    </button>
-                  ))}
-                </div>
-                {remisionError?.field === 'cubrimiento' && <span style={styles.errorText}>{remisionError.message}</span>}
-              </div>
-
-              {remisionCubrimiento && (
-                <div style={styles.formGroup} id="remision-field-empresa">
-                  <label style={styles.label}>Empresa *</label>
-                  {remisionEmpresa && empresaSugerida?.id === remisionEmpresa.id ? (
-                    <span style={styles.readOnlyField}>{remisionEmpresa.nombreCompleto}</span>
-                  ) : (
-                    <div style={styles.sedeGrid}>
-                      {empresaResults.map(t => (
-                        <button
-                          key={t.id}
-                          type="button"
-                          style={{ ...styles.sedeBtn, ...(remisionEmpresa?.id === t.id ? styles.sedeBtnActive : {}), ...(remisionError?.field === 'empresa' ? styles.inputError : {}) }}
-                          onMouseDown={e => e.preventDefault()}
-                          onClick={e => { setRemisionEmpresa(t); setRemisionError(null); e.currentTarget.blur(); }}
-                        >
-                          {remisionEmpresa?.id === t.id ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
-                          {t.nombreCompleto}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {remisionError?.field === 'empresa' && <span style={styles.errorText}>{remisionError.message}</span>}
-                </div>
-              )}
-
-              <div style={styles.formGroup} id="remision-field-responsable">
-                <label style={styles.label}>Responsable Económico *</label>
-                {remisionResponsable && (
-                  <div style={styles.medicoTagsWrap}>
-                    <span style={styles.medicoTag}>
-                      {remisionResponsable.nombreCompleto}
-                      <X size={12} style={{ cursor: 'pointer' }} onClick={() => setRemisionResponsable(null)} />
-                    </span>
-                  </div>
-                )}
-                {!remisionResponsable && (
-                  <div style={{ position: 'relative' as const }}>
-                    <input
-                      style={{ ...styles.input, ...(remisionError?.field === 'responsable' ? styles.inputError : {}) }}
-                      placeholder="Buscar tercero..."
-                      value={responsableSearch}
-                      onChange={e => { setResponsableSearch(e.target.value); setRemisionError(null); }}
-                    />
-                    {responsableSearch.trim() && (
-                      <div style={styles.medicoDropdown}>
-                        {responsableResults.length === 0 ? (
-                          <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
-                        ) : (
-                          responsableResults.map(t => (
-                            <div
-                              key={t.id}
-                              style={styles.medicoDropdownItem}
-                              onClick={() => { setRemisionResponsable(t); setResponsableSearch(''); setRemisionError(null); }}
-                            >
-                              <Plus size={14} /> {t.nombreCompleto}
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {remisionError?.field === 'responsable' && <span style={styles.errorText}>{remisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="remision-field-tarifa">
-                <label style={styles.label}>Tarifa *</label>
-                {remisionCubrimiento ? (
-                  <span style={styles.readOnlyPill}>{remisionCubrimiento.nombre}</span>
-                ) : (
-                  <span style={styles.readOnlyField}>Selecciona primero un cubrimiento</span>
-                )}
-                {remisionError?.field === 'tarifa' && <span style={styles.errorText}>{remisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="remision-field-anestesiologo">
-                <label style={styles.label}>Anestesiólogo *</label>
-                <input
-                  style={{ ...styles.input, ...(remisionError?.field === 'anestesiologo' ? styles.inputError : {}) }}
-                  value={remisionForm.anestesiologo}
-                  onChange={e => { setRemisionForm({ ...remisionForm, anestesiologo: e.target.value }); setRemisionError(null); }}
-                />
-                {remisionError?.field === 'anestesiologo' && <span style={styles.errorText}>{remisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="remision-field-cirugiaRealizada">
-                <label style={styles.label}>Cirugía Realizada *</label>
-                <input
-                  style={{ ...styles.input, ...(remisionError?.field === 'cirugiaRealizada' ? styles.inputError : {}) }}
-                  value={remisionForm.cirugiaRealizada}
-                  onChange={e => { setRemisionForm({ ...remisionForm, cirugiaRealizada: e.target.value }); setRemisionError(null); }}
-                />
-                {remisionError?.field === 'cirugiaRealizada' && <span style={styles.errorText}>{remisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Impuestos</label>
-                <div style={styles.sedeGrid}>
-                  <button
-                    type="button"
-                    style={{ ...styles.sedeBtn, ...(!remisionForm.impuestos ? styles.sedeBtnActive : {}) }}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => { setRemisionForm({ ...remisionForm, impuestos: '' }); e.currentTarget.blur(); }}
-                  >
-                    {!remisionForm.impuestos ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
-                    Ninguno
-                  </button>
-                  {IMPUESTOS_REMISION.map(t => (
-                    <button
-                      key={t}
-                      type="button"
-                      style={{ ...styles.sedeBtn, ...(remisionForm.impuestos === t ? styles.sedeBtnActive : {}) }}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={e => { setRemisionForm({ ...remisionForm, impuestos: t }); e.currentTarget.blur(); }}
-                    >
-                      {remisionForm.impuestos === t ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>¿Tiene Dcto?</label>
-                <div style={styles.horaGrid}>
-                  <button
-                    type="button"
-                    style={{ ...styles.sedeBtn, ...(!remisionForm.tieneDcto ? styles.sedeBtnActive : {}) }}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => { setRemisionForm({ ...remisionForm, tieneDcto: false }); e.currentTarget.blur(); }}
-                  >
-                    No
-                  </button>
-                  <button
-                    type="button"
-                    style={{ ...styles.sedeBtn, ...(remisionForm.tieneDcto ? styles.sedeBtnActive : {}) }}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => { setRemisionForm({ ...remisionForm, tieneDcto: true }); e.currentTarget.blur(); }}
-                  >
-                    Sí
-                  </button>
-                </div>
-              </div>
-
-              {remisionForm.tieneDcto && (
-                <>
-                  <div style={styles.formGroup}>
-                    <label style={styles.label}>% Dto</label>
-                    <div style={styles.stepperWrap}>
-                      <input
-                        type="number"
-                        step="0.01"
-                        style={{ ...styles.input, paddingRight: '5rem' }}
-                        placeholder="0.00"
-                        value={remisionForm.porcentajeDcto}
-                        onChange={e => setRemisionForm({ ...remisionForm, porcentajeDcto: e.target.value })}
-                      />
-                      <div style={styles.stepperBtns}>
-                        <button type="button" style={styles.stepperBtn} onClick={() => setRemisionForm({ ...remisionForm, porcentajeDcto: String((Number(remisionForm.porcentajeDcto) || 0) - 1) })}>−</button>
-                        <button type="button" style={styles.stepperBtn} onClick={() => setRemisionForm({ ...remisionForm, porcentajeDcto: String((Number(remisionForm.porcentajeDcto) || 0) + 1) })}>+</button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={styles.formGroup}>
-                    <label style={styles.label}>V/R Dcto</label>
-                    <span style={styles.readOnlyField}>{formatMoney(remisionDescuentos)}</span>
-                  </div>
-
-                  <div style={styles.formGroup}>
-                    <label style={styles.label}>V/R Dcto $</label>
-                    <div style={styles.stepperWrap}>
-                      <input
-                        type="number"
-                        step="0.01"
-                        style={{ ...styles.input, paddingRight: '5rem' }}
-                        placeholder="0.00"
-                        value={remisionForm.vrDctoPesos}
-                        onChange={e => setRemisionForm({ ...remisionForm, vrDctoPesos: e.target.value })}
-                      />
-                      <div style={styles.stepperBtns}>
-                        <button type="button" style={styles.stepperBtn} onClick={() => setRemisionForm({ ...remisionForm, vrDctoPesos: String((Number(remisionForm.vrDctoPesos) || 0) - 100) })}>−</button>
-                        <button type="button" style={styles.stepperBtn} onClick={() => setRemisionForm({ ...remisionForm, vrDctoPesos: String((Number(remisionForm.vrDctoPesos) || 0) + 100) })}>+</button>
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              <div style={styles.formGroup} id="remision-field-firma">
-                <label style={styles.label}>Firma *</label>
-                <SignaturePad
-                  value={remisionForm.firma}
-                  onChange={dataUrl => { setRemisionForm({ ...remisionForm, firma: dataUrl }); setRemisionError(null); }}
-                  error={remisionError?.field === 'firma'}
-                />
-                {remisionError?.field === 'firma' && <span style={styles.errorText}>{remisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Subtotal</label>
-                <span style={styles.readOnlyField}>{formatMoney(remisionSubtotal)}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Total Antes Imp.</label>
-                <span style={styles.readOnlyField}>{formatMoney(remisionTotalAntesImp)}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>IVA</label>
-                <span style={styles.readOnlyField}>{formatMoney(remisionIva)}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Retención</label>
-                <span style={styles.readOnlyField}>{formatMoney(remisionRetencion)}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Total Pagar</label>
-                <span style={styles.readOnlyField}>{formatMoney(remisionTotalPagar)}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Saldo</label>
-                <span style={styles.readOnlyField}>{formatMoney(remisionSaldo)}</span>
-              </div>
-            </div>
-
-            <div style={styles.editModalFooter}>
-              <button style={styles.cancelBtn} onClick={() => setShowRemisionModal(false)}>Cancelar</button>
-              <button
-                style={styles.saveBtn}
-                onClick={handleGuardarRemision}
-                disabled={createRemisionMutation.isPending}
-              >
-                {createRemisionMutation.isPending ? 'Guardando...' : 'Guardar'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {showRemisionModal && programacion && (
+        <AgregarRemisionModal
+          programacion={programacion}
+          programacionId={id!}
+          onClose={() => setShowRemisionModal(false)}
+          onCreated={createdId => { setRemisionCreatedId(createdId); setShowRemisionSuccess(true); }}
+        />
       )}
 
+      {validarConsumoId && (
+        <ValidarConsumoModal
+          consumoId={validarConsumoId}
+          programacionId={id!}
+          onClose={() => setValidarConsumoId(null)}
+          onValidated={() => { setValidarConsumoId(null); setShowValidarConsumoSuccess(true); }}
+        />
+      )}
+
+      {selectedConsumoId && (
+        <ConsumoDetalleModal
+          id={selectedConsumoId}
+          valConsumoId={selectedValConsumoId ?? undefined}
+          onClose={() => { setSelectedConsumoId(null); setSelectedValConsumoId(null); }}
+        />
+      )}
+
+      {selectedRequisicionId && (
+        <RequisicionDetalleModal
+          id={selectedRequisicionId}
+          onClose={() => setSelectedRequisicionId(null)}
+        />
+      )}
+
+      {selectedComisionId && (
+        <ComisionDetalleModal
+          id={selectedComisionId}
+          onClose={() => setSelectedComisionId(null)}
+        />
+      )}
       {showWhatsappConfirm && (
         <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
@@ -3939,7 +4208,7 @@ export default function ProgramacionDetailPage() {
               <h2 style={styles.modalTitle}>Enviar por WhatsApp</h2>
             </div>
             <div style={styles.confirmBody}>
-              <p style={styles.confirmIntro}>¿Quieres adjuntar una cotización en PDF, o solo enviar la información general de la programación?</p>
+              <p style={styles.confirmIntro}>¿Quieres agregar una cotización en PDF, o solo enviar la información general de la programación?</p>
             </div>
             <div style={styles.editModalFooter}>
               <button className="btn-press" style={styles.cancelBtn} onClick={handleWhatsappSinPdf}>
@@ -3960,15 +4229,65 @@ export default function ProgramacionDetailPage() {
               <h2 style={styles.modalTitle}>Enviar por Gmail</h2>
             </div>
             <div style={styles.confirmBody}>
-              <p style={styles.confirmIntro}>¿Quieres adjuntar una cotización en PDF, o solo enviar la información general de la programación?</p>
+              <p style={styles.confirmIntro}>¿Quieres agregar una cotización en PDF, o solo enviar la información general de la programación?</p>
             </div>
             <div style={styles.editModalFooter}>
               <button className="btn-press" style={styles.cancelBtn} onClick={handleGmailSinArchivo}>
                 Solo información
               </button>
-              <button className="btn-press" style={styles.saveBtn} onClick={handleGmailConArchivo}>
-                Adjuntar cotización
+              <button className="btn-press header-btn-primary" style={styles.btnPillPrimary} onClick={handleGmailConArchivo}>
+                Agregar cotización
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showGmailCotizacionPicker && (
+        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => { setShowGmailCotizacionPicker(false); setGmailCotizacionSearch(''); }}>
+          <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
+            <div style={styles.editModalHeader}>
+              <h2 style={styles.modalTitle}>Elegir cotización</h2>
+              <X size={18} style={{ cursor: 'pointer' }} onClick={() => { setShowGmailCotizacionPicker(false); setGmailCotizacionSearch(''); }} />
+            </div>
+            <div style={styles.confirmBody}>
+              {gmailMedicoNombres.length === 0 ? (
+                <p style={styles.confirmIntro}>Esta programación no tiene médico asignado, así que no hay cotizaciones para buscar.</p>
+              ) : (
+                <>
+                  <input
+                    autoFocus
+                    style={styles.input}
+                    placeholder="Buscar por folio, cirugía, fecha o total..."
+                    value={gmailCotizacionSearch}
+                    onChange={e => setGmailCotizacionSearch(e.target.value)}
+                  />
+                  <div style={{ maxHeight: '280px', overflowY: 'auto' as const, marginTop: '0.75rem', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+                    {gmailCotizacionResultsFiltradas.length === 0 ? (
+                      <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin cotizaciones que coincidan</div>
+                    ) : (
+                      gmailCotizacionResultsFiltradas.map(c => (
+                        <div
+                          key={c.id}
+                          className="dropdown-item-hover"
+                          style={styles.medicoDropdownItem}
+                          onClick={() => handleSeleccionarCotizacionGmail(c.id)}
+                        >
+                          <span style={{ flexShrink: 0, color: '#4d7a13', fontWeight: 700 }}>{c.numCotizacion ?? c.id}</span>
+                          <span style={{ flexShrink: 0, color: '#9ca3af', fontWeight: 400 }}>·</span>
+                          <span style={{ flexShrink: 0, fontWeight: 400 }}>{formatDate(c.fecha)}</span>
+                          <span style={{ flexShrink: 0, color: '#9ca3af', fontWeight: 400 }}>·</span>
+                          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, fontWeight: 400 }} title={c.cirugia || undefined}>
+                            {c.cirugia || 'Sin cirugía'}
+                          </span>
+                          <span style={{ flexShrink: 0, color: '#9ca3af', fontWeight: 400 }}>·</span>
+                          <span style={{ flexShrink: 0, fontWeight: 700 }}>{formatMoney(c.total)}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -4010,6 +4329,9 @@ export default function ProgramacionDetailPage() {
       <SuccessToast show={showEditSuccess} message="Programación editada" onClose={() => setShowEditSuccess(false)} />
       <SuccessToast show={showRemisionSuccess} message={`Remisión ${remisionCreatedId ?? ''} creada`} onClose={() => setShowRemisionSuccess(false)} />
       <SuccessToast show={showRequisicionSuccess} message={`Requisición ${requisicionCreatedId ?? ''} creada`} onClose={() => setShowRequisicionSuccess(false)} />
+      <SuccessToast show={showValidarConsumoSuccess} message="Consumo validado" onClose={() => setShowValidarConsumoSuccess(false)} />
+      <SuccessToast show={showDetalleInversionistaSuccess} message="Detalle de inversionista agregado" onClose={() => setShowDetalleInversionistaSuccess(false)} />
+      <SuccessToast show={showComisionSuccess} message="Comisión agregada" onClose={() => setShowComisionSuccess(false)} />
       {pendingWhatsappShare && (
         <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
@@ -4071,24 +4393,16 @@ export default function ProgramacionDetailPage() {
       <SuccessToast show={showGmailSuccess} message="PDF enviado al chat de Google" onClose={() => setShowGmailSuccess(false)} />
       <SuccessToast show={!!whatsappCopiedMessage} message={whatsappCopiedMessage ?? ''} onClose={() => setWhatsappCopiedMessage(null)} />
       {selectedCotizacionId && (
-        <Suspense
-          fallback={
-            <div className="modal-overlay-anim" style={styles.modalOverlay}>
-              <Loader className="spinner" size={32} color="#fff" />
-            </div>
-          }
-        >
-          <CotizacionDetalleModal
-            id={selectedCotizacionId}
-            onClose={() => setSelectedCotizacionId(null)}
-            onNotify={msg => setCotizacionToastMsg(msg)}
-            onDeleted={() => {
-              setSelectedCotizacionId(null);
-              queryClient.invalidateQueries({ queryKey: ['programacion', id] });
-              setCotizacionToastMsg('Cotización eliminada');
-            }}
-          />
-        </Suspense>
+        <CotizacionDetalleModal
+          id={selectedCotizacionId}
+          onClose={() => setSelectedCotizacionId(null)}
+          onNotify={msg => setCotizacionToastMsg(msg)}
+          onDeleted={() => {
+            setSelectedCotizacionId(null);
+            queryClient.invalidateQueries({ queryKey: ['programacion', id] });
+            setCotizacionToastMsg('Cotización eliminada');
+          }}
+        />
       )}
       <SuccessToast show={!!cotizacionToastMsg} message={cotizacionToastMsg ?? ''} onClose={() => setCotizacionToastMsg(null)} />
       {gmailError && (
@@ -4182,7 +4496,7 @@ export default function ProgramacionDetailPage() {
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
+export const styles: Record<string, React.CSSProperties> = {
   container: { padding: '0.05rem 1.5rem 1.5rem', maxWidth: '1400px', margin: '0 auto' },
   headerCard: { backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', padding: '1.25rem 1.5rem 0', marginBottom: '2rem' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1.5rem' },
@@ -4254,6 +4568,9 @@ const styles: Record<string, React.CSSProperties> = {
   infoCard: { backgroundColor: '#fff', borderRadius: '12px', padding: '1.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', minWidth: 0 },
   infoRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 0', borderBottom: '1px solid #f3f4f6' },
   label: { fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em' },
+  // Mismo tono que formLabel en Cotizaciones (#374151, más oscuro que el label gris genérico de
+  // arriba) — se usa solo en Agregar Remisión, para que se sienta del mismo sistema de diseño.
+  remisionLabel: { fontSize: '0.75rem', fontWeight: 700, color: '#374151', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
   value: { fontSize: '0.875rem', fontWeight: 600, color: '#333' },
   financialCard: { backgroundColor: '#fff', borderRadius: '12px', padding: '1.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' },
   cardTitle: { fontSize: '1rem', fontWeight: 700, color: '#333', marginBottom: '1rem' },
@@ -4286,7 +4603,7 @@ const styles: Record<string, React.CSSProperties> = {
   scrollBody: { height: '135px', overflowY: 'auto' as const, overflowX: 'hidden' as const, backgroundColor: '#f9fafb' },
   tecnicoScrollBody: { height: '135px', overflowY: 'auto' as const, overflowX: 'hidden' as const, backgroundColor: '#f9fafb' },
   remRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem 1.25rem', backgroundColor: '#fff' },
-  remGridRow: { display: 'grid', gridTemplateColumns: '1fr 110px 130px', alignItems: 'center', padding: '0.75rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff', minWidth: '420px' },
+  remGridRow: { display: 'grid', gridTemplateColumns: '1fr 110px 130px 110px', alignItems: 'center', padding: '0.45rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff', minWidth: '420px' },
   remRowBorder: { borderTop: '1px solid #f3f4f6' },
   remRowLeft: { display: 'flex', alignItems: 'center', gap: '0.5rem' },
   remRowCode: { fontSize: '0.875rem', fontWeight: 700, color: '#374151' },
@@ -4306,22 +4623,14 @@ const styles: Record<string, React.CSSProperties> = {
   consumoRow: { display: 'grid', gridTemplateColumns: '120px 55px 110px 1fr 130px 110px', alignItems: 'center', padding: '0.6rem 1.25rem', backgroundColor: '#fff', minWidth: '700px' },
   consumoGrid: { display: 'grid', gridTemplateColumns: '120px 55px 110px 1fr 130px 110px', padding: '0 1.25rem', backgroundColor: '#fff', minWidth: '700px' },
   consumoGrupoDivider: { borderBottom: '2px solid #e5e7eb' },
-  validacionGrupoDivider: { borderTop: '2px solid #e5e7eb' },
-  consumoRemisionCell: { position: 'sticky' as const, top: 0, zIndex: 1, alignSelf: 'start', display: 'flex', alignItems: 'center', padding: '0.6rem 0', backgroundColor: '#fff', boxShadow: '0 1px 0 #f3f4f6', fontSize: '0.8rem', fontWeight: 700, color: '#374151', fontFamily: 'monospace' },
   consumoSubtotalRow: { gridColumn: '1 / -1', display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 -1.25rem', padding: '0.5rem 1.25rem', backgroundColor: '#f9fafb', borderTop: '1px dashed #e5e7eb' },
   consumoSubtotalLabel: { fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
   consumoSubtotalValue: { fontSize: '0.85rem', fontWeight: 700, color: '#6b8c1f' },
-  consumoCellCant: { display: 'flex', alignItems: 'center', padding: '0.6rem 0 0.6rem 0.75rem', color: '#666', fontSize: '0.85rem' },
-  consumoCellReferencia: { display: 'flex', alignItems: 'center', minWidth: 0, padding: '0.6rem 0 0.6rem 0.75rem', overflow: 'hidden', textOverflow: 'ellipsis' as const, whiteSpace: 'nowrap' as const, fontSize: '0.78rem', fontWeight: 700, color: '#6b8c1f', fontFamily: 'monospace' },
-  validacionRow: { display: 'grid', gridTemplateColumns: '120px 70px 100px 100px 100px 1fr 1fr', alignItems: 'center', padding: '0.6rem 1.25rem', backgroundColor: '#fff', minWidth: '850px' },
-  validacionGrid: { display: 'grid', gridTemplateColumns: '120px 70px 100px 100px 100px 1fr 1fr', padding: '0 1.25rem', backgroundColor: '#fff', minWidth: '850px' },
-  consumoNombreCell: { display: 'flex', alignItems: 'center', minWidth: 0, padding: '0.6rem 0 0.6rem 0.75rem', overflow: 'hidden', textOverflow: 'ellipsis' as const, whiteSpace: 'nowrap' as const, fontSize: '0.85rem', color: '#374151' },
-  consumoNombreCellUltima: { display: 'flex', alignItems: 'center', minWidth: 0, padding: '0.6rem 1.25rem 0.6rem 0.75rem', margin: '0 -1.25rem 0 0', overflow: 'hidden', textOverflow: 'ellipsis' as const, whiteSpace: 'nowrap' as const, fontSize: '0.85rem', color: '#374151' },
   comisionRow: { display: 'grid', gridTemplateColumns: '140px 1fr 130px', alignItems: 'center', padding: '0.6rem 1.25rem', backgroundColor: '#fff', minWidth: '480px' },
-  comisionGrid: { display: 'grid', gridTemplateColumns: '140px 1fr 130px', padding: '0 1.25rem', backgroundColor: '#fff', minWidth: '480px' },
-  comisionCategoriaCell: { position: 'sticky' as const, top: 0, zIndex: 1, alignSelf: 'start', display: 'flex', alignItems: 'center', padding: '0.6rem 0', backgroundColor: '#fff', boxShadow: '0 1px 0 #f3f4f6', fontSize: '0.85rem', fontWeight: 700, color: '#374151' },
-  comisionTecnicoCell: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 0 0.6rem 0.75rem', overflow: 'hidden', fontSize: '0.85rem', color: '#374151' },
-  comisionMontoCell: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0.6rem 1.25rem 0.6rem 0', margin: '0 -1.25rem 0 0', fontSize: '0.85rem', fontWeight: 600, color: '#333' },
+  comisionGrid: { display: 'grid', gridTemplateColumns: '140px 1fr 130px', padding: '0 1.25rem', backgroundColor: '#fff', minWidth: '480px', backgroundImage: 'linear-gradient(to right, #eeeee6, #eeeee6)', backgroundRepeat: 'no-repeat' as const, backgroundSize: '1px 100%', backgroundPosition: 'calc(1.25rem + 140px) 0' },
+  comisionCategoriaCell: { alignSelf: 'start', display: 'flex', alignItems: 'center', padding: '0.6rem 0.75rem 0.6rem 0', backgroundColor: '#fff', fontSize: '0.85rem', fontWeight: 700, color: '#374151' },
+  comisionTecnicoCell: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0 0.4rem 0.75rem', overflow: 'hidden', fontSize: '0.85rem', color: '#374151' },
+  comisionMontoCell: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0.4rem 1.25rem 0.4rem 0', margin: '0 -1.25rem 0 0', fontSize: '0.85rem', fontWeight: 600, color: '#333' },
   comisionScrollBody: { minHeight: '110px', maxHeight: '220px', overflowY: 'auto' as const, overflowX: 'hidden' as const, backgroundColor: '#f9fafb' },
   // 190px porque el id se debe ver completo sin truncar (a diferencia de Usuario, que sí trunca
   // con "...") — el formato actual es "REQ_0000123_0000001" (~19 caracteres), no un hash largo.
@@ -4347,7 +4656,7 @@ const styles: Record<string, React.CSSProperties> = {
   consumoProducto: { display: 'flex', flexDirection: 'column' as const, justifyContent: 'center', minWidth: 0, gap: '0.1rem', overflow: 'hidden', padding: '0.6rem 0 0.6rem 0.75rem' },
   consumoNombre: { fontSize: '0.85rem', color: '#374151', lineHeight: '1.3', overflow: 'hidden', textOverflow: 'ellipsis' as const, whiteSpace: 'nowrap' as const },
   consumoCellHover: { backgroundColor: '#f3f4f6', cursor: 'pointer' },
-  consumosScrollBody: { height: '320px', overflowY: 'auto' as const, backgroundColor: '#f9fafb' },
+  comisionRowHover: { backgroundColor: '#f3faec', cursor: 'pointer' },
   consumoTotalRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem 1.25rem', backgroundColor: '#f3f4f6', borderTop: '2px solid #e5e7eb' },
   consumoTotalLabel: { fontSize: '0.8rem', fontWeight: 700, color: '#374151', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
   consumoTotalValue: { fontSize: '1rem', fontWeight: 700, color: '#333' },
@@ -4379,7 +4688,7 @@ const styles: Record<string, React.CSSProperties> = {
   editModalBody: { padding: '1.5rem', display: 'flex', flexDirection: 'column' as const, gap: '1.25rem' },
   formGroup: { display: 'flex', flexDirection: 'column' as const, gap: '0.5rem' },
   input: { padding: '0.75rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', fontSize: '0.875rem', outline: 'none', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' as const },
-  inputError: { borderColor: '#dc2626' },
+  inputError: { border: '1.5px solid #dc2626' },
   errorText: { fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 },
   insumoDraftRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', padding: '0.6rem 0.85rem', backgroundColor: '#f9fafb', border: '1px solid #f3f4f6', borderRadius: '8px' },
   insumoDraftText: { fontSize: '0.8rem', fontWeight: 600, color: '#374151' },
@@ -4388,6 +4697,7 @@ const styles: Record<string, React.CSSProperties> = {
   cancelBtn: { padding: '0.5rem 1.5rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: '0.875rem', color: '#333' },
   deleteConfirmBtn: { padding: '0.5rem 1.5rem', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.875rem' },
   saveBtn: { padding: '0.5rem 1.5rem', backgroundColor: '#6b8c1f', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.875rem' },
+  nuevoDetalleBtn: { width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', padding: '0.65rem 1rem', backgroundColor: '#e9f2d8', color: '#3f6510', border: '1px solid #dbe8c2', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.84375rem' },
   horaGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' },
   sedeGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' },
   // Mismo estilo que Cubrimiento en Cotizaciones (pickBtnGrid/pickBtn/pickBtnActive): fila que
@@ -4415,10 +4725,27 @@ const styles: Record<string, React.CSSProperties> = {
   consumoPanelTitle: { fontSize: '0.75rem', fontWeight: 700, color: '#555', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
   medicoDropdown: { position: 'absolute' as const, top: 'calc(100% + 0.35rem)', left: 0, right: 0, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', maxHeight: '220px', overflowY: 'auto' as const, zIndex: 20 },
   medicoDropdownItem: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#333', cursor: 'pointer' },
+  medicoDropdownItemHighlighted: { backgroundColor: '#e9f2d8' },
+  productoClaveTag: { color: '#3f6510' },
+  productoSistemaTag: { fontSize: '0.7rem', fontWeight: 600, color: '#9ca3af', whiteSpace: 'nowrap' as const, flexShrink: 0 },
+  pillBtnPrimary: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.1rem', border: '1px solid #dbe8c2', borderRadius: '12px', color: '#3f6510', fontWeight: 600, fontSize: '0.84375rem', cursor: 'pointer', whiteSpace: 'nowrap' as const, backgroundColor: '#f4f8ea' },
+  pickBtnDisabled: { backgroundColor: '#f4f4ee', border: '1px solid #eeeee6', color: '#c4c4bc', cursor: 'not-allowed' as const },
+  consumoSectionHeader: { display: 'flex', alignItems: 'center', gap: '0.6rem' },
+  consumoCountBadge: { backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '0.72rem', fontWeight: 700, minWidth: '1.4rem', height: '1.4rem', padding: '0 0.4rem', borderRadius: '999px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
+  emptySection: { textAlign: 'center' as const, padding: '1.5rem', color: '#9ca3af', fontSize: '0.85rem', backgroundColor: '#f9fafb', borderRadius: '10px' },
+  tarifaHint: { padding: '0.65rem 0.9rem', backgroundColor: '#f4f4ee', borderRadius: '10px', fontSize: '0.82rem', color: '#6b6b60', lineHeight: 1.4, marginBottom: '0.9rem' },
+  consumosTableWrap: { overflow: 'auto' as const, maxHeight: '320px', borderRadius: '10px', border: '1px solid #eeeee6' },
+  consumosTable: { width: '100%', borderCollapse: 'collapse' as const, fontSize: '0.72rem' },
+  consumosTh: { padding: '0.3rem 0.6rem', textAlign: 'left' as const, fontWeight: 700, color: '#9ca3af', fontSize: '0.6rem', textTransform: 'uppercase' as const, letterSpacing: '0.03em', backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' as const, position: 'sticky' as const, top: 0 },
+  consumosTd: { padding: '0.25rem 0.6rem', borderBottom: '1px solid #e5e7eb', color: '#33342a', whiteSpace: 'nowrap' as const },
+  consumosTdTruncate: { overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, maxWidth: '130px' },
+  rowDeleteBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', border: 'none', backgroundColor: 'transparent', borderRadius: '6px', cursor: 'pointer', color: '#dc2626' },
   addComisionBtn: { display: 'flex', alignItems: 'center', gap: '0.35rem', marginLeft: 'auto', padding: '0.4rem 0.85rem', border: 'none', borderRadius: '8px', backgroundColor: '#6b8c1f', color: '#fff', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' },
   addComisionBtnBelow: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', width: '100%', marginTop: '0.75rem', padding: '0.6rem', border: '1px dashed #c9dba3', borderRadius: '10px', backgroundColor: '#f9fbf6', color: '#4f6b17', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' },
   readOnlyPill: { display: 'inline-flex', alignSelf: 'flex-start' as const, alignItems: 'center', gap: '0.4rem', padding: '0.4rem 0.85rem', borderRadius: '999px', border: '1px solid #d9e8c2', backgroundColor: '#f3faec', fontSize: '0.85rem', fontWeight: 700, color: '#4f6b17' },
   readOnlyField: { padding: '0.75rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', fontSize: '0.875rem', color: '#6b7280' },
+  consumoClamp: { display: '-webkit-box' as const, WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden' as const },
+  verMasBtn: { alignSelf: 'flex-start' as const, background: 'transparent', border: 'none', padding: 0, color: '#4d7a13', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '0.2rem' },
   stepperWrap: { position: 'relative' as const },
   stepperBtns: { position: 'absolute' as const, right: '0.5rem', top: '50%', transform: 'translateY(-50%)', display: 'flex', gap: '0.35rem' },
   stepperBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1.75rem', height: '1.75rem', border: '1px solid #e5e7eb', borderRadius: '6px', backgroundColor: '#fff', color: '#374151', fontWeight: 700, fontSize: '1rem', cursor: 'pointer', lineHeight: 1 },

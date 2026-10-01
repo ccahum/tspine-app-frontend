@@ -11,13 +11,20 @@ export interface TecnicoOption {
   nombreCompleto: string;
 }
 
+export interface ComisionDetalleItemPayload {
+  remisionId: string;
+  productoId: string;
+  valor: number;
+}
+
 export interface CreateComisionPayload {
   programacionId: string;
   categoria: string;
   tipo?: string;
   tecnicoId?: string;
   remisionId?: string;
-  vrComision: number;
+  vrComision?: number;
+  detalles?: ComisionDetalleItemPayload[];
   observaciones?: string;
   agregarIva?: boolean;
   cargarPorcentaje?: number;
@@ -40,6 +47,7 @@ export interface RemisionItem {
   creadoEn: string | null;
   tarifa: { nombre: string } | null;
   subtotal: number;
+  total: number;
 }
 
 export interface RemisionListItem {
@@ -103,6 +111,7 @@ export interface ConsumoItem {
   productoNombre: string | null;
   valorUnitario: number;
   valor: number;
+  validado: boolean;
 }
 
 export interface ConsumoGrupo {
@@ -144,6 +153,7 @@ export interface ConsumoDetalle {
   id: string;
   remisionId: string | null;
   numRemision: string | null;
+  programacionId: string | null;
   numProgram: string | null;
   fechaQx: string | null;
   doctor: string | null;
@@ -231,6 +241,7 @@ export interface DetTecnicoDetalle {
   id: string;
   nombreContacto: string | null;
   numProgram: string | null;
+  numRemision: string | null;
   programacionId: string | null;
   fechaQx: string | null;
   doctor: string | null;
@@ -249,12 +260,14 @@ export interface DetTecnicoDetalle {
 
 export interface ValidacionConsumoItem {
   id: string;
+  detConsumoId: string | null;
   cantRemisionada: number;
   cantRealValidada: number;
   referenciaRemisionada: string | null;
   nombreRemisionado: string | null;
   referenciaValidada: string | null;
   nombreValidado: string | null;
+  valor: number;
 }
 
 export interface ValidacionConsumoGrupo {
@@ -263,10 +276,19 @@ export interface ValidacionConsumoGrupo {
   items: ValidacionConsumoItem[];
 }
 
+export interface ComisionDetalleLinea {
+  comisionId: string;
+  tipo: string | null;
+  remisionLabel: string | null;
+  productoLabel: string | null;
+  valor: number;
+}
+
 export interface ComisionItem {
   id: string;
   tecnico: string | null;
   monto: number;
+  detalle: ComisionDetalleLinea[];
 }
 
 export interface ComisionGrupo {
@@ -322,6 +344,9 @@ export interface ProductoOption {
   aseguradora: number | null;
   sistema: string | null;
   categoria: string | null;
+  /** Precio específico de la tarifa pasada a searchProductos (ListaPrecio) — null si esa tarifa
+   *  no tiene un precio cargado para este producto, en cuyo caso se cae a las 4 columnas de arriba. */
+  precioSugerido: number | null;
 }
 
 export interface CreateDetRequisicionPayload {
@@ -342,6 +367,13 @@ export interface CreateRequisicionPayload {
 }
 
 export const IMPUESTOS_REMISION = ['I.V.A.', 'Retención', 'Todos'] as const;
+
+export interface CreateDetConsumoPayload {
+  productoId: string;
+  cantidad: number;
+  valorUnitario: number;
+  observaciones?: string;
+}
 
 export interface CreateRemisionPayload {
   programacionId: string;
@@ -374,6 +406,12 @@ export interface UpdateRemisionPayload {
   vrDctoPesos?: number;
 }
 
+export interface UpdateDetConsumoPayload {
+  cantidad?: number;
+  valorUnitario?: number;
+  observaciones?: string;
+}
+
 export interface TecnicoSugeridoItem {
   id: string;
   tecnicoId: string;
@@ -396,7 +434,16 @@ export interface CreateValConsumoLotePayload {
   valConsumoId: string;
   sedeId: string;
   almacenId: string;
+  loteId: string;
   cantidad: number;
+}
+
+export interface CreateValConsumoPayload {
+  sedeConsumoId: string;
+  prodRealConsumido: boolean;
+  productoId?: string;
+  prodDeTspine: boolean;
+  observacionesAlm: string;
 }
 
 export interface RequisicionItem {
@@ -410,6 +457,7 @@ export interface RequisicionItem {
   existeProgramacion: boolean | null;
   cubrimientoId: string | null;
   tarifaId: string | null;
+  contactoId: string | null;
   usuario: string | null;
   cubrimiento: string | null;
   tarifa: string | null;
@@ -575,7 +623,7 @@ export interface RemisionDetail {
     consumo: string | null;
     observaciones: string | null;
     sede: { nombre: string } | null;
-    hospital: { nombre: string; ciudadCat: { nombre: string } | null } | null;
+    hospital: { nombre: string; ciudadCat: { nombre: string } | null; tercero: { id: string; nombreCompleto: string } | null } | null;
     medicos: { medico: { nombreCompleto: string } }[];
     consumoNoValidado: boolean;
   } | null;
@@ -605,14 +653,11 @@ export const remisionesService = {
   createComision: (payload: CreateComisionPayload) =>
     api.post('/operacion/remisiones/comisiones', payload).then(r => r.data),
 
-  searchTecnicos: (search?: string): Promise<TecnicoOption[]> =>
-    api.get('/operacion/remisiones/comisiones-tecnicos', { params: { search } }).then(r => r.data),
+  searchTecnicos: (search?: string, clasificacion?: string): Promise<TecnicoOption[]> =>
+    api.get('/operacion/remisiones/comisiones-tecnicos', { params: { search, clasificacion } }).then(r => r.data),
 
   searchEmpresas: (search?: string): Promise<TecnicoOption[]> =>
     api.get('/operacion/remisiones/empresas', { params: { search } }).then(r => r.data),
-
-  getEmpresaSugerida: (cubrimientoId: string, sedeId: string): Promise<TecnicoOption | null> =>
-    api.get('/operacion/remisiones/empresa-sugerida', { params: { cubrimientoId, sedeId } }).then(r => r.data),
 
   searchTecnicosComisionistas: (search?: string): Promise<TecnicoOption[]> =>
     api.get('/operacion/remisiones/tecnicos-comisionistas', { params: { search } }).then(r => r.data),
@@ -647,6 +692,9 @@ export const remisionesService = {
   createValConsumoLote: (payload: CreateValConsumoLotePayload): Promise<{ id: string }> =>
     api.post('/operacion/remisiones/producto-validado/lotes', payload).then(r => r.data),
 
+  createValConsumo: (consumoId: string, payload: CreateValConsumoPayload): Promise<{ id: string }> =>
+    api.post(`/operacion/remisiones/consumos/${consumoId}/validar`, payload).then(r => r.data),
+
   getDetTecnicoDetalle: (id: string): Promise<DetTecnicoDetalle | null> =>
     api.get(`/operacion/remisiones/comisiones/${id}`).then(r => r.data),
 
@@ -662,6 +710,9 @@ export const remisionesService = {
   getRequisicionDetalle: (id: string): Promise<RequisicionItem | null> =>
     api.get(`/operacion/remisiones/requisiciones/${id}`).then(r => r.data),
 
+  getTerceroTarifa: (terceroId: string): Promise<{ tarifaId: string | null; tarifaNombre: string | null }> =>
+    api.get(`/operacion/remisiones/tercero-tarifa/${terceroId}`).then(r => r.data),
+
   updateRequisicion: (id: string, payload: UpdateRequisicionPayload): Promise<RequisicionItem> =>
     api.patch(`/operacion/remisiones/requisiciones/${id}`, payload).then(r => r.data),
 
@@ -673,6 +724,27 @@ export const remisionesService = {
 
   createRemision: (payload: CreateRemisionPayload): Promise<{ id: string }> =>
     api.post('/operacion/remisiones', payload).then(r => r.data),
+
+  createDetConsumosBulk: (remisionId: string, items: CreateDetConsumoPayload[]) =>
+    api.post(`/operacion/remisiones/${remisionId}/consumos/bulk`, { items }).then(r => r.data),
+
+  createRemTecnicosBulk: (remisionId: string, tecnicoIds: string[]) =>
+    api.post(`/operacion/remisiones/${remisionId}/tecnicos/bulk`, { tecnicoIds }).then(r => r.data),
+
+  addRemTecnico: (remisionId: string, tecnicoId: string): Promise<{ id: string }> =>
+    api.post(`/operacion/remisiones/${remisionId}/tecnicos`, { tecnicoId }).then(r => r.data),
+
+  removeRemTecnico: (relId: string): Promise<void> =>
+    api.delete(`/operacion/remisiones/tecnicos/${relId}`).then(() => undefined),
+
+  addDetConsumo: (remisionId: string, payload: CreateDetConsumoPayload): Promise<{ id: string }> =>
+    api.post(`/operacion/remisiones/${remisionId}/consumos`, payload).then(r => r.data),
+
+  updateDetConsumo: (consumoId: string, payload: UpdateDetConsumoPayload) =>
+    api.patch(`/operacion/remisiones/consumos/${consumoId}`, payload).then(r => r.data),
+
+  removeDetConsumo: (consumoId: string): Promise<void> =>
+    api.delete(`/operacion/remisiones/consumos/${consumoId}`).then(() => undefined),
 
   findCubrimientos: (): Promise<CubrimientoOption[]> =>
     api.get('/operacion/remisiones/cubrimientos').then(r => r.data),
@@ -689,11 +761,14 @@ export const remisionesService = {
   updateDetRequisicion: (id: string, payload: UpdateDetRequisicionPayload) =>
     api.patch(`/operacion/remisiones/detalles-requisicion/${id}`, payload).then(r => r.data),
 
+  deleteDetRequisicion: (id: string) =>
+    api.delete(`/operacion/remisiones/detalles-requisicion/${id}`).then(r => r.data),
+
   searchLotes: (search?: string): Promise<LoteOption[]> =>
     api.get('/operacion/remisiones/lotes', { params: { search } }).then(r => r.data),
 
-  searchProductos: (search?: string, tarifaId?: string): Promise<ProductoOption[]> =>
-    api.get('/operacion/remisiones/productos', { params: { search, tarifaId } }).then(r => r.data),
+  searchProductos: (search?: string, tarifaId?: string, soloCotizables?: boolean): Promise<ProductoOption[]> =>
+    api.get('/operacion/remisiones/productos', { params: { search, tarifaId, soloCotizables } }).then(r => r.data),
 
   findNotasCreditoByProgramacion: (programacionId: string): Promise<NotaCreditoItem[]> =>
     api.get('/operacion/remisiones/notas-credito', { params: { programacionId } }).then(r => r.data),

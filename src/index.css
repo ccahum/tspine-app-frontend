@@ -188,12 +188,11 @@ body {
   background-color: #f4f4ee;
 }
 
-/* Los botones tipo "pill" (Cubrimiento, Sede, etc.) quitan el outline nativo por estética — sin
-   esto, moverse entre ellos con teclado (flechas, Enter, Tab) no deja ninguna señal visual de
-   cuál está enfocado. */
+/* Los botones tipo "pill" (Cubrimiento, Empresa, Impuestos, etc.) no deben mostrar ningún contorno
+   de foco al navegar con teclado (flechas/Enter) — el estado seleccionado ya se ve por el color de
+   fondo activo (pickBtnActive), así que el contorno del navegador sobra y se pidió quitarlo. */
 .pick-btn-focus:focus-visible {
-  outline: 2px solid #3f6510;
-  outline-offset: 2px;
+  outline: none !important;
 }
 
 /* Días/meses/años del DatePicker y presets del filtro de fecha (Hoy, Esta semana, etc.) — al

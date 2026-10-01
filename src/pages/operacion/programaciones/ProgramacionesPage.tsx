@@ -16,12 +16,45 @@ import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { programacionesService } from '../../../services/programaciones.service';
 import type { ProgramacionQuery, ProgramacionItem, SedeOption, HospitalOption, MedicoOption, CotizacionOption, ProgramacionSortField } from '../../../services/programaciones.service';
 import { cotizacionesService } from '../../../services/cotizaciones.service';
-import type { ProductoOption } from '../../../services/cotizaciones.service';
+import type { ProductoOption, PaqueteOption } from '../../../services/cotizaciones.service';
 import { remisionesService } from '../../../services/remisiones.service';
 import type { TecnicoOption } from '../../../services/remisiones.service';
-import { getTodayMexico, getNowMexicoTime } from '../../../lib/date.utils';
+import { getTodayMexico } from '../../../lib/date.utils';
 
 type FlagKey = 'sinRemision' | 'consumoNoValidado' | 'sinComision' | 'cerrada';
+
+const NIVEL_OPTIONS = ['Nivel 1', 'Nivel 2', 'Nivel 3', 'Nivel 4', 'Nivel 5', 'Nivel 6'];
+
+// Consumo es texto libre (nombres separados por coma, sin ids) — así que evitar duplicados es por
+// comparación de texto (sin mayúsculas/espacios), no por id. Se usa desde las 3 formas de agregar
+// consumos (Importar de la cotización, Agregar del catálogo, Importar por paquete) para que
+// ninguna pueda repetir un nombre que ya esté, venga de donde venga. También cuenta cuántos se
+// saltaron por venir repetidos, para poder avisarle al usuario en vez de descartarlos en silencio.
+const agregarConsumosSinRepetir = (actual: string, nuevos: string[]): { texto: string; duplicados: number } => {
+  const existentes = actual.split(',').map(s => s.trim()).filter(Boolean);
+  const existentesNorm = new Set(existentes.map(s => s.toLowerCase()));
+  const aAgregar: string[] = [];
+  let duplicados = 0;
+  for (const nombre of nuevos) {
+    const norm = nombre.trim().toLowerCase();
+    if (!norm) continue;
+    if (existentesNorm.has(norm)) { duplicados++; continue; }
+    existentesNorm.add(norm);
+    aAgregar.push(nombre.trim());
+  }
+  return { texto: [...existentes, ...aAgregar].join(', '), duplicados };
+};
+
+// Sede por defecto al abrir Nueva Programación: la del perfil del usuario logueado (puede
+// cambiarse a otra sede desde el formulario). Mismo criterio que ya usa Cotizaciones.
+const getUsuarioActualSedeId = (): string => {
+  try {
+    const usuario = JSON.parse(localStorage.getItem('usuario') ?? '{}');
+    return usuario?.sedeId ?? '';
+  } catch {
+    return '';
+  }
+};
 
 const formatDate = (dateString: string | null): string => {
   if (!dateString) return '-';
@@ -257,7 +290,7 @@ export default function ProgramacionesPage() {
     };
   }, [showNewModal]);
 
-  const [newForm, setNewForm] = useState({ fechaQx: '', horaQx: '', sedeId: '', hospitalId: '' });
+  const [newForm, setNewForm] = useState({ fechaQx: '', horaQx: '', sedeId: getUsuarioActualSedeId(), hospitalId: '' });
   const newHoraDropdownRef = useRef<OptionDropdownHandle>(null);
   const newMinutoDropdownRef = useRef<OptionDropdownHandle>(null);
   const [newObservaciones, setNewObservaciones] = useState('');
@@ -268,10 +301,33 @@ export default function ProgramacionesPage() {
   const [importandoConsumos, setImportandoConsumos] = useState(false);
   const consumoPanelRef = useRef<HTMLDivElement>(null);
 
+  // Importar consumos desde un Paquete (+ Nivel) — mismo catálogo de paquetes/detalle que usa
+  // Cotizaciones, pero acá solo interesan los nombres (Consumo es texto libre, sin cantidades ni
+  // precios), así que se pide sin tarifaId.
+  const [newPaquetePanelOpen, setNewPaquetePanelOpen] = useState(false);
+  const [newPaqueteId, setNewPaqueteId] = useState('');
+  const [newPaqueteLabel, setNewPaqueteLabel] = useState('');
+  const [newPaqueteSearch, setNewPaqueteSearch] = useState('');
+  const [newPaqueteFocused, setNewPaqueteFocused] = useState(false);
+  const [newPaqueteNivel, setNewPaqueteNivel] = useState(NIVEL_OPTIONS[0]);
+  const [newPaqueteNivelOpen, setNewPaqueteNivelOpen] = useState(false);
+  const [importandoPaquete, setImportandoPaquete] = useState(false);
+  const paquetePanelRef = useRef<HTMLDivElement>(null);
+  const nivelDropdownRef = useRef<HTMLDivElement>(null);
+
   // Al cerrar el panel (clic afuera, X, o volver a pulsar el botón) se limpia la búsqueda a medias.
   const closeConsumoPanel = () => {
     setNewConsumoPanelOpen(false);
     setNewConsumoProductoSearch('');
+  };
+
+  const closePaquetePanel = () => {
+    setNewPaquetePanelOpen(false);
+    setNewPaqueteId('');
+    setNewPaqueteLabel('');
+    setNewPaqueteSearch('');
+    setNewPaqueteNivel(NIVEL_OPTIONS[0]);
+    setNewPaqueteNivelOpen(false);
   };
 
   // Cierra el panel "Agregar del catálogo" al hacer clic afuera (mismo patrón que DatePicker).
@@ -284,6 +340,55 @@ export default function ProgramacionesPage() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [newConsumoPanelOpen]);
+
+  useEffect(() => {
+    if (!newPaquetePanelOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (paquetePanelRef.current?.contains(e.target as Node)) return;
+      closePaquetePanel();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [newPaquetePanelOpen]);
+
+  useEffect(() => {
+    if (!newPaqueteNivelOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (nivelDropdownRef.current?.contains(e.target as Node)) return;
+      setNewPaqueteNivelOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [newPaqueteNivelOpen]);
+
+  const { data: paqueteOptions = [] } = useQuery<PaqueteOption[]>({
+    queryKey: ['programaciones-paquetes'],
+    queryFn: () => cotizacionesService.getPaquetes(),
+    enabled: newPaquetePanelOpen,
+  });
+  // Ya vienen todos de una (no es una búsqueda en el servidor) — se filtran en el cliente, igual
+  // que el resto de los catálogos chicos de este formulario.
+  const paqueteOptionsFiltrados = newPaqueteSearch.trim()
+    ? paqueteOptions.filter(p => p.nombre?.toLowerCase().includes(newPaqueteSearch.trim().toLowerCase()))
+    : paqueteOptions;
+
+  const handleImportarConsumosPaquete = async () => {
+    if (!newPaqueteId || !newPaqueteNivel || importandoPaquete) return;
+    setImportandoPaquete(true);
+    try {
+      const { items } = await cotizacionesService.getPaqueteConsumos(newPaqueteId, newPaqueteNivel);
+      const nombres = items.map(p => p.nombre).filter((n): n is string => !!n);
+      if (nombres.length > 0) {
+        const { texto, duplicados } = agregarConsumosSinRepetir(newConsumo, nombres);
+        setNewConsumo(texto);
+        setNewProgramacionError(null);
+        avisarDuplicados(duplicados);
+      }
+      closePaquetePanel();
+    } finally {
+      setImportandoPaquete(false);
+    }
+  };
   const [newMedicos, setNewMedicos] = useState<MedicoOption[]>([]);
   const [newMedicoSearch, setNewMedicoSearch] = useState('');
   const [newHospitalSearch, setNewHospitalSearch] = useState('');
@@ -305,6 +410,11 @@ export default function ProgramacionesPage() {
   const newTecnicoSugeridoOptionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [newProgramacionError, setNewProgramacionError] = useState<{ field: string; message: string } | null>(null);
   const [showCreateSuccess, setShowCreateSuccess] = useState(false);
+  const [consumoDuplicadoMsg, setConsumoDuplicadoMsg] = useState<string | null>(null);
+  const avisarDuplicados = (duplicados: number) => {
+    if (duplicados === 0) return;
+    setConsumoDuplicadoMsg(duplicados === 1 ? 'Ese consumo ya estaba en la lista' : `${duplicados} consumos ya estaban en la lista`);
+  };
 
   useEffect(() => {
     if (!newProgramacionError) return;
@@ -421,13 +531,7 @@ export default function ProgramacionesPage() {
   useEffect(() => { setNewTecnicoSugeridoHighlighted(0); }, [newTecnicoSugeridoResults.length, newTecnicoSugeridoSearch, newTecnicosSugeridos.length]);
   useEffect(() => { newTecnicoSugeridoOptionRefs.current[newTecnicoSugeridoHighlighted]?.scrollIntoView({ block: 'nearest' }); }, [newTecnicoSugeridoHighlighted]);
 
-  // Al crear (no al editar) no se permite elegir fecha/hora ya pasada.
   const todayMexico = getTodayMexico();
-  const isNewFechaToday = newForm.fechaQx === todayMexico;
-  const nowMexicoTime = getNowMexicoTime();
-  const minHour = isNewFechaToday ? Number(nowMexicoTime.split(':')[0]) : 0;
-  const selectedHour = newForm.horaQx.split(':')[0] ?? '';
-  const minMinute = isNewFechaToday && Number(selectedHour) === minHour ? Number(nowMexicoTime.split(':')[1]) : 0;
 
   // Bloqueo secuencial: cada campo obligatorio solo se habilita cuando el anterior ya se llenó
   // (mismo criterio que en Nueva Cotización), para guiar al usuario en el orden correcto.
@@ -572,11 +676,17 @@ export default function ProgramacionesPage() {
   });
 
   const openNewModal = () => {
-    setNewForm({ fechaQx: getTodayMexico(), horaQx: '', sedeId: '', hospitalId: '' });
+    setNewForm({ fechaQx: getTodayMexico(), horaQx: '', sedeId: getUsuarioActualSedeId(), hospitalId: '' });
     setNewObservaciones('');
     setNewConsumo('');
     setNewConsumoPanelOpen(false);
     setNewConsumoProductoSearch('');
+    setNewPaquetePanelOpen(false);
+    setNewPaqueteId('');
+    setNewPaqueteLabel('');
+    setNewPaqueteSearch('');
+    setNewPaqueteNivel(NIVEL_OPTIONS[0]);
+    setNewPaqueteNivelOpen(false);
     setNewMedicos([]);
     setNewMedicoSearch('');
     setNewHospitalSearch('');
@@ -600,8 +710,10 @@ export default function ProgramacionesPage() {
     try {
       const nombres = await programacionesService.getConsumosDeCotizaciones(newCotizaciones.map(c => c.id));
       if (nombres.length > 0) {
-        setNewConsumo(prev => (prev.trim() ? `${prev.trim()}, ${nombres.join(', ')}` : nombres.join(', ')));
+        const { texto, duplicados } = agregarConsumosSinRepetir(newConsumo, nombres);
+        setNewConsumo(texto);
         setNewProgramacionError(null);
+        avisarDuplicados(duplicados);
       }
     } finally {
       setImportandoConsumos(false);
@@ -639,11 +751,7 @@ export default function ProgramacionesPage() {
                   error={newProgramacionError?.field === 'fechaQx'}
                   value={newForm.fechaQx}
                   onChange={fechaQx => {
-                    const esHoy = fechaQx === todayMexico;
-                    const [h, m] = newForm.horaQx.split(':');
-                    const horaInvalida = esHoy && h && (Number(h) < Number(nowMexicoTime.split(':')[0])
-                      || (Number(h) === Number(nowMexicoTime.split(':')[0]) && m && Number(m) < Number(nowMexicoTime.split(':')[1])));
-                    setNewForm({ ...newForm, fechaQx, horaQx: horaInvalida ? '' : newForm.horaQx });
+                    setNewForm({ ...newForm, fechaQx });
                     setNewProgramacionError(null);
                     newHoraDropdownRef.current?.open();
                   }}
@@ -662,7 +770,7 @@ export default function ProgramacionesPage() {
                     error={newProgramacionError?.field === 'horaQx'}
                     placeholder="HH"
                     value={newForm.horaQx.split(':')[0] ?? ''}
-                    options={Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).filter(h => Number(h) >= minHour).map(h => ({ id: h, label: h }))}
+                    options={Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).map(h => ({ id: h, label: h }))}
                     onChange={h => {
                       // Tanto con clic como con Enter, Hora siempre lleva a Minuto — ya no hay un
                       // salto directo a Sede desde acá.
@@ -677,7 +785,7 @@ export default function ProgramacionesPage() {
                     error={newProgramacionError?.field === 'horaQx'}
                     placeholder="MM"
                     value={newForm.horaQx.split(':')[1] ?? ''}
-                    options={Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).filter(m => Number(m) >= minMinute).map(m => ({ id: m, label: m }))}
+                    options={Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).map(m => ({ id: m, label: m }))}
                     onChange={m => {
                       // Después de Minuto ya no hay ningún otro "mini-campo" al que abrir — sea con
                       // clic o con Enter, siempre sigue Sede, así que aquí (a diferencia de Hora) el
@@ -685,9 +793,17 @@ export default function ProgramacionesPage() {
                       setNewForm(prev => ({ ...prev, horaQx: `${prev.horaQx.split(':')[0] ?? '00'}:${m}` }));
                       setNewProgramacionError(null);
                       setTimeout(() => {
-                        const primera = sedeOptions[0];
-                        if (primera) setNewForm(prev => ({ ...prev, sedeId: primera.id }));
-                        document.querySelector<HTMLButtonElement>('#programacion-new-field-sedeId button:not([disabled])')?.focus();
+                        // Respeta la sede ya preseleccionada (la del usuario logueado) si sigue
+                        // siendo una opción válida — antes esto la pisaba siempre con la primera
+                        // sede de la lista, sin importar cuál tuviera el usuario. El foco también
+                        // tiene que caer en ESE botón, no en el primero de la lista: si no, el
+                        // manejador de Enter de este grupo (que decide la sede según cuál botón
+                        // tiene el foco) terminaba seleccionando la primera sede igual.
+                        const sedeIdPreferida = sedeOptions.some(s => s.id === newForm.sedeId) ? newForm.sedeId : (sedeOptions[0]?.id ?? '');
+                        setNewForm(prev => ({ ...prev, sedeId: sedeIdPreferida }));
+                        const idxPreferido = sedeOptions.findIndex(s => s.id === sedeIdPreferida);
+                        const botonesSede = document.querySelectorAll<HTMLButtonElement>('#programacion-new-field-sedeId button:not([disabled])');
+                        (idxPreferido >= 0 ? botonesSede[idxPreferido] : botonesSede[0])?.focus();
                       }, 0);
                     }}
                   />
@@ -1065,9 +1181,12 @@ export default function ProgramacionesPage() {
               </div>
 
               <div style={styles.formGroup} id="programacion-new-field-consumo">
-                <div style={{ display: 'flex', alignItems: isMobile ? 'flex-start' : 'center', justifyContent: 'space-between', flexDirection: isMobile ? 'column' as const : 'row' as const, gap: isMobile ? '0.5rem' : 0 }}>
+                {/* Con 3 botones de importar ya no entran bien en la misma fila que el label (se
+                    encimaban y "Consumo *" se partía en dos líneas) — se apilan siempre, en
+                    desktop y mobile por igual. */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', flexDirection: 'column' as const, gap: '0.5rem' }}>
                   <label style={styles.label}>Consumo *</label>
-                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' as const, width: isMobile ? '100%' : 'auto' }}>
+                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' as const, width: '100%' }}>
                     {newCotizaciones.length > 0 && (
                       <button
                         type="button"
@@ -1090,7 +1209,10 @@ export default function ProgramacionesPage() {
                         <Plus size={12} /> Agregar del catálogo
                       </button>
                     {newConsumoPanelOpen && (
-                      <div style={{ ...styles.consumoPanel, ...(isMobile ? { right: 'auto' as const, left: 0 } : {}) }}>
+                      <div
+                        className="dropdown-anim"
+                        style={{ ...styles.consumoPanel, transformOrigin: isMobile ? 'bottom left' : 'bottom right', ...(isMobile ? { right: 'auto' as const, left: 0 } : {}) }}
+                      >
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <span style={styles.consumoPanelTitle}>Agregar producto</span>
                           <X size={14} style={{ cursor: 'pointer', color: '#9ca3af' }} onClick={closeConsumoPanel} />
@@ -1117,10 +1239,11 @@ export default function ProgramacionesPage() {
                                     style={styles.medicoDropdownItem}
                                     onMouseDown={e => e.preventDefault()}
                                     onClick={() => {
-                                      const texto = p.nombre ?? '';
-                                      setNewConsumo(prev => (prev.trim() ? `${prev.trim()}, ${texto}` : texto));
+                                      const { texto: nuevoTexto, duplicados } = agregarConsumosSinRepetir(newConsumo, [p.nombre ?? '']);
+                                      setNewConsumo(nuevoTexto);
                                       setNewConsumoProductoSearch('');
                                       setNewProgramacionError(null);
+                                      avisarDuplicados(duplicados);
                                     }}
                                   >
                                     {p.nombre}
@@ -1132,6 +1255,107 @@ export default function ProgramacionesPage() {
                         </div>
                       </div>
                     )}
+                    </div>
+                    <div style={{ position: 'relative' as const }} ref={paquetePanelRef}>
+                      <button
+                        type="button"
+                        className="btn-press pick-btn-focus"
+                        style={{ ...styles.addFromCatalogBtn, ...(!newMedicosListo ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                        disabled={!newMedicosListo}
+                        onClick={() => (newPaquetePanelOpen ? closePaquetePanel() : setNewPaquetePanelOpen(true))}
+                      >
+                        <FileText size={12} /> Importar por paquete
+                      </button>
+                      {newPaquetePanelOpen && (
+                        <div
+                          className="dropdown-anim"
+                          style={{ ...styles.consumoPanel, transformOrigin: isMobile ? 'bottom left' : 'bottom right', ...(isMobile ? { right: 'auto' as const, left: 0 } : {}) }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={styles.consumoPanelTitle}>Importar consumos de un paquete</span>
+                            <X size={14} style={{ cursor: 'pointer', color: '#9ca3af' }} onClick={closePaquetePanel} />
+                          </div>
+                          {newPaqueteId ? (
+                            <div style={{ ...styles.medicoTagsWrap, marginTop: '0.5rem' }}>
+                              {/* medicoTag es un pill (radio 999px) pensado para nombres cortos de
+                                  una sola línea (médico/técnico) — un nombre de paquete largo se
+                                  parte en 2 líneas y ese radio se ve raro, así que acá se anula con
+                                  uno más chico y el ícono se alinea arriba en vez de al centro. */}
+                              <span style={{ ...styles.medicoTag, borderRadius: '10px', alignItems: 'flex-start' as const }}>
+                                {newPaqueteLabel}
+                                <X size={12} style={{ cursor: 'pointer', flexShrink: 0, marginTop: '0.15rem' }} onClick={() => { setNewPaqueteId(''); setNewPaqueteLabel(''); }} />
+                              </span>
+                            </div>
+                          ) : (
+                            <div style={{ position: 'relative' as const, marginTop: '0.5rem' }}>
+                              <input
+                                style={{ ...styles.input, width: '100%' }}
+                                placeholder="Buscar paquete..."
+                                value={newPaqueteSearch}
+                                onChange={e => setNewPaqueteSearch(e.target.value)}
+                                onFocus={() => setNewPaqueteFocused(true)}
+                                onBlur={() => setTimeout(() => setNewPaqueteFocused(false), 150)}
+                                autoFocus
+                              />
+                              {newPaqueteFocused && (
+                                <div style={{ ...styles.medicoDropdown, left: 0, right: 0 }}>
+                                  {paqueteOptionsFiltrados.length === 0 ? (
+                                    <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
+                                  ) : (
+                                    paqueteOptionsFiltrados.map(p => (
+                                      <div
+                                        key={p.id}
+                                        className="dropdown-item-hover"
+                                        style={styles.medicoDropdownItem}
+                                        onMouseDown={e => e.preventDefault()}
+                                        onClick={() => { setNewPaqueteId(p.id); setNewPaqueteLabel(p.nombre ?? ''); setNewPaqueteSearch(''); }}
+                                      >
+                                        {p.nombre}
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {newPaqueteId && (
+                            <div style={{ position: 'relative' as const, marginTop: '0.5rem' }} ref={nivelDropdownRef}>
+                              <button
+                                type="button"
+                                style={{ ...styles.input, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff', cursor: 'pointer' }}
+                                onClick={() => setNewPaqueteNivelOpen(o => !o)}
+                              >
+                                {newPaqueteNivel}
+                                <ChevronDown size={14} style={{ color: '#9ca3af', transform: newPaqueteNivelOpen ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s ease' }} />
+                              </button>
+                              {newPaqueteNivelOpen && (
+                                <div style={{ ...styles.medicoDropdown, left: 0, right: 0 }}>
+                                  {NIVEL_OPTIONS.map(n => (
+                                    <div
+                                      key={n}
+                                      className="dropdown-item-hover"
+                                      style={{ ...styles.medicoDropdownItem, ...(n === newPaqueteNivel ? styles.medicoDropdownItemHighlighted : {}) }}
+                                      onMouseDown={e => e.preventDefault()}
+                                      onClick={() => { setNewPaqueteNivel(n); setNewPaqueteNivelOpen(false); }}
+                                    >
+                                      {n}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            className="btn-press pick-btn-focus"
+                            style={{ ...styles.addFromCatalogBtn, width: '100%', justifyContent: 'center' as const, marginTop: '0.6rem', ...((!newPaqueteId || importandoPaquete) ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                            disabled={!newPaqueteId || importandoPaquete}
+                            onClick={handleImportarConsumosPaquete}
+                          >
+                            {importandoPaquete ? 'Importando...' : 'Importar'}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1170,6 +1394,13 @@ export default function ProgramacionesPage() {
         </div>
       )}
       <SuccessToast show={showCreateSuccess} message="Programación creada" onClose={() => setShowCreateSuccess(false)} />
+      <SuccessToast
+        show={!!consumoDuplicadoMsg}
+        message={consumoDuplicadoMsg ?? ''}
+        onClose={() => setConsumoDuplicadoMsg(null)}
+        color="#b45309"
+        icon={<AlertCircle size={22} />}
+      />
       <div
         style={{
           ...styles.pageWrapper,

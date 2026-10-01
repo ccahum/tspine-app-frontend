@@ -1,4 +1,4 @@
-import { useRef, useLayoutEffect, useState } from 'react';
+import { useRef, useLayoutEffect, useEffect, useState } from 'react';
 
 interface SignaturePadProps {
   value: string | null;
@@ -25,13 +25,14 @@ export default function SignaturePad({ value, onChange, error }: SignaturePadPro
   // de píxeles (canvas.width/height) es fijo — si no coinciden, el trazo queda desfasado del
   // cursor. Aquí igualamos el buffer al tamaño real renderizado (+ devicePixelRatio para nitidez)
   // y escalamos el contexto, así las coordenadas del mouse (en px CSS) mapean 1:1 al dibujo.
-  useLayoutEffect(() => {
+  const setupCanvas = (preserve: string | null) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
     const dpr = window.devicePixelRatio || 1;
     sizeRef.current = { width: rect.width, height: rect.height };
     canvas.width = rect.width * dpr;
@@ -42,12 +43,35 @@ export default function SignaturePad({ value, onChange, error }: SignaturePadPro
     ctx.lineJoin = 'round';
     ctx.strokeStyle = '#000';
 
-    if (value) {
+    if (preserve) {
       const img = new Image();
       img.onload = () => ctx.drawImage(img, 0, 0, rect.width, rect.height);
-      img.src = value;
+      img.src = preserve;
     }
+  };
+
+  useLayoutEffect(() => {
+    setupCanvas(value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Formularios como "Agregar remisión" cambian de alto según el contenido de arriba (tabla de
+  // consumos, campos de descuento, etc.), lo que puede angostar el canvas después del montaje
+  // inicial (ej. al aparecer la barra de scroll) — sin esto, el buffer quedaba calibrado al tamaño
+  // viejo y el trazo se dibujaba desfasado del cursor. Se recalibra solo cuando el tamaño realmente
+  // cambió, preservando lo ya dibujado.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const observer = new ResizeObserver(() => {
+      if (drawingRef.current) return;
+      const rect = canvas.getBoundingClientRect();
+      if (Math.round(rect.width) === Math.round(sizeRef.current.width) && Math.round(rect.height) === Math.round(sizeRef.current.height)) return;
+      setupCanvas(isEmpty ? null : canvas.toDataURL('image/png'));
+    });
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [isEmpty]);
 
   const start = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = canvasRef.current;

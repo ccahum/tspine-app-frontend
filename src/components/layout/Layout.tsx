@@ -72,7 +72,12 @@ export default function Layout() {
         <Sidebar mobileOpen={mobileNavOpen} onCloseMobile={() => setMobileNavOpen(false)} />
         <main style={{ ...styles.main, marginLeft: isMobile ? 0 : '60px', position: 'relative' }}>
           {isNavigating && (
-            <div style={{ position: 'absolute', inset: 0, zIndex: 5, backgroundColor: '#f4f5f7' }}>
+            // zIndex alto a propósito: la página anterior puede tener sus propios elementos
+            // position:fixed con z-index propio (ej. el encabezado compacto que flota al hacer
+            // scroll en el detalle de una programación/remisión, z-index 50) — con un z-index bajo
+            // acá, ese encabezado se quedaba flotando ENCIMA de este loader mientras se descargaba
+            // el chunk de la página destino, en vez de quedar tapado por completo.
+            <div style={{ position: 'absolute', inset: 0, zIndex: 1000, backgroundColor: '#f4f5f7' }}>
               <ContentLoader />
             </div>
           )}

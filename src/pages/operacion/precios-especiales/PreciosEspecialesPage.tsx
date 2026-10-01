@@ -81,11 +81,11 @@ const PrecioEspecialCard = memo(({ item, onSelect }: { item: PrecioEspecialItem;
   </div>
 ));
 
-function DetalleRow({ label, children }: { label: string; children: React.ReactNode }) {
+function DetalleRow({ label, children, tag }: { label: string; children: React.ReactNode; tag?: boolean }) {
   return (
     <div style={styles.detalleRow}>
       <span style={styles.detalleLabel}>{label}</span>
-      <span style={styles.detalleValue}>{children}</span>
+      <span style={tag ? styles.selectedTag : styles.detalleValue}>{children}</span>
     </div>
   );
 }
@@ -188,7 +188,7 @@ function DetalleModal({ item, onClose, onUpdated, onDeleted }: {
     <div className="modal-overlay-anim" style={styles.modalOverlay}>
       <div className="modal-content-anim" style={styles.modalContent} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
-          <h2 style={styles.modalTitle}>Precio Especial</h2>
+          <h2 style={styles.modalTitle}>{editing ? 'Editar precio especial' : 'Precio Especial'}</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             {!editing && !confirmDelete && (
               <div style={{ position: 'relative' as const }} ref={moreMenuRef}>
@@ -256,6 +256,8 @@ function DetalleModal({ item, onClose, onUpdated, onDeleted }: {
                 error={error?.field === 'contacto'}
                 valueId={contactoId}
                 valueLabel={contactoLabel}
+                disabled={!productoId}
+                disabledHint="Selecciona primero el producto"
                 onSelect={(id, label) => { setContactoId(id); setContactoLabel(label); setError(null); }}
               />
               {error?.field === 'contacto' && <span style={styles.errorText}>{error.message}</span>}
@@ -267,21 +269,27 @@ function DetalleModal({ item, onClose, onUpdated, onDeleted }: {
 
               <div style={styles.formGroup} id="precio-especial-field-precio">
                 <label style={styles.formLabel}>Precio *</label>
-                <div style={styles.stepperWrap}>
-                  <span style={styles.pricePrefix}>$</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    style={{ ...styles.formInput, ...(error?.field === 'precio' ? styles.inputError : {}), paddingLeft: '1.5rem', paddingRight: '5rem' }}
-                    placeholder="0,00"
-                    value={precio}
-                    onChange={e => { setPrecio(sanitizeDecimal(e.target.value)); setError(null); }}
-                  />
-                  <div style={styles.stepperBtns}>
-                    <button type="button" style={styles.stepperBtn} onClick={() => setPrecio(String(Math.max(0, (Number(precio) || 0) - 100)))}>−</button>
-                    <button type="button" style={styles.stepperBtn} onClick={() => setPrecio(String((Number(precio) || 0) + 100))}>+</button>
+                {!contactoId ? (
+                  <span style={{ ...styles.formInput, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>
+                    Selecciona primero el contacto
+                  </span>
+                ) : (
+                  <div style={styles.stepperWrap}>
+                    <span style={styles.pricePrefix}>$</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      style={{ ...styles.formInput, ...(error?.field === 'precio' ? styles.inputError : {}), paddingLeft: '1.5rem', paddingRight: '5rem' }}
+                      placeholder="0,00"
+                      value={precio}
+                      onChange={e => { setPrecio(sanitizeDecimal(e.target.value)); setError(null); }}
+                    />
+                    <div style={styles.stepperBtns}>
+                      <button type="button" style={styles.stepperBtn} onClick={() => setPrecio(String(Math.max(0, (Number(precio) || 0) - 100)))}>−</button>
+                      <button type="button" style={styles.stepperBtn} onClick={() => setPrecio(String((Number(precio) || 0) + 100))}>+</button>
+                    </div>
                   </div>
-                </div>
+                )}
                 {error?.field === 'precio' && <span style={styles.errorText}>{error.message}</span>}
               </div>
 
@@ -300,11 +308,11 @@ function DetalleModal({ item, onClose, onUpdated, onDeleted }: {
           ) : (
             <>
               <DetalleRow label="ID">{item.id}</DetalleRow>
-              <DetalleRow label="Producto">
-                <span style={styles.productoCode}>{item.productoReferencia ?? '-'}</span>
+              <DetalleRow label="Producto" tag>
+                {item.productoReferencia ?? '-'}
                 {item.productoNombre && <> / {item.productoNombre}</>}
               </DetalleRow>
-              <DetalleRow label="Contacto">{item.contacto ?? '-'}</DetalleRow>
+              <DetalleRow label="Contacto" tag>{item.contacto ?? '-'}</DetalleRow>
               <DetalleRow label="Buscable">{item.buscable || '-'}</DetalleRow>
               <DetalleRow label="Precio">
                 <span style={{ fontWeight: 700 }}>{formatMoney(item.precio)}</span>
@@ -332,6 +340,8 @@ function ProductoPicker({ valueId, valueLabel, onSelect, id, error }: {
 }) {
   const [search, setSearch] = useState('');
   const [focused, setFocused] = useState(false);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const { data: results = [] } = useQuery<ProductoOption[]>({
     queryKey: ['precios-especiales-productos', search],
     queryFn: () => preciosEspecialesService.searchProductos(search),
@@ -344,11 +354,16 @@ function ProductoPicker({ valueId, valueLabel, onSelect, id, error }: {
       {valueId ? (
         <span style={styles.selectedTag}>
           {valueLabel}
-          <X size={12} style={{ cursor: 'pointer' }} onClick={() => onSelect('', '', null)} />
+          <X
+            size={12}
+            style={{ cursor: 'pointer' }}
+            onClick={() => { onSelect('', '', null); setFocused(true); setTimeout(() => inputRef.current?.focus(), 0); }}
+          />
         </span>
       ) : (
         <div style={{ position: 'relative' as const }}>
           <input
+            ref={inputRef}
             style={{ ...styles.formInput, ...(error ? styles.inputError : {}) }}
             placeholder="Buscar producto..."
             value={search}
@@ -364,8 +379,10 @@ function ProductoPicker({ valueId, valueLabel, onSelect, id, error }: {
                 results.map(p => (
                   <div
                     key={p.id}
-                    style={styles.dropdownItem}
+                    style={{ ...styles.dropdownItem, ...(hoveredId === p.id ? styles.dropdownItemHighlighted : {}) }}
                     onMouseDown={e => e.preventDefault()}
+                    onMouseEnter={() => setHoveredId(p.id)}
+                    onMouseLeave={() => setHoveredId(null)}
                     onClick={() => { onSelect(p.id, [p.referencia, p.nombre].filter(Boolean).join(' / '), p.referencia); setSearch(''); }}
                   >
                     {p.referencia && <span style={styles.productoCode}>{p.referencia}</span>}
@@ -381,19 +398,23 @@ function ProductoPicker({ valueId, valueLabel, onSelect, id, error }: {
   );
 }
 
-function ContactoPicker({ valueId, valueLabel, onSelect, id, error }: {
+function ContactoPicker({ valueId, valueLabel, onSelect, id, error, disabled, disabledHint }: {
   valueId: string;
   valueLabel: string;
   onSelect: (id: string, label: string) => void;
   id?: string;
   error?: boolean;
+  disabled?: boolean;
+  disabledHint?: string;
 }) {
   const [search, setSearch] = useState('');
   const [focused, setFocused] = useState(false);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const { data: results = [] } = useQuery<ContactoOption[]>({
     queryKey: ['precios-especiales-contactos', search],
     queryFn: () => preciosEspecialesService.searchContactos(search),
-    enabled: focused,
+    enabled: focused && !disabled,
   });
 
   return (
@@ -402,11 +423,20 @@ function ContactoPicker({ valueId, valueLabel, onSelect, id, error }: {
       {valueId ? (
         <span style={styles.selectedTag}>
           {valueLabel}
-          <X size={12} style={{ cursor: 'pointer' }} onClick={() => onSelect('', '')} />
+          <X
+            size={12}
+            style={{ cursor: 'pointer' }}
+            onClick={() => { onSelect('', ''); if (!disabled) { setFocused(true); setTimeout(() => inputRef.current?.focus(), 0); } }}
+          />
+        </span>
+      ) : disabled ? (
+        <span style={{ ...styles.formInput, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>
+          {disabledHint ?? 'Selecciona primero'}
         </span>
       ) : (
         <div style={{ position: 'relative' as const }}>
           <input
+            ref={inputRef}
             style={{ ...styles.formInput, ...(error ? styles.inputError : {}) }}
             placeholder="Buscar contacto..."
             value={search}
@@ -420,7 +450,14 @@ function ContactoPicker({ valueId, valueLabel, onSelect, id, error }: {
                 <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
               ) : (
                 results.map(c => (
-                  <div key={c.id} style={styles.dropdownItem} onMouseDown={e => e.preventDefault()} onClick={() => { onSelect(c.id, c.nombreCompleto); setSearch(''); }}>
+                  <div
+                    key={c.id}
+                    style={{ ...styles.dropdownItem, ...(hoveredId === c.id ? styles.dropdownItemHighlighted : {}) }}
+                    onMouseDown={e => e.preventDefault()}
+                    onMouseEnter={() => setHoveredId(c.id)}
+                    onMouseLeave={() => setHoveredId(null)}
+                    onClick={() => { onSelect(c.id, c.nombreCompleto); setSearch(''); }}
+                  >
                     {c.nombreCompleto}
                   </div>
                 ))
@@ -490,7 +527,7 @@ function NuevoPrecioEspecialModal({ onClose, onCreated }: {
             error={error?.field === 'producto'}
             valueId={productoId}
             valueLabel={productoLabel}
-            onSelect={(id, label, referencia) => { setProductoId(id); setProductoLabel(label); setProductoReferencia(referencia ?? ''); setError(null); }}
+            onSelect={(id, label, referencia) => { setProductoId(id); setProductoLabel(label); setProductoReferencia(referencia ?? ''); setContactoId(''); setContactoLabel(''); setError(null); }}
           />
           {error?.field === 'producto' && <span style={styles.errorText}>{error.message}</span>}
 
@@ -499,6 +536,8 @@ function NuevoPrecioEspecialModal({ onClose, onCreated }: {
             error={error?.field === 'contacto'}
             valueId={contactoId}
             valueLabel={contactoLabel}
+            disabled={!productoId}
+            disabledHint="Selecciona primero el producto"
             onSelect={(id, label) => { setContactoId(id); setContactoLabel(label); setError(null); }}
           />
           {error?.field === 'contacto' && <span style={styles.errorText}>{error.message}</span>}
@@ -510,21 +549,27 @@ function NuevoPrecioEspecialModal({ onClose, onCreated }: {
 
           <div style={styles.formGroup} id="precio-especial-field-precio">
             <label style={styles.formLabel}>Precio *</label>
-            <div style={styles.stepperWrap}>
-              <span style={styles.pricePrefix}>$</span>
-              <input
-                type="text"
-                inputMode="decimal"
-                style={{ ...styles.formInput, ...(error?.field === 'precio' ? styles.inputError : {}), paddingLeft: '1.5rem', paddingRight: '5rem' }}
-                placeholder="0,00"
-                value={precio}
-                onChange={e => { setPrecio(sanitizeDecimal(e.target.value)); setError(null); }}
-              />
-              <div style={styles.stepperBtns}>
-                <button type="button" style={styles.stepperBtn} onClick={() => setPrecio(String(Math.max(0, (Number(precio) || 0) - 100)))}>−</button>
-                <button type="button" style={styles.stepperBtn} onClick={() => setPrecio(String((Number(precio) || 0) + 100))}>+</button>
+            {!contactoId ? (
+              <span style={{ ...styles.formInput, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>
+                Selecciona primero el contacto
+              </span>
+            ) : (
+              <div style={styles.stepperWrap}>
+                <span style={styles.pricePrefix}>$</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  style={{ ...styles.formInput, ...(error?.field === 'precio' ? styles.inputError : {}), paddingLeft: '1.5rem', paddingRight: '5rem' }}
+                  placeholder="0,00"
+                  value={precio}
+                  onChange={e => { setPrecio(sanitizeDecimal(e.target.value)); setError(null); }}
+                />
+                <div style={styles.stepperBtns}>
+                  <button type="button" style={styles.stepperBtn} onClick={() => setPrecio(String(Math.max(0, (Number(precio) || 0) - 100)))}>−</button>
+                  <button type="button" style={styles.stepperBtn} onClick={() => setPrecio(String((Number(precio) || 0) + 100))}>+</button>
+                </div>
               </div>
-            </div>
+            )}
             {error?.field === 'precio' && <span style={styles.errorText}>{error.message}</span>}
           </div>
 
@@ -749,6 +794,7 @@ const styles: Record<string, React.CSSProperties> = {
   selectedTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510', fontSize: '0.8rem', fontWeight: 600, width: 'fit-content' as const },
   dropdown: { position: 'absolute' as const, top: 'calc(100% + 0.35rem)', left: 0, right: 0, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', maxHeight: '220px', overflowY: 'auto' as const, zIndex: 20 },
   dropdownItem: { padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#333', cursor: 'pointer' },
+  dropdownItemHighlighted: { backgroundColor: '#e9f2d8', color: '#3f6510' },
   stepperWrap: { position: 'relative' as const },
   stepperBtns: { position: 'absolute' as const, right: '0.5rem', top: '50%', transform: 'translateY(-50%)', display: 'flex', gap: '0.35rem' },
   stepperBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1.75rem', height: '1.75rem', border: '1px solid #e5e7eb', borderRadius: '6px', backgroundColor: '#fff', color: '#374151', fontWeight: 700, fontSize: '1rem', cursor: 'pointer', lineHeight: 1 },

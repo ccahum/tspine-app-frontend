@@ -11,6 +11,7 @@ import logoCabcari from '../../../assets/logo-cabcari.jpg';
 import logoNeurotec from '../../../assets/logo-neurotec.jpg';
 import PdfIcon from '../../../components/icons/PdfIcon';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
+import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import SuccessToast from '../../../components/SuccessToast';
 import {
   remisionesService,
@@ -18,16 +19,16 @@ import {
   CATEGORIAS_COMISION,
   TIPOS_COMISION,
   SELECCIONE_TIPO_COMISION,
-  IMPUESTOS_REMISION,
   type RemisionDetail,
   type RemisionDetailTecnico,
   type TecnicoOption,
-  type CubrimientoOption,
-  type TarifaOption,
 } from '../../../services/remisiones.service';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { esSuperAdmin } from '../../../lib/auth.utils';
+import EditarRemisionModal from './EditarRemisionModal';
+import ConsumoDetalleModal from '../consumos/ConsumoDetalleModal';
+import ComisionDetalleModal from '../consumos/ComisionDetalleModal';
 
 const getTecnicoInitials = (nombreCompleto: string): string => {
   const words = nombreCompleto.trim().split(/\s+/).filter(Boolean);
@@ -872,6 +873,7 @@ export default function RemisionDetailPage() {
   const { isMobile } = useResponsiveStyles();
   const [mainTab, setMainTab] = useState('resumen');
   const [hoveredConsumoId, setHoveredConsumoId] = useState<string | null>(null);
+  const [consumoExpanded, setConsumoExpanded] = useState(false);
   const [hoveredTecnicoId, setHoveredTecnicoId] = useState<string | null>(null);
   const [hoveredBonoId, setHoveredBonoId] = useState<string | null>(null);
   const [hoveredFacturaId, setHoveredFacturaId] = useState<string | null>(null);
@@ -887,7 +889,7 @@ export default function RemisionDetailPage() {
   const bonosScrollRef = useRef<HTMLDivElement>(null);
   useSmoothWheelScroll(bonosScrollRef, [mainTab]);
   const consumosScrollRef = useRef<HTMLDivElement>(null);
-  useSmoothWheelScroll(consumosScrollRef, [mainTab]);
+  useSmoothWheelScroll(consumosScrollRef, [mainTab], 3);
   const facturacionScrollRef = useRef<HTMLDivElement>(null);
   useSmoothWheelScroll(facturacionScrollRef, [mainTab]);
 
@@ -910,26 +912,11 @@ export default function RemisionDetailPage() {
 
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEditSuccess, setShowEditSuccess] = useState(false);
-  const [editForm, setEditForm] = useState({
-    paciente: '',
-    cirugiaRealizada: '',
-    anestesiologo: '',
-    impuestos: '',
-    tieneDcto: false,
-    porcentajeDcto: '',
-    vrDctoPesos: '',
-  });
-  const [editUsuario, setEditUsuario] = useState<TecnicoOption | null>(null);
-  const [usuarioSearch, setUsuarioSearch] = useState('');
-  const [editCubrimiento, setEditCubrimiento] = useState<CubrimientoOption | null>(null);
-  const [editTarifa, setEditTarifa] = useState<TarifaOption | null>(null);
-  const [editEmpresa, setEditEmpresa] = useState<TecnicoOption | null>(null);
-  const [editResponsable, setEditResponsable] = useState<TecnicoOption | null>(null);
-  const [responsableSearch, setResponsableSearch] = useState('');
-  const [editError, setEditError] = useState<{ field: string; message: string } | null>(null);
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [selectedConsumoId, setSelectedConsumoId] = useState<string | null>(null);
+  const [selectedComisionId, setSelectedComisionId] = useState<string | null>(null);
 
   const [isScrolled, setIsScrolled] = useState(false);
   const [showCompactHeader, setShowCompactHeader] = useState(false);
@@ -992,6 +979,10 @@ export default function RemisionDetailPage() {
     queryKey: ['remision', id],
     queryFn: () => remisionesService.getById(id!),
     enabled: !!id,
+    // El estado se puede cambiar desde otras vistas (ej. la tabla de remisiones de una
+    // programación) sin pasar por este query — refrescar siempre al entrar aquí evita mostrar un
+    // estado desactualizado por el staleTime global de 30s.
+    refetchOnMount: 'always',
   });
 
   const [statsMounted, setStatsMounted] = useState(false);
@@ -1011,98 +1002,6 @@ export default function RemisionDetailPage() {
 
   const puedeEditarRemision = remision?.estado === 'Tramitada' || remision?.estado === 'Descorche';
 
-  const { data: cubrimientosRemision = [] } = useQuery<CubrimientoOption[]>({
-    queryKey: ['cubrimientos'],
-    queryFn: () => remisionesService.findCubrimientos(),
-    enabled: showEditModal,
-  });
-
-  const { data: usuarioResults = [] } = useQuery<TecnicoOption[]>({
-    queryKey: ['comisiones-tecnicos', usuarioSearch],
-    queryFn: () => remisionesService.searchTecnicos(usuarioSearch),
-    enabled: showEditModal,
-  });
-
-  const { data: responsableResults = [] } = useQuery<TecnicoOption[]>({
-    queryKey: ['comisiones-tecnicos', responsableSearch],
-    queryFn: () => remisionesService.searchTecnicos(responsableSearch),
-    enabled: showEditModal,
-  });
-
-  const { data: empresaResults = [] } = useQuery<TecnicoOption[]>({
-    queryKey: ['empresas'],
-    queryFn: () => remisionesService.searchEmpresas(),
-    enabled: showEditModal && !!editCubrimiento,
-  });
-
-  const { data: tarifaResults = [] } = useQuery<TarifaOption[]>({
-    queryKey: ['remision-tarifas', editCubrimiento?.id],
-    queryFn: () => remisionesService.findTarifasByCubrimiento(editCubrimiento!.id),
-    enabled: showEditModal && !!editCubrimiento,
-  });
-
-  const updateRemisionMutation = useMutation({
-    mutationFn: () => remisionesService.updateRemision(id!, {
-      usuarioId: editUsuario?.id,
-      paciente: editForm.paciente,
-      cirugiaRealizada: editForm.cirugiaRealizada,
-      cubrimientoId: editCubrimiento?.id,
-      tarifaId: editTarifa?.id,
-      empresaId: editEmpresa?.id,
-      responsableEconomicoId: editResponsable?.id,
-      anestesiologo: editForm.anestesiologo,
-      impuestos: editForm.impuestos || undefined,
-      tieneDcto: editForm.tieneDcto,
-      porcentajeDcto: editForm.tieneDcto && editForm.porcentajeDcto ? Number(editForm.porcentajeDcto) : undefined,
-      vrDctoPesos: editForm.tieneDcto && editForm.vrDctoPesos ? Number(editForm.vrDctoPesos) : undefined,
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['remision', id] });
-      setShowEditModal(false);
-      setShowEditSuccess(true);
-    },
-  });
-
-  const openEditModal = () => {
-    if (!remision) return;
-    setEditForm({
-      paciente: remision.paciente ?? '',
-      cirugiaRealizada: remision.cirugiaRealizada ?? '',
-      anestesiologo: remision.anestesiologo ?? '',
-      impuestos: remision.impuestos ?? '',
-      tieneDcto: remision.tieneDcto,
-      porcentajeDcto: remision.porcentajeDcto ? String(remision.porcentajeDcto) : '',
-      vrDctoPesos: remision.vrDctoPesos ? String(remision.vrDctoPesos) : '',
-    });
-    setEditUsuario(remision.usuario);
-    setUsuarioSearch('');
-    setEditCubrimiento(remision.cubrimiento);
-    setEditTarifa(remision.tarifa);
-    setEditEmpresa(remision.empresa);
-    setEditResponsable(remision.responsableEconomico);
-    setResponsableSearch('');
-    setEditError(null);
-    setShowMoreMenu(false);
-    setShowEditModal(true);
-  };
-
-  const handleGuardarEdit = () => {
-    if (!editForm.paciente.trim()) { setEditError({ field: 'paciente', message: 'Ingresa el nombre del paciente.' }); return; }
-    if (!editCubrimiento) { setEditError({ field: 'cubrimiento', message: 'Selecciona el cubrimiento.' }); return; }
-    if (!editTarifa) { setEditError({ field: 'tarifa', message: 'Selecciona la tarifa.' }); return; }
-    if (!editEmpresa) { setEditError({ field: 'empresa', message: 'Selecciona la empresa.' }); return; }
-    if (!editResponsable) { setEditError({ field: 'responsable', message: 'Selecciona el responsable económico.' }); return; }
-    if (!editUsuario) { setEditError({ field: 'usuario', message: 'Selecciona el usuario.' }); return; }
-    if (!editForm.anestesiologo.trim()) { setEditError({ field: 'anestesiologo', message: 'Ingresa el anestesiólogo.' }); return; }
-    if (!editForm.cirugiaRealizada.trim()) { setEditError({ field: 'cirugiaRealizada', message: 'Ingresa la cirugía realizada.' }); return; }
-    setEditError(null);
-    updateRemisionMutation.mutate();
-  };
-
-  useEffect(() => {
-    if (!editError) return;
-    document.getElementById(`remision-edit-field-${editError.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [editError]);
 
   const deleteRemisionMutation = useMutation({
     mutationFn: () => remisionesService.deleteRemision(id!),
@@ -1188,7 +1087,7 @@ export default function RemisionDetailPage() {
     if (!comisionForm.categoria) { setComisionError({ field: 'categoria', message: 'Selecciona la categoría.' }); return; }
     if (!comisionTecnico) { setComisionError({ field: 'tecnico', message: 'Selecciona el nombre de contacto.' }); return; }
     if (!comisionForm.vrComision || Number(comisionForm.vrComision) <= 0) { setComisionError({ field: 'vrComision', message: 'El valor de asignación debe ser mayor a cero.' }); return; }
-    if (comisionForm.quieresDesglosar && !comisionForm.seleccioneTipo) { setComisionError({ field: 'seleccioneTipo', message: 'Selecciona el tipo (Actividad Empresarial o Resico).' }); return; }
+    if (!comisionForm.seleccioneTipo) { setComisionError({ field: 'seleccioneTipo', message: 'Selecciona el tipo (Actividad Empresarial o Resico).' }); return; }
     setComisionError(null);
     setShowConfirmComision(true);
   };
@@ -1235,30 +1134,25 @@ export default function RemisionDetailPage() {
         </div>
       )}
       <div style={styles.container}>
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          style={styles.backLink}
-          onMouseEnter={e => { e.currentTarget.style.color = '#4d7a13'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; }}
-        >
-          <MaterialIcon name="arrow_back" size={16} />
-          Volver
-        </button>
-
         <div style={styles.headerCard}>
           <div style={styles.header}>
-            <span style={styles.titleIconBadge}>
-              <MaterialIcon name="receipt_long" size={30} color="#4d7a13" />
-            </span>
-            <div style={styles.titleGroup}>
-              <div style={styles.titleRow}>
-                <h1 style={styles.title}>{remision.numRemision || remision.id}</h1>
+            <HeaderBackReveal
+              onBack={() => navigate(-1)}
+              icon={<MaterialIcon name="receipt_long" size={30} color="#4d7a13" />}
+              size={58}
+              badgeRadius={18}
+              mobileIconAsBack={isMobile}
+            >
+              <div style={styles.titleGroup}>
+                <span style={styles.titleLabel}>Remisión</span>
+                <div style={styles.titleRow}>
+                  <h1 style={styles.title}>{remision.numRemision || remision.id}</h1>
+                </div>
+                <div style={styles.breadcrumbRow}>
+                  <span style={styles.breadcrumbId}> {remision.programacion?.numProgram || remision.programacion?.id || '-'}</span>
+                </div>
               </div>
-              <div style={styles.breadcrumbRow}>
-                <span style={styles.breadcrumbId}> {remision.programacion?.numProgram || remision.programacion?.id || '-'}</span>
-              </div>
-            </div>
+            </HeaderBackReveal>
 
             <div style={styles.headerActions}>
               {esSuperAdmin() && (
@@ -1316,7 +1210,7 @@ export default function RemisionDetailPage() {
                   <div style={styles.dropdown}>
                     <button
                       style={{ ...styles.dropdownItem, ...(!puedeEditarRemision ? styles.dropdownItemDisabled : {}) }}
-                      onClick={openEditModal}
+                      onClick={() => setShowEditModal(true)}
                       disabled={!puedeEditarRemision}
                       title={!puedeEditarRemision ? 'Solo se pueden editar remisiones en estado Tramitada o Descorche.' : undefined}
                       onMouseEnter={e => { if (puedeEditarRemision) e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
@@ -1431,16 +1325,16 @@ export default function RemisionDetailPage() {
               <h2 style={styles.sectionTitle}>Información General</h2>
             </div>
             <div style={styles.generalGrid}>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>N° Program</span><span style={styles.generalValue}>{remision.programacion?.numProgram || remision.programacion?.id || '-'}</span></div>
+              <div style={styles.generalItem}><span style={styles.generalLabel}>N° Program</span><span style={styles.generalTagPill}>{remision.programacion?.numProgram || remision.programacion?.id || '-'}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>N° Remisión</span><span style={styles.generalValue}>{remision.numRemision || remision.id}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Usuario</span><span style={styles.generalValue}>{remision.usuario?.nombreCompleto || '-'}</span></div>
+              <div style={styles.generalItem}><span style={styles.generalLabel}>Usuario</span><span style={styles.generalTagPill}>{remision.usuario?.nombreCompleto || '-'}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>Marca de Tiempo</span><span style={styles.generalValue}>{formatDateTime(remision.creadoEn)}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>Fecha QX</span><span style={styles.generalValue}>{formatDate(remision.programacion?.fechaQx ?? null)}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>Hora QX</span><span style={styles.generalValue}>{remision.programacion?.horaQx || '-'}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>Sede</span><span style={styles.generalValue}>{remision.programacion?.sede?.nombre || '-'}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>Ciudad QX</span><span style={styles.generalValue}>{remision.programacion?.hospital?.ciudadCat?.nombre || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Médico</span><span style={styles.generalValue}>{remision.programacion?.medicos.map(m => m.medico.nombreCompleto).join(', ') || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Hospital</span><span style={styles.generalValue}>{remision.programacion?.hospital?.nombre || '-'}</span></div>
+              <div style={styles.generalItem}><span style={styles.generalLabel}>Médico</span><span style={styles.generalTagPill}>{remision.programacion?.medicos.map(m => m.medico.nombreCompleto).join(', ') || '-'}</span></div>
+              <div style={styles.generalItem}><span style={styles.generalLabel}>Hospital</span><span style={styles.generalTagPill}>{remision.programacion?.hospital?.nombre || '-'}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>Tarifa</span><span style={styles.generalValue}>{remision.tarifa?.nombre || '-'}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>Status</span><span style={styles.generalValue}>{remision.status ? 'Activa' : 'Inactiva'}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>Observaciones</span><span style={styles.generalValue}>{remision.programacion?.observaciones || '-'}</span></div>
@@ -1451,7 +1345,15 @@ export default function RemisionDetailPage() {
               <div style={styles.generalItem}><span style={styles.generalLabel}>Responsable Económico</span><span style={styles.generalValue}>{remision.responsableEconomico?.nombreCompleto || '-'}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>Anestesiólogo</span><span style={styles.generalValue}>{remision.anestesiologo || '-'}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>Firma</span>{remision.firmaDisponible ? <RemisionFirma id={remision.id} /> : <span style={styles.firmaEmpty}>No disponible</span>}</div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Consumo</span><span style={styles.generalValue}>{remision.programacion?.consumo || '-'}</span></div>
+              <div style={{ ...styles.generalItem, gridColumn: '1 / -1' }}>
+                <span style={styles.generalLabel}>Consumo</span>
+                <span style={{ ...styles.generalValue, ...(consumoExpanded ? {} : styles.generalValueClamp) }}>{remision.programacion?.consumo || '-'}</span>
+                {(remision.programacion?.consumo?.length ?? 0) > 180 && (
+                  <button type="button" style={styles.verMasBtn} onClick={() => setConsumoExpanded(v => !v)}>
+                    {consumoExpanded ? 'Ver menos' : 'Ver más'}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -1483,10 +1385,10 @@ export default function RemisionDetailPage() {
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
                             {t.tecnico?.nombreCompleto && <span style={styles.tecnicoAvatar}>{getTecnicoInitials(t.tecnico.nombreCompleto)}</span>}
-                            <span style={styles.cellText}>{t.tecnico?.nombreCompleto || '-'}</span>
+                            <span style={{ ...styles.cellText, fontWeight: 600 }}>{t.tecnico?.nombreCompleto || '-'}</span>
                           </div>
-                          <span style={styles.cellText}>{remision.programacion?.numProgram || remision.programacion?.id || '-'}</span>
-                          <span style={styles.cellText}>{remision.numRemision || remision.id}</span>
+                          <span style={{ ...styles.cellText, fontWeight: 600 }}>{remision.programacion?.numProgram || remision.programacion?.id || '-'}</span>
+                          <span style={{ ...styles.cellText, fontWeight: 600 }}>{remision.numRemision || remision.id}</span>
                         </div>
                       );
                     })}
@@ -1518,7 +1420,7 @@ export default function RemisionDetailPage() {
                           style={{ ...styles.bonoRow, ...(i > 0 ? styles.rowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
                           onMouseEnter={() => setHoveredBonoId(item.id)}
                           onMouseLeave={() => setHoveredBonoId(null)}
-                          onClick={() => navigate(`/operacion/comisiones/${item.id}`, '/operacion/comisiones/:id')}
+                          onClick={() => setSelectedComisionId(item.id)}
                         >
                           <span style={styles.cellText}>{item.categoria}</span>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
@@ -1563,6 +1465,7 @@ export default function RemisionDetailPage() {
 
         {mainTab === 'consumos' && (
         <div style={{ marginBottom: '2rem' }}>
+          <div style={{ backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #e5e7eb', padding: '1.75rem' }}>
           <div style={styles.sectionTitleRow}>
             <h2 style={styles.sectionTitle}>Consumos</h2>
             <span style={styles.badge}>{remision.consumos.length}</span>
@@ -1570,38 +1473,58 @@ export default function RemisionDetailPage() {
           {remision.consumos.length === 0 ? (
             <div style={styles.emptyState}>No hay datos relacionados</div>
           ) : (
-            <div style={styles.remList}>
-              <div style={{ ...styles.consumoRow, ...styles.colHeader }}>
-                <span style={styles.colHeaderText}>Cant.</span>
-                <span style={styles.colHeaderText}>Referencia</span>
-                <span style={styles.colHeaderText}>Producto</span>
-                <span style={{ ...styles.colHeaderText, textAlign: 'right' }}>Valor</span>
-                <span style={{ ...styles.colHeaderText, textAlign: 'right' }}>Facturado</span>
-                <span style={{ ...styles.colHeaderText, textAlign: 'right' }}>Por Facturar</span>
-              </div>
-              <div ref={consumosScrollRef} style={styles.scrollBody}>
-                {remision.consumos.map((c, i) => {
-                  const hoverStyle = hoveredConsumoId === c.id ? styles.rowHover : {};
-                  return (
-                    <div
-                      key={c.id}
-                      style={{ ...styles.consumoRow, ...(i > 0 ? styles.rowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
-                      onMouseEnter={() => setHoveredConsumoId(c.id)}
-                      onMouseLeave={() => setHoveredConsumoId(null)}
-                      onClick={() => navigate(`/operacion/consumos/${c.id}`, '/operacion/consumos/:id')}
-                    >
-                      <span style={styles.cellText}>{c.cantidad}</span>
-                      <span style={styles.cellCode}>{c.productoReferencia || c.productoId || '-'}</span>
-                      <span style={styles.cellText}>{c.productoNombre || '-'}</span>
-                      <span style={{ ...styles.cellText, textAlign: 'right', fontWeight: 600, color: '#333' }}>{formatMoney(c.valor)}</span>
-                      <span style={{ ...styles.cellText, textAlign: 'right', color: '#16a34a' }}>{formatMoney(c.facturado)}</span>
-                      <span style={{ ...styles.cellText, textAlign: 'right', color: c.porFacturar > 0 ? '#a16207' : '#9ca3af' }}>{formatMoney(c.porFacturar)}</span>
-                    </div>
-                  );
-                })}
+            <>
+            <div style={styles.consumosTableWrap}>
+              <div ref={consumosScrollRef} style={{ overflow: 'auto' as const, maxHeight: '320px' }}>
+                <table style={styles.consumosTable}>
+                  <thead>
+                    <tr>
+                      <th style={styles.consumosTh}>Cant.</th>
+                      <th style={styles.consumosTh}>Referencia</th>
+                      <th style={styles.consumosTh}>Producto</th>
+                      <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Valor</th>
+                      <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Facturado</th>
+                      <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Por Facturar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {remision.consumos.map(c => (
+                      <tr
+                        key={c.id}
+                        style={{ cursor: 'pointer', ...(hoveredConsumoId === c.id ? { backgroundColor: '#f3faec' } : {}) }}
+                        onMouseEnter={() => setHoveredConsumoId(c.id)}
+                        onMouseLeave={() => setHoveredConsumoId(null)}
+                        onClick={() => setSelectedConsumoId(c.id)}
+                      >
+                        <td style={styles.consumosTd}>{c.cantidad}</td>
+                        <td style={{ ...styles.consumosTd, fontWeight: 700, color: '#3f6510' }}>{c.productoReferencia || c.productoId || '-'}</td>
+                        <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={c.productoNombre ?? undefined}>{c.productoNombre || '-'}</td>
+                        <td style={{ ...styles.consumosTd, textAlign: 'right' as const, fontWeight: 700 }}>{formatMoney(c.valor)}</td>
+                        <td style={{ ...styles.consumosTd, textAlign: 'right' as const, fontWeight: 700, color: '#3f6510' }}>{formatMoney(c.facturado)}</td>
+                        <td style={{ ...styles.consumosTd, textAlign: 'right' as const, fontWeight: 700, color: '#991b1b' }}>{formatMoney(c.porFacturar)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
+            <div style={styles.consumosTotalBar}>
+              <div style={styles.consumosTotalItem}>
+                <span style={styles.generalLabel}>Total Valor</span>
+                <span style={{ ...styles.consumosTotalValue, color: '#333' }}>{formatMoney(remision.consumos.reduce((sum, c) => sum + c.valor, 0))}</span>
+              </div>
+              <div style={styles.consumosTotalItem}>
+                <span style={styles.generalLabel}>Total Facturado</span>
+                <span style={{ ...styles.consumosTotalValue, color: '#3f6510' }}>{formatMoney(remision.consumos.reduce((sum, c) => sum + c.facturado, 0))}</span>
+              </div>
+              <div style={styles.consumosTotalItem}>
+                <span style={styles.generalLabel}>Total Por Facturar</span>
+                <span style={{ ...styles.consumosTotalValue, color: '#991b1b' }}>{formatMoney(remision.consumos.reduce((sum, c) => sum + c.porFacturar, 0))}</span>
+              </div>
+            </div>
+            </>
           )}
+          </div>
         </div>
         )}
 
@@ -1658,19 +1581,19 @@ export default function RemisionDetailPage() {
               </button>
             </div>
             <div style={styles.modalBody}>
-              <div style={styles.infoRow}><span style={styles.label}>Nombre Técnico</span><span style={styles.value}>{selectedTecnico.tecnico?.nombreCompleto || '-'}</span></div>
-              <div style={styles.infoRow}><span style={styles.label}>N° Programación</span><span style={styles.value}>{selectedTecnico.programacion?.numProgram || selectedTecnico.programacion?.id || '-'}</span></div>
+              <div style={styles.infoRow}><span style={styles.label}>Nombre Técnico</span><span style={styles.generalTagPill}>{selectedTecnico.tecnico?.nombreCompleto || '-'}</span></div>
+              <div style={styles.infoRow}><span style={styles.label}>N° Programación</span><span style={styles.generalTagPill}>{selectedTecnico.programacion?.numProgram || selectedTecnico.programacion?.id || '-'}</span></div>
               <div style={styles.infoRow}>
                 <span style={styles.label}>Remisión</span>
                 <span
-                  style={{ ...styles.value, color: '#db2777', cursor: selectedTecnico.remision ? 'pointer' : 'default' }}
+                  style={{ ...styles.value, color: '#3f6510', cursor: selectedTecnico.remision ? 'pointer' : 'default' }}
                   onClick={() => selectedTecnico.remision && navigate(`/operacion/remisiones/${selectedTecnico.remision.id}`, '/operacion/remisiones/:id')}
                 >
                   {selectedTecnico.remision?.numRemision || selectedTecnico.remision?.id || '-'}
                 </span>
               </div>
               <div style={styles.infoRow}><span style={styles.label}>Fecha de Registro</span><span style={styles.value}>{formatDateTime(selectedTecnico.fechaRegistro)}</span></div>
-              <div style={styles.infoRow}><span style={styles.label}>Registrado Por</span><span style={styles.value}>{selectedTecnico.registradoPor?.nombreCompleto || '-'}</span></div>
+              <div style={styles.infoRow}><span style={styles.label}>Registrado Por</span><span style={styles.generalTagPill}>{selectedTecnico.registradoPor?.nombreCompleto || '-'}</span></div>
               <div style={styles.infoRow}><span style={styles.label}>Última Edición</span><span style={styles.value}>{formatDateTime(selectedTecnico.ultimaEdicion)}</span></div>
               <div style={{ ...styles.infoRow, borderBottom: 'none' }}><span style={styles.label}>Editado Por</span><span style={styles.value}>{selectedTecnico.editadoPor?.nombreCompleto || '-'}</span></div>
             </div>
@@ -1898,26 +1821,24 @@ export default function RemisionDetailPage() {
                 </div>
               </div>
 
-              {comisionForm.quieresDesglosar && (
-                <div style={styles.formGroup} id="comision-field-seleccioneTipo">
-                  <label style={styles.label}>Seleccione Tipo</label>
-                  <div style={styles.horaGrid}>
-                    {SELECCIONE_TIPO_COMISION.map(t => (
-                      <button
-                        key={t}
-                        type="button"
-                        style={{ ...styles.sedeBtn, ...(comisionForm.seleccioneTipo === t ? styles.sedeBtnActive : {}), ...(comisionError?.field === 'seleccioneTipo' ? styles.inputError : {}) }}
-                        onMouseDown={e => e.preventDefault()}
-                        onClick={e => { setComisionForm({ ...comisionForm, seleccioneTipo: comisionForm.seleccioneTipo === t ? '' : t }); setComisionError(null); e.currentTarget.blur(); }}
-                      >
-                        {comisionForm.seleccioneTipo === t ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                  {comisionError?.field === 'seleccioneTipo' && <span style={styles.errorText}>{comisionError.message}</span>}
+              <div style={styles.formGroup} id="comision-field-seleccioneTipo">
+                <label style={styles.label}>Seleccione Tipo *</label>
+                <div style={styles.horaGrid}>
+                  {SELECCIONE_TIPO_COMISION.map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      style={{ ...styles.sedeBtn, ...(comisionForm.seleccioneTipo === t ? styles.sedeBtnActive : {}), ...(comisionError?.field === 'seleccioneTipo' ? styles.inputError : {}) }}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={e => { setComisionForm({ ...comisionForm, seleccioneTipo: comisionForm.seleccioneTipo === t ? '' : t }); setComisionError(null); e.currentTarget.blur(); }}
+                    >
+                      {comisionForm.seleccioneTipo === t ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
+                      {t}
+                    </button>
+                  ))}
                 </div>
-              )}
+                {comisionError?.field === 'seleccioneTipo' && <span style={styles.errorText}>{comisionError.message}</span>}
+              </div>
 
               {comisionForm.quieresDesglosar && (
                 <>
@@ -2035,353 +1956,31 @@ export default function RemisionDetailPage() {
         </div>
       )}
 
-      {showEditModal && (() => {
-        const editSubtotal = remision.subtotal;
-        const round2 = (n: number) => Math.round(n * 100) / 100;
-        const editDescuentos = editForm.tieneDcto
-          ? editSubtotal * (Number(editForm.porcentajeDcto || 0) / 100) + Number(editForm.vrDctoPesos || 0)
-          : 0;
-        const editTotalAntesImp = round2(editSubtotal - editDescuentos);
-        const editIva = round2((editForm.impuestos === 'I.V.A.' || editForm.impuestos === 'Todos') ? editTotalAntesImp * 0.16 : 0);
-        const editRetencion = round2((editForm.impuestos === 'Retención' || editForm.impuestos === 'Todos') ? editTotalAntesImp * 0.106667 : 0);
-        const editTotalPagar = round2(editTotalAntesImp + editIva - editRetencion);
+      {showEditModal && remision && (
+        <EditarRemisionModal
+          remision={remision}
+          remisionId={id!}
+          onClose={() => setShowEditModal(false)}
+          onUpdated={() => {
+            setShowEditModal(false);
+            setShowEditSuccess(true);
+          }}
+        />
+      )}
 
-        return (
-          <div className="modal-overlay-anim" style={styles.modalOverlay}>
-            <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
-              <div style={styles.editModalHeader}>
-                <button style={styles.closeBtn} onClick={() => setShowEditModal(false)}>
-                  <X size={18} />
-                </button>
-                <h2 style={styles.modalTitle}>Editar Remisión</h2>
-              </div>
+      {selectedConsumoId && (
+        <ConsumoDetalleModal
+          id={selectedConsumoId}
+          onClose={() => setSelectedConsumoId(null)}
+        />
+      )}
 
-              <div style={styles.editModalBody}>
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Sede</label>
-                  <span style={styles.readOnlyField}>{remision.programacion?.sede?.nombre ?? '-'}</span>
-                </div>
-
-                <div style={styles.formGroup} id="remision-edit-field-usuario">
-                  <label style={styles.label}>Usuario *</label>
-                  {editUsuario && (
-                    <div style={styles.medicoTagsWrap}>
-                      <span style={styles.medicoTag}>
-                        {editUsuario.nombreCompleto}
-                        <X size={12} style={{ cursor: 'pointer' }} onClick={() => setEditUsuario(null)} />
-                      </span>
-                    </div>
-                  )}
-                  {!editUsuario && (
-                    <div style={{ position: 'relative' as const }}>
-                      <input
-                        style={{ ...styles.input, ...(editError?.field === 'usuario' ? styles.inputError : {}) }}
-                        placeholder="Buscar tercero..."
-                        value={usuarioSearch}
-                        onChange={e => { setUsuarioSearch(e.target.value); setEditError(null); }}
-                      />
-                      {usuarioSearch.trim() && (
-                        <div style={styles.medicoDropdown}>
-                          {usuarioResults.length === 0 ? (
-                            <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
-                          ) : (
-                            usuarioResults.map(t => (
-                              <div
-                                key={t.id}
-                                style={styles.medicoDropdownItem}
-                                onClick={() => { setEditUsuario(t); setUsuarioSearch(''); setEditError(null); }}
-                              >
-                                <Plus size={14} /> {t.nombreCompleto}
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {editError?.field === 'usuario' && <span style={styles.errorText}>{editError.message}</span>}
-                </div>
-
-                <div style={styles.formGroup} id="remision-edit-field-paciente">
-                  <label style={styles.label}>Paciente *</label>
-                  <input
-                    style={{ ...styles.input, ...(editError?.field === 'paciente' ? styles.inputError : {}) }}
-                    value={editForm.paciente}
-                    onChange={e => { setEditForm({ ...editForm, paciente: e.target.value }); setEditError(null); }}
-                  />
-                  {editError?.field === 'paciente' && <span style={styles.errorText}>{editError.message}</span>}
-                </div>
-
-                <div style={styles.formGroup} id="remision-edit-field-cubrimiento">
-                  <label style={styles.label}>Cubrimiento *</label>
-                  <div style={styles.sedeGrid}>
-                    {cubrimientosRemision.map(c => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        style={{ ...styles.sedeBtn, ...(editCubrimiento?.id === c.id ? styles.sedeBtnActive : {}), ...(editError?.field === 'cubrimiento' ? styles.inputError : {}) }}
-                        onMouseDown={e => e.preventDefault()}
-                        onClick={e => {
-                          setEditCubrimiento(c);
-                          if (editCubrimiento?.id !== c.id) { setEditTarifa(null); setEditEmpresa(null); }
-                          setEditError(null);
-                          e.currentTarget.blur();
-                        }}
-                      >
-                        {editCubrimiento?.id === c.id ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
-                        {c.nombre}
-                      </button>
-                    ))}
-                  </div>
-                  {editError?.field === 'cubrimiento' && <span style={styles.errorText}>{editError.message}</span>}
-                </div>
-
-                {editCubrimiento && (
-                  <div style={styles.formGroup} id="remision-edit-field-empresa">
-                    <label style={styles.label}>Empresa *</label>
-                    <div style={styles.sedeGrid}>
-                      {empresaResults.map(t => (
-                        <button
-                          key={t.id}
-                          type="button"
-                          style={{ ...styles.sedeBtn, ...(editEmpresa?.id === t.id ? styles.sedeBtnActive : {}), ...(editError?.field === 'empresa' ? styles.inputError : {}) }}
-                          onMouseDown={e => e.preventDefault()}
-                          onClick={e => { setEditEmpresa(t); setEditError(null); e.currentTarget.blur(); }}
-                        >
-                          {editEmpresa?.id === t.id ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
-                          {t.nombreCompleto}
-                        </button>
-                      ))}
-                    </div>
-                    {editError?.field === 'empresa' && <span style={styles.errorText}>{editError.message}</span>}
-                  </div>
-                )}
-
-                <div style={styles.formGroup} id="remision-edit-field-responsable">
-                  <label style={styles.label}>Responsable Económico *</label>
-                  {editResponsable && (
-                    <div style={styles.medicoTagsWrap}>
-                      <span style={styles.medicoTag}>
-                        {editResponsable.nombreCompleto}
-                        <X size={12} style={{ cursor: 'pointer' }} onClick={() => setEditResponsable(null)} />
-                      </span>
-                    </div>
-                  )}
-                  {!editResponsable && (
-                    <div style={{ position: 'relative' as const }}>
-                      <input
-                        style={{ ...styles.input, ...(editError?.field === 'responsable' ? styles.inputError : {}) }}
-                        placeholder="Buscar tercero..."
-                        value={responsableSearch}
-                        onChange={e => { setResponsableSearch(e.target.value); setEditError(null); }}
-                      />
-                      {responsableSearch.trim() && (
-                        <div style={styles.medicoDropdown}>
-                          {responsableResults.length === 0 ? (
-                            <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
-                          ) : (
-                            responsableResults.map(t => (
-                              <div
-                                key={t.id}
-                                style={styles.medicoDropdownItem}
-                                onClick={() => { setEditResponsable(t); setResponsableSearch(''); setEditError(null); }}
-                              >
-                                <Plus size={14} /> {t.nombreCompleto}
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {editError?.field === 'responsable' && <span style={styles.errorText}>{editError.message}</span>}
-                </div>
-
-                <div style={styles.formGroup} id="remision-edit-field-tarifa">
-                  <label style={styles.label}>Tarifa *</label>
-                  {!editCubrimiento ? (
-                    <span style={styles.readOnlyField}>Selecciona primero un cubrimiento</span>
-                  ) : (
-                    <>
-                      {editTarifa && (
-                        <div style={styles.medicoTagsWrap}>
-                          <span style={styles.medicoTag}>
-                            {editTarifa.nombre}
-                            <X size={12} style={{ cursor: 'pointer' }} onClick={() => setEditTarifa(null)} />
-                          </span>
-                        </div>
-                      )}
-                      {!editTarifa && (
-                        <div style={styles.sedeGrid}>
-                          {tarifaResults.map(t => (
-                            <button
-                              key={t.id}
-                              type="button"
-                              style={{ ...styles.sedeBtn, ...(editError?.field === 'tarifa' ? styles.inputError : {}) }}
-                              onMouseDown={e => e.preventDefault()}
-                              onClick={e => { setEditTarifa(t); setEditError(null); e.currentTarget.blur(); }}
-                            >
-                              <Circle size={14} style={{ flexShrink: 0 }} />
-                              {t.nombre}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
-                  {editError?.field === 'tarifa' && <span style={styles.errorText}>{editError.message}</span>}
-                </div>
-
-                <div style={styles.formGroup} id="remision-edit-field-anestesiologo">
-                  <label style={styles.label}>Anestesiólogo *</label>
-                  <input
-                    style={{ ...styles.input, ...(editError?.field === 'anestesiologo' ? styles.inputError : {}) }}
-                    value={editForm.anestesiologo}
-                    onChange={e => { setEditForm({ ...editForm, anestesiologo: e.target.value }); setEditError(null); }}
-                  />
-                  {editError?.field === 'anestesiologo' && <span style={styles.errorText}>{editError.message}</span>}
-                </div>
-
-                <div style={styles.formGroup} id="remision-edit-field-cirugiaRealizada">
-                  <label style={styles.label}>Cirugía Realizada *</label>
-                  <input
-                    style={{ ...styles.input, ...(editError?.field === 'cirugiaRealizada' ? styles.inputError : {}) }}
-                    value={editForm.cirugiaRealizada}
-                    onChange={e => { setEditForm({ ...editForm, cirugiaRealizada: e.target.value }); setEditError(null); }}
-                  />
-                  {editError?.field === 'cirugiaRealizada' && <span style={styles.errorText}>{editError.message}</span>}
-                </div>
-
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Impuestos</label>
-                  <div style={styles.sedeGrid}>
-                    {IMPUESTOS_REMISION.map(t => (
-                      <button
-                        key={t}
-                        type="button"
-                        style={{ ...styles.sedeBtn, ...(editForm.impuestos === t ? styles.sedeBtnActive : {}) }}
-                        onMouseDown={e => e.preventDefault()}
-                        onClick={e => { setEditForm({ ...editForm, impuestos: t }); e.currentTarget.blur(); }}
-                      >
-                        {editForm.impuestos === t ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>¿Tiene Dcto?</label>
-                  <div style={styles.horaGrid}>
-                    <button
-                      type="button"
-                      style={{ ...styles.sedeBtn, ...(!editForm.tieneDcto ? styles.sedeBtnActive : {}) }}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={e => { setEditForm({ ...editForm, tieneDcto: false }); e.currentTarget.blur(); }}
-                    >
-                      NO
-                    </button>
-                    <button
-                      type="button"
-                      style={{ ...styles.sedeBtn, ...(editForm.tieneDcto ? styles.sedeBtnActive : {}) }}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={e => { setEditForm({ ...editForm, tieneDcto: true }); e.currentTarget.blur(); }}
-                    >
-                      SI
-                    </button>
-                  </div>
-                </div>
-
-                {editForm.tieneDcto && (
-                  <>
-                    <div style={styles.formGroup}>
-                      <label style={styles.label}>% Dto</label>
-                      <div style={styles.stepperWrap}>
-                        <input
-                          type="number"
-                          step="0.01"
-                          style={{ ...styles.input, paddingRight: '5rem' }}
-                          placeholder="0.00"
-                          value={editForm.porcentajeDcto}
-                          onChange={e => setEditForm({ ...editForm, porcentajeDcto: e.target.value })}
-                        />
-                        <div style={styles.stepperBtns}>
-                          <button type="button" style={styles.stepperBtn} onClick={() => setEditForm({ ...editForm, porcentajeDcto: String((Number(editForm.porcentajeDcto) || 0) - 1) })}>−</button>
-                          <button type="button" style={styles.stepperBtn} onClick={() => setEditForm({ ...editForm, porcentajeDcto: String((Number(editForm.porcentajeDcto) || 0) + 1) })}>+</button>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div style={styles.formGroup}>
-                      <label style={styles.label}>V/R Dcto</label>
-                      <span style={styles.readOnlyField}>{formatMoney(editDescuentos)}</span>
-                    </div>
-
-                    <div style={styles.formGroup}>
-                      <label style={styles.label}>V/R Dcto $</label>
-                      <div style={styles.stepperWrap}>
-                        <input
-                          type="number"
-                          step="0.01"
-                          style={{ ...styles.input, paddingRight: '5rem' }}
-                          placeholder="0.00"
-                          value={editForm.vrDctoPesos}
-                          onChange={e => setEditForm({ ...editForm, vrDctoPesos: e.target.value })}
-                        />
-                        <div style={styles.stepperBtns}>
-                          <button type="button" style={styles.stepperBtn} onClick={() => setEditForm({ ...editForm, vrDctoPesos: String((Number(editForm.vrDctoPesos) || 0) - 100) })}>−</button>
-                          <button type="button" style={styles.stepperBtn} onClick={() => setEditForm({ ...editForm, vrDctoPesos: String((Number(editForm.vrDctoPesos) || 0) + 100) })}>+</button>
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Subtotal</label>
-                  <span style={styles.readOnlyField}>{formatMoney(editSubtotal)}</span>
-                </div>
-
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Total Antes Imp.</label>
-                  <span style={styles.readOnlyField}>{formatMoney(editTotalAntesImp)}</span>
-                </div>
-
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>IVA</label>
-                  <span style={styles.readOnlyField}>{formatMoney(editIva)}</span>
-                </div>
-
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Retención</label>
-                  <span style={styles.readOnlyField}>{formatMoney(editRetencion)}</span>
-                </div>
-
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Total Pagar</label>
-                  <span style={styles.readOnlyField}>{formatMoney(editTotalPagar)}</span>
-                </div>
-
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Saldo</label>
-                  <span style={styles.readOnlyField}>{formatMoney(remision.saldo)}</span>
-                </div>
-              </div>
-
-              <div style={styles.editModalFooter}>
-                <button style={styles.cancelBtn} onClick={() => setShowEditModal(false)}>Cancelar</button>
-                <button
-                  style={styles.saveBtn}
-                  onClick={handleGuardarEdit}
-                  disabled={updateRemisionMutation.isPending}
-                >
-                  {updateRemisionMutation.isPending ? 'Guardando...' : 'Guardar'}
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {selectedComisionId && (
+        <ComisionDetalleModal
+          id={selectedComisionId}
+          onClose={() => setSelectedComisionId(null)}
+        />
+      )}
 
       {showDeleteConfirm && (
         <div className="modal-overlay-anim" style={styles.modalOverlay}>
@@ -2441,13 +2040,12 @@ export default function RemisionDetailPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   container: { padding:'0.05rem 1.5rem 1.5rem', maxWidth: '1400px', margin: '0 auto' },
-  backLink: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem', padding: '0.25rem 0.1rem', border: 'none', background: 'transparent', color: '#6b7280', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, transition: 'color 0.15s ease' },
   headerCard: { backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', padding: '1.25rem 1.5rem 0', marginBottom: '2rem', overflow: 'hidden' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1.5rem' },
-  titleGroup: { flex: 1, display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', overflow: 'hidden' },
+  titleGroup: { flex: 1, display: 'flex', flexDirection: 'column' as const, justifyContent: 'space-between', height: '58px', overflow: 'hidden' },
   titleRow: { display: 'flex', alignItems: 'center', gap: '0.75rem', overflow: 'hidden' },
-  titleIconBadge: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '66px', height: '66px', borderRadius: '20px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#4d7a13', flexShrink: 0 },
-  breadcrumbRow: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem', color: '#9a9a90', marginTop: '0.25rem' },
+  titleLabel: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
+  breadcrumbRow: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', color: '#9a9a90' },
   breadcrumbId: { fontWeight: 500, color: '#4d7a13' },
   headerActions: { display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 },
   btnPill: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.1rem', border: '1px solid #e5e7eb', borderRadius: '12px', color: '#33342a', fontWeight: 600, fontSize: '0.84375rem', cursor: 'pointer', whiteSpace: 'nowrap' as const, flexShrink: 0 },
@@ -2465,7 +2063,7 @@ const styles: Record<string, React.CSSProperties> = {
   infoBarDividerLine: { position: 'absolute' as const, right: '-0.65rem', top: '15%', bottom: '15%', width: '1px', backgroundColor: '#e5e7eb' },
   infoBarLabel: { fontSize: '0.68rem', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em', flexShrink: 0 },
   infoBarValue: { fontSize: '0.9375rem', fontWeight: 700, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
-  title: { fontSize: '2.0625rem', fontWeight: 800, color: '#16170f', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  title: { fontSize: '1.7rem', fontWeight: 800, color: '#16170f', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   mainTabBar: { display: 'flex', gap: '0.25rem', borderBottom: '1px solid #eeeee6' },
   mainTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.75rem 1rem', border: 'none', background: 'transparent', fontSize: '0.84375rem', fontWeight: 600, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const },
   mainTabBtnActive: { color: '#4d7a13', borderBottomColor: '#4d7a13' },
@@ -2477,10 +2075,13 @@ const styles: Record<string, React.CSSProperties> = {
   generalItem: { display: 'flex', flexDirection: 'column' as const, gap: '0.35rem', minWidth: 0 },
   generalLabel: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
   generalValue: { fontSize: '0.875rem', fontWeight: 600, color: '#333', lineHeight: 1.4, wordBreak: 'break-word' as const },
+  generalTagPill: { display: 'inline-flex', alignSelf: 'flex-start' as const, alignItems: 'center', padding: '0.4rem 0.75rem', borderRadius: '999px', fontSize: '0.82rem', fontWeight: 600, lineHeight: 1.3, backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' },
+  generalValueClamp: { display: '-webkit-box' as const, WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden' as const },
+  verMasBtn: { alignSelf: 'flex-start' as const, background: 'transparent', border: 'none', padding: 0, color: '#4d7a13', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '0.2rem' },
   firmaThumb: { maxHeight: '48px', maxWidth: '160px', objectFit: 'contain' as const, backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '0.25rem', cursor: 'pointer' },
   firmaEmpty: { fontSize: '0.875rem', fontWeight: 600, color: '#9ca3af', fontStyle: 'italic' as const },
   compactHeaderPositioner: {
-    position: 'fixed' as const, top: '60px', left: 0, right: 0, zIndex: 50,
+    position: 'fixed' as const, top: '62px', left: 0, right: 0, zIndex: 50,
     maxWidth: '1400px', margin: '0 auto',
     padding: '0 1.5rem',
     pointerEvents: 'none' as const,
@@ -2492,12 +2093,11 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0.75rem 1.5rem',
     boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
     border: '1px solid #e5e7eb',
-    borderTop: 'none',
-    borderRadius: '0 0 12px 12px',
+    borderRadius: '12px',
     pointerEvents: 'auto' as const,
   },
   compactTitle: { fontSize: '1rem', fontWeight: 700, color: '#333', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
-  titleId: { fontSize: '0.8rem', fontWeight: 700, color: '#6b8c1f', fontFamily: 'monospace', flexShrink: 0 },
+  titleId: { fontSize: '0.8rem', fontWeight: 500, color: '#4d7a13', flexShrink: 0 },
   estadoBadge: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.4rem 0.85rem', borderRadius: '999px', fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer' },
   estadoDot: { width: '7px', height: '7px', borderRadius: '50%', flexShrink: 0 },
   estadoMenu: { position: 'absolute' as const, top: 'calc(100% + 0.5rem)', left: 0, backgroundColor: '#fff', borderRadius: '10px', border: '1px solid #e5e7eb', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', padding: '0.4rem', minWidth: '160px', zIndex: 20 },
@@ -2517,13 +2117,19 @@ const styles: Record<string, React.CSSProperties> = {
   emptyState: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', padding: '2rem', textAlign: 'center' as const, color: '#9ca3af', fontSize: '0.875rem' },
   colHeader: { backgroundColor: '#f9fafb', borderBottom: '2px solid #e5e7eb' },
   colHeaderText: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
-  consumoRow: { display: 'grid', gridTemplateColumns: '40px 85px 1fr 85px 85px 85px', alignItems: 'center', padding: '0.6rem 1rem', gap: '0.4rem', backgroundColor: '#fff', minWidth: '560px' },
   tecnicoRow: { display: 'grid', gridTemplateColumns: '1fr 140px 120px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff', minWidth: '480px' },
   scrollBody: { maxHeight: '320px', overflowY: 'auto' as const },
   rowBorder: { borderTop: '1px solid #f3f4f6' },
   rowHover: { backgroundColor: '#f3f4f6', cursor: 'pointer' },
   cellText: { fontSize: '0.85rem', color: '#374151', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' as const, whiteSpace: 'nowrap' as const },
-  cellCode: { fontSize: '0.78rem', fontWeight: 700, color: '#6b8c1f', fontFamily: 'monospace', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' as const, whiteSpace: 'nowrap' as const },
+  consumosTableWrap: { overflow: 'auto' as const, maxHeight: '320px', borderRadius: '10px', border: '1px solid #eeeee6' },
+  consumosTable: { width: '100%', borderCollapse: 'collapse' as const, fontSize: '0.78rem' },
+  consumosTh: { padding: '0.55rem 0.75rem', textAlign: 'left' as const, fontWeight: 700, color: '#9ca3af', fontSize: '0.65rem', textTransform: 'uppercase' as const, letterSpacing: '0.03em', backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' as const, position: 'sticky' as const, top: 0 },
+  consumosTd: { padding: '0.35rem 0.75rem', borderBottom: '1px solid #f3f4f0', color: '#33342a', whiteSpace: 'nowrap' as const },
+  consumosTdTruncate: { overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, maxWidth: '260px' },
+  consumosTotalBar: { display: 'flex', flexWrap: 'wrap' as const, justifyContent: 'flex-end' as const, gap: '1.75rem', marginTop: '1rem', padding: '1rem 1.25rem', backgroundColor: '#f9fafb', border: '1px solid #eeeee6', borderRadius: '10px' },
+  consumosTotalItem: { display: 'flex', flexDirection: 'column' as const, alignItems: 'flex-end' as const, gap: '0.3rem' },
+  consumosTotalValue: { fontSize: '0.95rem', fontWeight: 700 },
   tecnicoAvatar: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '50%', backgroundColor: '#e9f2d8', color: '#4d7a13', fontSize: '0.62rem', fontWeight: 700, flexShrink: 0 },
   modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 },
   modalContent: { backgroundColor: '#fff', borderRadius: '12px', width: '90%', maxWidth: '480px', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
@@ -2545,7 +2151,7 @@ const styles: Record<string, React.CSSProperties> = {
   editModalBody: { padding: '1.5rem', display: 'flex', flexDirection: 'column' as const, gap: '1.25rem' },
   formGroup: { display: 'flex', flexDirection: 'column' as const, gap: '0.5rem' },
   input: { padding: '0.75rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', fontSize: '0.875rem', outline: 'none', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' as const },
-  inputError: { borderColor: '#dc2626' },
+  inputError: { border: '1.5px solid #dc2626' },
   errorText: { fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 },
   cancelBtn: { padding: '0.5rem 1.5rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: '0.875rem', color: '#333' },
   saveBtn: { padding: '0.5rem 1.5rem', backgroundColor: '#6b8c1f', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.875rem' },

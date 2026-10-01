@@ -9,6 +9,7 @@ import { programacionesService, type ProgramacionItem } from '../../../services/
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
+import { prefetchRoute } from '../../../routeImports';
 
 const formatDate = (dateString: string | null): string => {
   if (!dateString) return '-';
@@ -99,7 +100,7 @@ const RemisionRow = memo(({ item, index, navigate }: { item: RemisionListItem; i
   <tr
     style={styles.tr}
     onClick={() => navigate(`/operacion/remisiones/${item.id}`, '/operacion/remisiones/:id')}
-    onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f3f4f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)'; }}
+    onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f3f4f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)'; prefetchRoute('/operacion/remisiones/:id'); }}
     onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; e.currentTarget.style.boxShadow = 'none'; }}
   >
     <td style={{ ...styles.td, textAlign: 'center', fontWeight: 600, color: '#999', width: '40px' }}>{index + 1}</td>
@@ -135,7 +136,11 @@ const RemisionRow = memo(({ item, index, navigate }: { item: RemisionListItem; i
 ));
 
 const RemisionCard = memo(({ item, navigate }: { item: RemisionListItem; navigate: (path: string, routeKey?: string) => void }) => (
-  <div style={styles.mobileCard} onClick={() => navigate(`/operacion/remisiones/${item.id}`, '/operacion/remisiones/:id')}>
+  <div
+    style={styles.mobileCard}
+    onClick={() => navigate(`/operacion/remisiones/${item.id}`, '/operacion/remisiones/:id')}
+    onTouchStart={() => prefetchRoute('/operacion/remisiones/:id')}
+  >
     <div style={styles.mobileCardTopRow}>
       <span style={styles.mobileCardId}>{item.numRemision ?? item.id}</span>
       <EstadoBadge estado={item.estado} />
