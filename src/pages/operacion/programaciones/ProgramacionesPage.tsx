@@ -676,7 +676,7 @@ export default function ProgramacionesPage() {
   });
 
   const openNewModal = () => {
-    setNewForm({ fechaQx: getTodayMexico(), horaQx: '', sedeId: getUsuarioActualSedeId(), hospitalId: '' });
+    setNewForm({ fechaQx: '', horaQx: '', sedeId: getUsuarioActualSedeId(), hospitalId: '' });
     setNewObservaciones('');
     setNewConsumo('');
     setNewConsumoPanelOpen(false);
