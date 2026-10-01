@@ -4,6 +4,7 @@ import { Loader, FileText, X, Plus, Pencil, Trash2, AlertCircle, Check } from 'l
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import SuccessToast from '../../../components/SuccessToast';
 import DatePicker from '../../../components/DatePicker';
+import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import {
   remisionesService,
   type RequisicionItem,
@@ -52,6 +53,17 @@ const formatMoney = (value: number | null): string => {
   return Number.isNaN(num) ? '-' : `$${num.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
+// Parte el id en el segundo guion bajo, dejando el guion bajo en la primera línea (ej.
+// "REQ_0000005_0000001" → "REQ_0000005_" / "0000001") para que el título del modal se muestre en
+// 2 líneas fijas en vez de cortarse en cualquier punto.
+function splitIdAtSecondUnderscore(id: string): [string, string | null] {
+  const firstUnderscore = id.indexOf('_');
+  if (firstUnderscore === -1) return [id, null];
+  const secondUnderscore = id.indexOf('_', firstUnderscore + 1);
+  if (secondUnderscore === -1) return [id, null];
+  return [id.slice(0, secondUnderscore + 1), id.slice(secondUnderscore + 1)];
+}
+
 const PRECIO_POR_CUBRIMIENTO: Record<string, keyof ProductoOption> = {
   PARTICULARES: 'particulares',
   HOSPITALES: 'hospitales',
@@ -86,6 +98,7 @@ interface RequisicionDetalleModalProps {
 // Mismo formato que el detalle de Cotizaciones (DetalleModal en CotizacionesPage.tsx): modal con
 // header + pestañas (Información General / Insumos), en vez de una página de ruta aparte.
 export default function RequisicionDetalleModal({ id, onClose }: RequisicionDetalleModalProps) {
+  const { isMobile } = useResponsiveStyles();
   const queryClient = useQueryClient();
   const [mainTab, setMainTab] = useState<'general' | 'insumos'>('general');
   const [hoveredPdfBtn, setHoveredPdfBtn] = useState<'pdf' | 'sos' | null>(null);
@@ -385,24 +398,34 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
             <>
               <div style={styles.headerCard}>
                 <div style={styles.headerTopRow}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', minWidth: 0, flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', minWidth: 0, flex: 1, ...(isMobile ? { paddingRight: '2.75rem', boxSizing: 'border-box' as const } : {}) }}>
                     <div style={styles.titleIconBadge}>
                       <MaterialIcon name="inventory_2" size={20} color="#4d7a13" />
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', minWidth: 0 }}>
                       <span style={styles.titleLabel}>Requisición</span>
-                      <h2 style={styles.title}>{req.id}</h2>
+                      {isMobile ? (() => {
+                        const [primeraLinea, segundaLinea] = splitIdAtSecondUnderscore(req.id);
+                        return (
+                          <h2 style={{ ...styles.title, whiteSpace: 'nowrap' as const }}>
+                            {primeraLinea}
+                            {segundaLinea && <><br />{segundaLinea}</>}
+                          </h2>
+                        );
+                      })() : (
+                        <h2 style={styles.title}>{req.id}</h2>
+                      )}
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                     <button
                       className="btn-press"
                       style={{ ...styles.btnPill, ...(hoveredPdfBtn === 'pdf' ? styles.btnPillHover : {}) }}
                       onMouseEnter={() => setHoveredPdfBtn('pdf')}
                       onMouseLeave={() => setHoveredPdfBtn(null)}
                     >
-                      <FileText size={15} color="#4d7a13" /> Crear PDF
+                      <FileText size={15} color="#4d7a13" /> {isMobile ? 'PDF' : 'Crear PDF'}
                     </button>
                     <button
                       className="btn-press"
@@ -410,7 +433,7 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
                       onMouseEnter={() => setHoveredPdfBtn('sos')}
                       onMouseLeave={() => setHoveredPdfBtn(null)}
                     >
-                      <FileText size={15} color="#4d7a13" /> PDF S.O.S
+                      <FileText size={15} color="#4d7a13" /> {isMobile ? 'S.O.S' : 'PDF S.O.S'}
                     </button>
 
                     <span style={styles.headerDivider} />
@@ -442,10 +465,18 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
                       )}
                     </div>
 
-                    <button style={styles.closeBtn} onClick={onClose}>
+                    {!isMobile && (
+                      <button style={styles.closeBtn} onClick={onClose}>
+                        <X size={18} />
+                      </button>
+                    )}
+                  </div>
+
+                  {isMobile && (
+                    <button style={{ ...styles.closeBtn, position: 'absolute' as const, top: '1.5rem', right: '1.5rem' }} onClick={onClose}>
                       <X size={18} />
                     </button>
-                  </div>
+                  )}
                 </div>
 
                 <div style={styles.summaryBar}>
@@ -483,7 +514,7 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
               <div key={mainTab} className="page-fade-in">
                 {mainTab === 'general' && (
                   <div style={styles.infoSectionBox}>
-                    <div style={styles.detalleGrid}>
+                    <div style={{ ...styles.detalleGrid, ...(isMobile ? { gridTemplateColumns: '1fr' } : {}) }}>
                       <DetalleItem label="ID Movimiento" value={req.id} />
                       <DetalleItem label="Marca de Tiempo" value={formatDateTime(req.marcaDeTiempo)} />
                       <TagItem label="Usuario" value={req.usuario || '-'} />
@@ -568,7 +599,7 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
             </div>
             <div style={styles.modalBody}>
               <div style={styles.infoSectionBox}>
-                <div style={styles.detalleGrid}>
+                <div style={{ ...styles.detalleGrid, ...(isMobile ? { gridTemplateColumns: '1fr' } : {}) }}>
                   <DetalleItem label="ID Detalle" value={selectedInsumo.id} />
                   <DetalleItem label="Movimiento" value={req.id} />
                   <TagItem label="Lote" value={selectedInsumo.lote ?? '-'} />
@@ -1003,7 +1034,7 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
 
 const styles: Record<string, React.CSSProperties> = {
   modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: '2rem' },
-  modalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '90%', maxWidth: '900px', maxHeight: '90dvh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
+  modalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '90%', maxWidth: '900px', maxHeight: '90dvh', overflowY: 'auto' as const, overflowX: 'hidden' as const, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
   subModalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '90%', maxWidth: '640px', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
   subModalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.25rem 1.5rem', backgroundColor: '#f9fafb', borderBottom: '1px solid #eeeee6', borderTopLeftRadius: '16px', borderTopRightRadius: '16px', position: 'sticky' as const, top: 0 },
   subModalFooter: { display: 'flex', gap: '0.75rem', padding: '1.25rem 1.5rem', borderTop: '1px solid #eeeee6', justifyContent: 'flex-end' as const },
@@ -1033,8 +1064,8 @@ const styles: Record<string, React.CSSProperties> = {
   countBadge: { backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '0.72rem', fontWeight: 700, minWidth: '1.4rem', height: '1.4rem', padding: '0 0.4rem', borderRadius: '999px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
   countBadgeActive: { backgroundColor: '#e9f2d8', color: '#3f6510' },
 
-  infoTabBar: { display: 'flex', gap: '0.25rem', borderBottom: '1px solid #eeeee6', marginTop: '1.25rem' },
-  infoTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.75rem 1rem', border: 'none', background: 'transparent', fontSize: '0.84375rem', fontWeight: 600, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none' },
+  infoTabBar: { display: 'flex', gap: '0.25rem', borderBottom: '1px solid #eeeee6', marginTop: '1.25rem', overflowX: 'auto' as const, overflowY: 'hidden' as const },
+  infoTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.75rem 1rem', border: 'none', background: 'transparent', fontSize: '0.84375rem', fontWeight: 600, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none', flexShrink: 0 as const, whiteSpace: 'nowrap' as const },
   infoTabBtnActive: { color: '#4d7a13', borderBottomColor: '#4d7a13' },
   infoTabBtnInactive: { color: '#6b7280', borderBottomColor: 'transparent' },
 

@@ -986,11 +986,15 @@ const CotizacionCard = memo(({ item, onSelect }: { item: CotizacionListItem; onS
   </div>
 ));
 
-function DetalleItem({ label, children, bold, labelBold = true }: { label: string; children: React.ReactNode; bold?: boolean; labelBold?: boolean }) {
+function DetalleItem({ label, children, bold, labelBold = true, tag }: { label: string; children: React.ReactNode; bold?: boolean; labelBold?: boolean; tag?: boolean }) {
   return (
     <div style={styles.detalleItem}>
       <span style={{ ...styles.detalleLabel, ...(labelBold ? {} : { fontWeight: 500 }) }}>{label}</span>
-      <span style={{ ...styles.detalleValue, ...(bold ? { fontWeight: 600 } : {}) }}>{children}</span>
+      {tag ? (
+        <span style={styles.medicoTag}>{children}</span>
+      ) : (
+        <span style={{ ...styles.detalleValue, ...(bold ? { fontWeight: 600 } : {}) }}>{children}</span>
+      )}
     </div>
   );
 }
@@ -4454,12 +4458,12 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
                 <div style={styles.infoSectionBox}>
                   <div style={styles.detalleGrid}>
                     <DetalleItem label="N° Cotización" bold labelBold={false}>{data.numCotizacion || data.id}</DetalleItem>
-                    <DetalleItem label="Registrado Por" bold labelBold={false}>{data.usuario ?? '-'}</DetalleItem>
+                    <DetalleItem label="Registrado Por" tag>{data.usuario ?? '-'}</DetalleItem>
                     <DetalleItem label="Marca de Tiempo" bold labelBold={false}>{formatDateTime(data.marcaDeTiempo)}</DetalleItem>
                     <DetalleItem label="Fecha" bold labelBold={false}>{formatDate(data.fecha)}</DetalleItem>
                     <DetalleItem label="Dirigido a" bold labelBold={false}>{data.dirigidoA ?? '-'}</DetalleItem>
-                    <DetalleItem label="Médico" bold labelBold={false}>{data.medico ?? '-'}</DetalleItem>
-                    <DetalleItem label="Hospital" bold labelBold={false}>{data.hospital ?? '-'}</DetalleItem>
+                    <DetalleItem label="Médico" tag>{data.medico ?? '-'}</DetalleItem>
+                    <DetalleItem label="Hospital" tag>{data.hospital ?? '-'}</DetalleItem>
                     <DetalleItem label="Cirugía" bold labelBold={false}>{data.cirugia ?? '-'}</DetalleItem>
                     <DetalleItem label="Sede" bold labelBold={false}>{data.sede ?? '-'}</DetalleItem>
                   </div>

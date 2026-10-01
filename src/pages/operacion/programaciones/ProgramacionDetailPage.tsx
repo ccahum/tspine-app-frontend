@@ -596,6 +596,7 @@ export default function ProgramacionDetailPage() {
   const [tecnicoSugeridoSearch, setTecnicoSugeridoSearch] = useState('');
   const [tecnicoSugeridoFocused, setTecnicoSugeridoFocused] = useState(false);
   const [tecnicoSugeridoError, setTecnicoSugeridoError] = useState<{ field: string; message: string } | null>(null);
+  const [showTecnicoSugeridoSuccess, setShowTecnicoSugeridoSuccess] = useState(false);
 
   useEffect(() => {
     document.body.style.overflow = (selectedTecnico || showEditModal || showComisionModal || showConfirmComision || showDocumentoModal || showRequisicionModal || showInsumoSubModal || showRemisionModal || showTecnicoSugeridoModal || selectedCotizacionId || validarConsumoId) ? 'hidden' : '';
@@ -1282,6 +1283,7 @@ export default function ProgramacionDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tecnicos-sugeridos', id] });
       setShowTecnicoSugeridoModal(false);
+      setShowTecnicoSugeridoSuccess(true);
     },
   });
 
@@ -1297,6 +1299,7 @@ export default function ProgramacionDetailPage() {
     setTecnicoSugeridoSearch('');
     setTecnicoSugeridoFocused(false);
     setTecnicoSugeridoError(null);
+    setShowTecnicoSugeridoSuccess(false);
     setShowTecnicoSugeridoModal(true);
   };
 
@@ -1946,17 +1949,17 @@ export default function ProgramacionDetailPage() {
               <div style={styles.emptyState}>No hay datos relacionados</div>
             ) : (
               <div style={styles.remList}>
-                <div style={{ ...styles.remGridRow, ...styles.colHeader }}>
-                  <span style={styles.colHeaderText}>N° Remisión</span>
-                  <span style={styles.colHeaderText}>Estado</span>
-                  <span style={styles.colHeaderText}>CxC</span>
-                  <span style={{ ...styles.colHeaderText, textAlign: 'right' as const }}>Total</span>
-                </div>
                 <div ref={remisionesScrollRef} style={styles.scrollBody}>
+                  <div style={{ ...styles.remGridRow, ...(isMobile ? styles.remGridRowMobile : {}), ...styles.colHeader, position: 'sticky' as const, top: 0, zIndex: 1 }}>
+                    <span style={styles.colHeaderText}>N° Remisión</span>
+                    <span style={styles.colHeaderText}>Estado</span>
+                    <span style={styles.colHeaderText}>CxC</span>
+                    <span style={{ ...styles.colHeaderText, ...(isMobile ? {} : { textAlign: 'right' as const }) }}>Total</span>
+                  </div>
                   {remisiones.map((rem, i) => (
                     <div
                       key={rem.id}
-                      style={{ ...styles.remGridRow, ...(i > 0 ? styles.remRowBorder : {}), cursor: 'pointer' }}
+                      style={{ ...styles.remGridRow, ...(isMobile ? styles.remGridRowMobile : {}), ...(i > 0 ? styles.remRowBorder : {}), cursor: 'pointer' }}
                       onClick={() => navigate(`/operacion/remisiones/${rem.id}`, '/operacion/remisiones/:id')}
                       onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f3f4f6'; }}
                       onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; }}
@@ -1976,7 +1979,7 @@ export default function ProgramacionDetailPage() {
                           : <><Circle size={13} color="#9ca3af" /><span style={{ color: '#9ca3af' }}>Pendiente</span></>
                         }
                       </div>
-                      <span style={{ ...styles.requisicionCellText, textAlign: 'right' as const, fontWeight: 600, color: '#333' }}>{formatMoney(rem.total)}</span>
+                      <span style={{ ...styles.requisicionCellText, ...(isMobile ? { fontSize: '0.75rem', fontWeight: 600, color: '#374151' } : { textAlign: 'right' as const, fontWeight: 600, color: '#333' }) }}>{formatMoney(rem.total)}</span>
                     </div>
                   ))}
                 </div>
@@ -3789,7 +3792,7 @@ export default function ProgramacionDetailPage() {
 
       {showRequisicionModal && (
         <div className="modal-overlay-anim" style={styles.modalOverlay}>
-          <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
+          <div className="modal-content-anim" style={{ ...styles.editModalContent, maxHeight: '80dvh' }} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
               <button style={styles.closeBtn} onClick={() => setShowRequisicionModal(false)}>
                 <X size={18} />
@@ -4328,6 +4331,7 @@ export default function ProgramacionDetailPage() {
       <SuccessToast show={showRemisionSuccess} message={`Remisión ${remisionCreatedId ?? ''} creada`} onClose={() => setShowRemisionSuccess(false)} />
       <SuccessToast show={showRequisicionSuccess} message={`Requisición ${requisicionCreatedId ?? ''} creada`} onClose={() => setShowRequisicionSuccess(false)} />
       <SuccessToast show={showValidarConsumoSuccess} message="Consumo validado" onClose={() => setShowValidarConsumoSuccess(false)} />
+      <SuccessToast show={showTecnicoSugeridoSuccess} message="Técnico sugerido agregado" onClose={() => setShowTecnicoSugeridoSuccess(false)} />
       <SuccessToast show={showDetalleInversionistaSuccess} message="Detalle de inversionista agregado" onClose={() => setShowDetalleInversionistaSuccess(false)} />
       <SuccessToast show={showComisionSuccess} message="Comisión agregada" onClose={() => setShowComisionSuccess(false)} />
       {pendingWhatsappShare && (
@@ -4591,20 +4595,21 @@ export const styles: Record<string, React.CSSProperties> = {
   sectionTitle: { fontSize: '1.1rem', fontWeight: 700, color: '#333', margin: 0 },
   badge: { backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '0.75rem', fontWeight: 700, minWidth: '1.5rem', height: '1.5rem', padding: '0 0.4rem', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
   remisionesGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1rem' },
-  remList: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', overflowX: 'auto' as const, overflowY: 'hidden' as const },
+  remList: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', overflow: 'hidden' as const },
   emptyState: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', padding: '2rem', textAlign: 'center' as const, color: '#9ca3af', fontSize: '0.875rem' },
   // overflowX explícito porque dejar overflow-x en su valor por defecto ("visible") mientras
   // overflow-y es "auto" hace que el navegador lo compute también como "auto" (así lo pide el
   // spec de CSS) — esto creaba una SEGUNDA barra de scroll horizontal propia de este contenedor,
   // además de la que ya pone remList por fuera (header + body juntos). Con overflowX:'hidden' acá,
   // solo queda la barra externa de remList.
-  scrollBody: { height: '135px', overflowY: 'auto' as const, overflowX: 'hidden' as const, backgroundColor: '#f9fafb' },
+  scrollBody: { height: '135px', overflowY: 'auto' as const, overflowX: 'auto' as const, backgroundColor: '#f9fafb' },
   tecnicoScrollBody: { height: '135px', overflowY: 'auto' as const, overflowX: 'hidden' as const, backgroundColor: '#f9fafb' },
   remRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem 1.25rem', backgroundColor: '#fff' },
-  remGridRow: { display: 'grid', gridTemplateColumns: '1fr 110px 130px 110px', alignItems: 'center', padding: '0.45rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff', minWidth: '420px' },
+  remGridRow: { display: 'grid', gridTemplateColumns: '190px 110px 130px 110px', alignItems: 'center', padding: '0.45rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff' },
+  remGridRowMobile: { gridTemplateColumns: '150px 90px 90px 90px', padding: '0.45rem 0.75rem', gap: '0.35rem' },
   remRowBorder: { borderTop: '1px solid #f3f4f6' },
-  remRowLeft: { display: 'flex', alignItems: 'center', gap: '0.5rem' },
-  remRowCode: { fontSize: '0.875rem', fontWeight: 700, color: '#374151' },
+  remRowLeft: { display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0, overflow: 'hidden' as const },
+  remRowCode: { fontSize: '0.875rem', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' as const, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const },
   remRowRight: { display: 'flex', alignItems: 'center', gap: '0.75rem' },
   estadoBadge: { fontSize: '0.65rem', fontWeight: 700, padding: '0.2rem 0.6rem', borderRadius: '999px', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
   estadoDefinitiva: { backgroundColor: '#dcfce7', color: '#15803d' },
@@ -4617,7 +4622,7 @@ export const styles: Record<string, React.CSSProperties> = {
   tecnicoListRow: { display: 'flex', alignItems: 'center', gap: '0.65rem', padding: '0.45rem 1.25rem' },
   tecnicoAvatar: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '30px', height: '30px', borderRadius: '50%', backgroundColor: '#e9f2d8', color: '#4d7a13', fontSize: '0.65rem', fontWeight: 700, flexShrink: 0 },
   colHeader: { backgroundColor: '#f9fafb', borderBottom: '2px solid #e5e7eb' },
-  colHeaderText: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
+  colHeaderText: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em', whiteSpace: 'nowrap' as const },
   consumoRow: { display: 'grid', gridTemplateColumns: '120px 55px 110px 1fr 130px 110px', alignItems: 'center', padding: '0.6rem 1.25rem', backgroundColor: '#fff', minWidth: '700px' },
   consumoGrid: { display: 'grid', gridTemplateColumns: '120px 55px 110px 1fr 130px 110px', padding: '0 1.25rem', backgroundColor: '#fff', minWidth: '700px' },
   consumoGrupoDivider: { borderBottom: '2px solid #e5e7eb' },

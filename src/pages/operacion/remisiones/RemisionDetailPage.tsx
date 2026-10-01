@@ -1135,7 +1135,7 @@ export default function RemisionDetailPage() {
       )}
       <div style={styles.container}>
         <div style={styles.headerCard}>
-          <div style={styles.header}>
+          <div style={{ ...styles.header, ...(isMobile ? { flexWrap: 'wrap' as const } : {}) }}>
             <HeaderBackReveal
               onBack={() => navigate(-1)}
               icon={<MaterialIcon name="receipt_long" size={30} color="#4d7a13" />}
@@ -1146,7 +1146,7 @@ export default function RemisionDetailPage() {
               <div style={styles.titleGroup}>
                 <span style={styles.titleLabel}>Remisión</span>
                 <div style={styles.titleRow}>
-                  <h1 style={styles.title}>{remision.numRemision || remision.id}</h1>
+                  <h1 style={{ ...styles.title, ...(isMobile ? { fontSize: '0.95rem' } : {}) }}>{remision.numRemision || remision.id}</h1>
                 </div>
                 <div style={styles.breadcrumbRow}>
                   <span style={styles.breadcrumbId}> {remision.programacion?.numProgram || remision.programacion?.id || '-'}</span>
@@ -1169,7 +1169,7 @@ export default function RemisionDetailPage() {
                     onMouseLeave={() => setConvertirFacturaTooltipPos(null)}
                   >
                     <Receipt size={16} />
-                    {convertirFacturaMutation.isPending ? 'Convirtiendo...' : 'Convertir en Factura'}
+                    {convertirFacturaMutation.isPending ? 'Convirtiendo...' : (isMobile ? 'Factura' : 'Convertir en Factura')}
                   </button>
                   {!remision.puedeConvertirFactura && convertirFacturaTooltipPos && (
                     <div style={{ ...styles.tooltipBubble, top: convertirFacturaTooltipPos.top - 8, left: convertirFacturaTooltipPos.left }}>
@@ -1237,26 +1237,26 @@ export default function RemisionDetailPage() {
             </div>
           </div>
 
-          <div style={{ ...styles.infoBar, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)' }}>
+          <div style={{ ...styles.infoBar, gridTemplateColumns: isMobile ? '1fr' : 'repeat(5, 1fr)' }}>
             <div style={styles.infoBarItem}>
               <span style={styles.infoBarLabel}>Total</span>
               <span style={styles.infoBarValue}><AnimatedMoney value={remision.total} start={statsMounted} /></span>
-              <span style={styles.infoBarDividerLine} />
+              {!isMobile && <span style={styles.infoBarDividerLine} />}
             </div>
             <div style={styles.infoBarItem}>
               <span style={styles.infoBarLabel}>Saldo</span>
               <span style={styles.infoBarValue}><AnimatedMoney value={remision.saldo} start={statsMounted} /></span>
-              <span style={styles.infoBarDividerLine} />
+              {!isMobile && <span style={styles.infoBarDividerLine} />}
             </div>
             <div style={styles.infoBarItem}>
               <span style={styles.infoBarLabel}>Hospital</span>
-              <span style={styles.infoBarValue}>{remision.programacion?.hospital?.nombre || '-'}</span>
-              <span style={styles.infoBarDividerLine} />
+              <span style={{ ...styles.infoBarValue, ...(isMobile ? { whiteSpace: 'normal' as const } : {}) }}>{remision.programacion?.hospital?.nombre || '-'}</span>
+              {!isMobile && <span style={styles.infoBarDividerLine} />}
             </div>
             <div style={styles.infoBarItem}>
               <span style={styles.infoBarLabel}>Usuario</span>
-              <span style={styles.infoBarValue}>{remision.usuario?.nombreCompleto || '-'}</span>
-              <span style={styles.infoBarDividerLine} />
+              <span style={{ ...styles.infoBarValue, ...(isMobile ? { whiteSpace: 'normal' as const } : {}) }}>{remision.usuario?.nombreCompleto || '-'}</span>
+              {!isMobile && <span style={styles.infoBarDividerLine} />}
             </div>
             <div style={{ ...styles.infoBarItem, position: 'relative' as const }} ref={estadoMenuRef}>
               <span style={styles.infoBarLabel}>Estado</span>
@@ -1324,7 +1324,7 @@ export default function RemisionDetailPage() {
             <div style={styles.sectionTitleRow}>
               <h2 style={styles.sectionTitle}>Información General</h2>
             </div>
-            <div style={styles.generalGrid}>
+            <div style={{ ...styles.generalGrid, ...(isMobile ? { gridTemplateColumns: '1fr' } : {}) }}>
               <div style={styles.generalItem}><span style={styles.generalLabel}>N° Program</span><span style={styles.generalTagPill}>{remision.programacion?.numProgram || remision.programacion?.id || '-'}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>N° Remisión</span><span style={styles.generalValue}>{remision.numRemision || remision.id}</span></div>
               <div style={styles.generalItem}><span style={styles.generalLabel}>Usuario</span><span style={styles.generalTagPill}>{remision.usuario?.nombreCompleto || '-'}</span></div>
@@ -1357,7 +1357,7 @@ export default function RemisionDetailPage() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '1.5rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '1.5rem', minWidth: 0 }}>
             <div>
               <div style={styles.sectionTitleRow}>
                 <h2 style={styles.sectionTitle}>Técnicos asociados</h2>
@@ -2039,7 +2039,7 @@ export default function RemisionDetailPage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: { padding:'0.05rem 1.5rem 1.5rem', maxWidth: '1400px', margin: '0 auto' },
+  container: { padding:'0.05rem 1.5rem 1.5rem', maxWidth: '1400px', margin: '0 auto', overflowX: 'hidden' as const },
   headerCard: { backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', padding: '1.25rem 1.5rem 0', marginBottom: '2rem', overflow: 'hidden' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1.5rem' },
   titleGroup: { flex: 1, display: 'flex', flexDirection: 'column' as const, justifyContent: 'space-between', height: '58px', overflow: 'hidden' },
@@ -2064,13 +2064,13 @@ const styles: Record<string, React.CSSProperties> = {
   infoBarLabel: { fontSize: '0.68rem', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em', flexShrink: 0 },
   infoBarValue: { fontSize: '0.9375rem', fontWeight: 700, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   title: { fontSize: '1.7rem', fontWeight: 800, color: '#16170f', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
-  mainTabBar: { display: 'flex', gap: '0.25rem', borderBottom: '1px solid #eeeee6' },
-  mainTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.75rem 1rem', border: 'none', background: 'transparent', fontSize: '0.84375rem', fontWeight: 600, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const },
+  mainTabBar: { display: 'flex', gap: '0.25rem', borderBottom: '1px solid #eeeee6', overflowX: 'auto' as const, overflowY: 'hidden' as const },
+  mainTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.75rem 1rem', border: 'none', background: 'transparent', fontSize: '0.84375rem', fontWeight: 600, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, flexShrink: 0, whiteSpace: 'nowrap' as const },
   mainTabBtnActive: { color: '#4d7a13', borderBottomColor: '#4d7a13' },
   mainTabBtnInactive: { color: '#6b7280', borderBottomColor: 'transparent' },
   mainTabBadge: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: '1.3rem', height: '1.3rem', padding: '0 0.4rem', borderRadius: '999px', backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '0.7rem', fontWeight: 700, lineHeight: 1 },
   mainTabBadgeActive: { backgroundColor: '#e9f2d8', color: '#3f6510' },
-  generalCard: { backgroundColor: '#fff', borderRadius: '12px', padding: '1.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' },
+  generalCard: { backgroundColor: '#fff', borderRadius: '12px', padding: '1.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', minWidth: 0, boxSizing: 'border-box' as const },
   generalGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1.5rem 2rem' },
   generalItem: { display: 'flex', flexDirection: 'column' as const, gap: '0.35rem', minWidth: 0 },
   generalLabel: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
@@ -2085,9 +2085,11 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: '1400px', margin: '0 auto',
     padding: '0 1.5rem',
     pointerEvents: 'none' as const,
+    overflow: 'hidden' as const,
+    boxSizing: 'border-box' as const,
   },
   compactHeader: {
-    width: 'fit-content', maxWidth: '480px',
+    width: 'fit-content', maxWidth: '100%',
     display: 'flex', flexDirection: 'column' as const, gap: '0.2rem',
     backgroundColor: '#fff',
     padding: '0.75rem 1.5rem',

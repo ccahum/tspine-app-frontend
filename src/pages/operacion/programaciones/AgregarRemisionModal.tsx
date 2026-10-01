@@ -410,7 +410,7 @@ export default function AgregarRemisionModal({ programacion, programacionId, onC
   return (
     <>
       <div className="modal-overlay-anim" style={styles.modalOverlay}>
-        <div className="modal-content-anim" style={styles.editModalContent} data-enter-nav-root onClick={e => e.stopPropagation()}>
+        <div className="modal-content-anim" style={{ ...styles.editModalContent, maxHeight: '80dvh' }} data-enter-nav-root onClick={e => e.stopPropagation()}>
           <div style={styles.editModalHeader}>
             <button style={styles.closeBtn} onClick={onClose}>
               <X size={18} />

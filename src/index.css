@@ -104,6 +104,10 @@ input:-webkit-autofill:active {
   -moz-osx-font-smoothing: grayscale;
 }
 
+html, body {
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   background-color: #f4f5f7;
@@ -112,6 +116,7 @@ body {
 #root {
   width: 100%;
   min-height: 100dvh;
+  overflow-x: hidden;
 }
 
 .material-symbols-rounded {
