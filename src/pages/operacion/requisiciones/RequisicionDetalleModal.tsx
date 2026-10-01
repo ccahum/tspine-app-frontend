@@ -330,6 +330,7 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
       aseguradora: null,
       sistema: d.sistema,
       categoria: d.categoria,
+      precioSugerido: null,
     } : null);
     setProductoSearch('');
     setInsumoCantidad(d.cantidad !== null ? String(d.cantidad) : '');

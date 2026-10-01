@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Loader, Plus, X } from 'lucide-react';
 import SuccessToast from '../../../components/SuccessToast';
-import { remisionesService, type ValConsumoDetalle, type ConsumoValidacionLote } from '../../../services/remisiones.service';
+import { remisionesService, type ValConsumoDetalle, type ConsumoValidacionLote, type LoteOption } from '../../../services/remisiones.service';
 import { programacionesService, type SedeOption } from '../../../services/programaciones.service';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
@@ -60,6 +60,11 @@ export default function ProductoValidadoDetailPage() {
   const [showAddLoteModal, setShowAddLoteModal] = useState(false);
   const [addLoteSedeId, setAddLoteSedeId] = useState('');
   const [addLoteAlmacenId, setAddLoteAlmacenId] = useState('');
+  const [addLoteLoteId, setAddLoteLoteId] = useState('');
+  const [addLoteLoteLabel, setAddLoteLoteLabel] = useState('');
+  const [addLoteLoteSearch, setAddLoteLoteSearch] = useState('');
+  const [addLoteLoteFocused, setAddLoteLoteFocused] = useState(false);
+  const [addLoteLoteHighlighted, setAddLoteLoteHighlighted] = useState(0);
   const [addLoteCantidad, setAddLoteCantidad] = useState('');
   const [addLoteError, setAddLoteError] = useState<{ field: string; message: string } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -87,9 +92,26 @@ export default function ProductoValidadoDetailPage() {
     enabled: showAddLoteModal && !!addLoteSedeId,
   });
 
+  const { data: addLoteLoteResults = [] } = useQuery<LoteOption[]>({
+    queryKey: ['remisiones-lotes', addLoteLoteSearch],
+    queryFn: () => remisionesService.searchLotes(addLoteLoteSearch),
+    enabled: showAddLoteModal && addLoteLoteFocused,
+  });
+  useEffect(() => { setAddLoteLoteHighlighted(0); }, [addLoteLoteResults]);
+
+  const selectAddLoteLote = (l: LoteOption) => {
+    setAddLoteLoteId(l.id);
+    setAddLoteLoteLabel(l.lote ?? '-');
+    setAddLoteLoteSearch('');
+    setAddLoteError(null);
+  };
+
   const openAddLoteModal = () => {
     setAddLoteSedeId('');
     setAddLoteAlmacenId('');
+    setAddLoteLoteId('');
+    setAddLoteLoteLabel('');
+    setAddLoteLoteSearch('');
     setAddLoteCantidad('');
     setAddLoteError(null);
     setShowAddLoteModal(true);
@@ -100,6 +122,7 @@ export default function ProductoValidadoDetailPage() {
       valConsumoId: id!,
       sedeId: addLoteSedeId,
       almacenId: addLoteAlmacenId,
+      loteId: addLoteLoteId,
       cantidad: Number(addLoteCantidad),
     }),
     onSuccess: () => {
@@ -112,6 +135,7 @@ export default function ProductoValidadoDetailPage() {
   const handleGuardarLote = () => {
     if (!addLoteSedeId) { setAddLoteError({ field: 'sedeId', message: 'Selecciona la sede.' }); return; }
     if (!addLoteAlmacenId) { setAddLoteError({ field: 'almacenId', message: 'Selecciona la ubicación.' }); return; }
+    if (!addLoteLoteId) { setAddLoteError({ field: 'loteId', message: 'Selecciona el lote.' }); return; }
     if (!addLoteCantidad || Number(addLoteCantidad) <= 0) { setAddLoteError({ field: 'cantidad', message: 'Ingresa una cantidad válida.' }); return; }
     setAddLoteError(null);
     createLoteMutation.mutate();
@@ -296,6 +320,60 @@ export default function ProductoValidadoDetailPage() {
               </div>
 
               <div style={styles.formGroup}>
+                <label style={styles.label}>Lote *</label>
+                {addLoteLoteId ? (
+                  <span style={styles.tagPill}>
+                    {addLoteLoteLabel}
+                    <X size={12} style={{ cursor: 'pointer', marginLeft: '0.4rem' }} onClick={() => { setAddLoteLoteId(''); setAddLoteLoteLabel(''); }} />
+                  </span>
+                ) : (
+                  <div style={{ position: 'relative' as const }}>
+                    <input
+                      style={{ ...styles.input, ...(addLoteError?.field === 'loteId' ? styles.inputError : {}) }}
+                      placeholder="Buscar lote..."
+                      value={addLoteLoteSearch}
+                      onChange={e => { setAddLoteLoteSearch(e.target.value); setAddLoteError(null); }}
+                      onFocus={() => setAddLoteLoteFocused(true)}
+                      onBlur={() => setTimeout(() => setAddLoteLoteFocused(false), 150)}
+                      onKeyDown={e => {
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          setAddLoteLoteHighlighted(i => Math.min(i + 1, addLoteLoteResults.length - 1));
+                        } else if (e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          setAddLoteLoteHighlighted(i => Math.max(i - 1, 0));
+                        } else if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const l = addLoteLoteResults[addLoteLoteHighlighted];
+                          if (l) selectAddLoteLote(l);
+                        }
+                      }}
+                    />
+                    {addLoteLoteFocused && (
+                      <div style={styles.dropdown}>
+                        {addLoteLoteResults.length === 0 ? (
+                          <div style={{ ...styles.dropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
+                        ) : (
+                          addLoteLoteResults.map((l, i) => (
+                            <div
+                              key={l.id}
+                              style={{ ...styles.dropdownItem, ...(i === addLoteLoteHighlighted ? styles.dropdownItemHighlighted : {}) }}
+                              onMouseDown={e => e.preventDefault()}
+                              onMouseEnter={() => setAddLoteLoteHighlighted(i)}
+                              onClick={() => selectAddLoteLote(l)}
+                            >
+                              {l.lote ?? '-'}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {addLoteError?.field === 'loteId' && <span style={styles.errorText}>{addLoteError.message}</span>}
+              </div>
+
+              <div style={styles.formGroup}>
                 <label style={styles.label}>Cantidad *</label>
                 <div style={styles.stepperWrap}>
                   <input
@@ -367,6 +445,10 @@ const styles: Record<string, React.CSSProperties> = {
   errorText: { fontSize: '0.75rem', color: '#dc2626', fontWeight: 600, marginTop: '0.3rem', display: 'block' },
   input: { width: '100%', padding: '0.75rem', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '0.875rem', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' as const },
   inputError: { borderColor: '#dc2626' },
+  tagPill: { display: 'inline-flex', alignSelf: 'flex-start' as const, alignItems: 'center', padding: '0.4rem 0.75rem', borderRadius: '999px', fontSize: '0.82rem', fontWeight: 600, lineHeight: 1.3, backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' },
+  dropdown: { position: 'absolute' as const, top: 'calc(100% + 0.35rem)', left: 0, right: 0, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', maxHeight: '220px', overflowY: 'auto' as const, zIndex: 20 },
+  dropdownItem: { padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#333', cursor: 'pointer' },
+  dropdownItemHighlighted: { backgroundColor: '#e9f2d8', color: '#3f6510' },
   stepperWrap: { position: 'relative' as const },
   stepperBtns: { position: 'absolute' as const, right: '0.5rem', top: '50%', transform: 'translateY(-50%)', display: 'flex', gap: '0.35rem' },
   stepperBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1.75rem', height: '1.75rem', border: '1px solid #e5e7eb', borderRadius: '6px', backgroundColor: '#fff', color: '#374151', fontWeight: 700, fontSize: '1rem', cursor: 'pointer', lineHeight: 1 },
