@@ -5,6 +5,7 @@ import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import { remisionesService, type ConsumoDetalle, type ConsumoValidacionLote, type ConsumoProductoValidadoItem, type AlmacenOption, type LoteOption } from '../../../services/remisiones.service';
 import { programacionesService, type SedeOption } from '../../../services/programaciones.service';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
+import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import ValidarConsumoModal from '../programaciones/ValidarConsumoModal';
 
 const formatMoney = (value: any): string => {
@@ -71,7 +72,7 @@ function TagItem({ label, value, box }: { label: string; value: React.ReactNode;
 // Validados) — se reutiliza tanto cuando se abre solo (desde la tabla "Validar consumos") como
 // dentro del modal completo del consumo (clic en una fila de la pestaña "Producto Validado").
 function ProductoValidadoFields({
-  consumo, pv, irARemision, hoveredLoteId, onHoverLote, onSelectLote,
+  consumo, pv, irARemision, hoveredLoteId, onHoverLote, onSelectLote, isMobile, onAddLote,
 }: {
   consumo: ConsumoDetalle;
   pv: ConsumoProductoValidadoItem;
@@ -79,6 +80,8 @@ function ProductoValidadoFields({
   hoveredLoteId: string | null;
   onHoverLote: (id: string | null) => void;
   onSelectLote: (lote: ConsumoValidacionLote) => void;
+  isMobile: boolean;
+  onAddLote: () => void;
 }) {
   return (
     <>
@@ -148,6 +151,11 @@ function ProductoValidadoFields({
             </table>
           </div>
         )}
+        {isMobile && (
+          <button type="button" className="btn-press" style={styles.addLoteBtnMobile} onClick={onAddLote}>
+            <Plus size={14} /> Lote
+          </button>
+        )}
       </div>
     </>
   );
@@ -170,6 +178,7 @@ interface ConsumoDetalleModalProps {
 export default function ConsumoDetalleModal({ id, onClose, valConsumoId }: ConsumoDetalleModalProps) {
   const navigate = useNavigateWithLoading();
   const queryClient = useQueryClient();
+  const { isMobile } = useResponsiveStyles();
   const [mainTab, setMainTab] = useState<'general' | 'productoValidado' | 'lotesValidados'>(valConsumoId ? 'productoValidado' : 'general');
   const [consumoExpanded, setConsumoExpanded] = useState(false);
   const [selectedLote, setSelectedLote] = useState<ConsumoValidacionLote | null>(null);
@@ -332,9 +341,11 @@ export default function ConsumoDetalleModal({ id, onClose, valConsumoId }: Consu
                     <h2 style={styles.modalTitle}>Producto Validado</h2>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <button type="button" className="btn-press" style={styles.addLoteBtn} onClick={openAddLote}>
-                      <Plus size={14} /> Agregar lote
-                    </button>
+                    {!isMobile && (
+                      <button type="button" className="btn-press" style={styles.addLoteBtn} onClick={openAddLote}>
+                        <Plus size={14} /> Lote
+                      </button>
+                    )}
                     <button style={styles.closeBtn} onClick={onClose}>
                       <X size={18} />
                     </button>
@@ -348,6 +359,8 @@ export default function ConsumoDetalleModal({ id, onClose, valConsumoId }: Consu
                     hoveredLoteId={hoveredLoteId}
                     onHoverLote={setHoveredLoteId}
                     onSelectLote={setSelectedLote}
+                    isMobile={isMobile}
+                    onAddLote={openAddLote}
                   />
                 </div>
               </>
@@ -547,9 +560,11 @@ export default function ConsumoDetalleModal({ id, onClose, valConsumoId }: Consu
                 <h2 style={styles.modalTitle}>Producto Validado</h2>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <button type="button" className="btn-press" style={styles.addLoteBtn} onClick={openAddLote}>
-                  <Plus size={14} /> Agregar lote
-                </button>
+                {!isMobile && (
+                  <button type="button" className="btn-press" style={styles.addLoteBtn} onClick={openAddLote}>
+                    <Plus size={14} /> Lote
+                  </button>
+                )}
                 <button style={styles.closeBtn} onClick={closePvModal}>
                   <X size={18} />
                 </button>
@@ -563,6 +578,8 @@ export default function ConsumoDetalleModal({ id, onClose, valConsumoId }: Consu
                 hoveredLoteId={hoveredLoteId}
                 onHoverLote={setHoveredLoteId}
                 onSelectLote={setSelectedLote}
+                isMobile={isMobile}
+                onAddLote={openAddLote}
               />
             </div>
           </div>
@@ -769,9 +786,10 @@ const styles: Record<string, React.CSSProperties> = {
   sectionTitle: { fontSize: '0.95rem', fontWeight: 700, color: '#16170f', margin: 0 },
 
   addLoteBtn: { display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 0.9rem', border: '1px solid #dbe8c2', borderRadius: '10px', backgroundColor: '#fff', color: '#3f6510', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap' as const, flexShrink: 0 },
+  addLoteBtnMobile: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', width: '100%', boxSizing: 'border-box' as const, marginTop: '0.75rem', padding: '0.65rem 0.9rem', border: 'none', borderRadius: '10px', backgroundColor: '#eef5e3', color: '#5a7d3a', fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer' },
 
-  infoTabBar: { display: 'flex', gap: '0.25rem', borderBottom: '1px solid #eeeee6', marginTop: '1.25rem' },
-  infoTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.75rem 1rem', border: 'none', background: 'transparent', fontSize: '0.84375rem', fontWeight: 600, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none' },
+  infoTabBar: { display: 'flex', gap: '0.25rem', borderBottom: '1px solid #eeeee6', marginTop: '1.25rem', overflowX: 'auto' as const, overflowY: 'hidden' as const },
+  infoTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.75rem 1rem', border: 'none', background: 'transparent', fontSize: '0.84375rem', fontWeight: 600, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none', flexShrink: 0, whiteSpace: 'nowrap' as const },
   infoTabBtnActive: { color: '#4d7a13', borderBottomColor: '#4d7a13' },
   infoTabBtnInactive: { color: '#6b7280', borderBottomColor: 'transparent' },
 
@@ -794,8 +812,8 @@ const styles: Record<string, React.CSSProperties> = {
   consumosTdTruncate: { overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, maxWidth: '220px' },
 
   modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: '2rem' },
-  modalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '90%', maxWidth: '900px', maxHeight: '90dvh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
-  subModalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '90%', maxWidth: '640px', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
+  modalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '90%', maxWidth: '900px', maxHeight: '90dvh', overflowY: 'auto' as const, overflowX: 'hidden' as const, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
+  subModalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '90%', maxWidth: '640px', maxHeight: '90vh', overflowY: 'auto' as const, overflowX: 'hidden' as const, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
   subModalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.25rem 1.5rem', backgroundColor: '#f9fafb', borderBottom: '1px solid #eeeee6', borderTopLeftRadius: '16px', borderTopRightRadius: '16px', position: 'sticky' as const, top: 0 },
   modalTitle: { fontSize: '1.1rem', fontWeight: 700, color: '#16170f', margin: 0 },
   closeBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '34px', height: '34px', border: 'none', backgroundColor: '#f4f4ee', borderRadius: '8px', cursor: 'pointer', color: '#6b6b60', flexShrink: 0 },

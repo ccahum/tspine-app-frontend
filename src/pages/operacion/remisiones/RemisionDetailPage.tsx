@@ -1508,18 +1508,18 @@ export default function RemisionDetailPage() {
                 </table>
               </div>
             </div>
-            <div style={styles.consumosTotalBar}>
+            <div style={{ ...styles.consumosTotalBar, ...(isMobile ? styles.consumosTotalBarMobile : {}) }}>
               <div style={styles.consumosTotalItem}>
-                <span style={styles.generalLabel}>Total Valor</span>
-                <span style={{ ...styles.consumosTotalValue, color: '#333' }}>{formatMoney(remision.consumos.reduce((sum, c) => sum + c.valor, 0))}</span>
+                <span style={{ ...styles.generalLabel, ...(isMobile ? { fontSize: '0.55rem', whiteSpace: 'nowrap' as const } : {}) }}>Valor</span>
+                <span style={{ ...styles.consumosTotalValue, color: '#333', ...(isMobile ? { fontSize: '0.7rem', whiteSpace: 'nowrap' as const } : {}) }}>{formatMoney(remision.consumos.reduce((sum, c) => sum + c.valor, 0))}</span>
               </div>
               <div style={styles.consumosTotalItem}>
-                <span style={styles.generalLabel}>Total Facturado</span>
-                <span style={{ ...styles.consumosTotalValue, color: '#3f6510' }}>{formatMoney(remision.consumos.reduce((sum, c) => sum + c.facturado, 0))}</span>
+                <span style={{ ...styles.generalLabel, ...(isMobile ? { fontSize: '0.55rem', whiteSpace: 'nowrap' as const } : {}) }}>Facturado</span>
+                <span style={{ ...styles.consumosTotalValue, color: '#3f6510', ...(isMobile ? { fontSize: '0.7rem', whiteSpace: 'nowrap' as const } : {}) }}>{formatMoney(remision.consumos.reduce((sum, c) => sum + c.facturado, 0))}</span>
               </div>
               <div style={styles.consumosTotalItem}>
-                <span style={styles.generalLabel}>Total Por Facturar</span>
-                <span style={{ ...styles.consumosTotalValue, color: '#991b1b' }}>{formatMoney(remision.consumos.reduce((sum, c) => sum + c.porFacturar, 0))}</span>
+                <span style={{ ...styles.generalLabel, ...(isMobile ? { fontSize: '0.55rem', whiteSpace: 'nowrap' as const } : {}) }}>Por Facturar</span>
+                <span style={{ ...styles.consumosTotalValue, color: '#991b1b', ...(isMobile ? { fontSize: '0.7rem', whiteSpace: 'nowrap' as const } : {}) }}>{formatMoney(remision.consumos.reduce((sum, c) => sum + c.porFacturar, 0))}</span>
               </div>
             </div>
             </>
@@ -2130,7 +2130,8 @@ const styles: Record<string, React.CSSProperties> = {
   consumosTd: { padding: '0.35rem 0.75rem', borderBottom: '1px solid #f3f4f0', color: '#33342a', whiteSpace: 'nowrap' as const },
   consumosTdTruncate: { overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, maxWidth: '260px' },
   consumosTotalBar: { display: 'flex', flexWrap: 'wrap' as const, justifyContent: 'flex-end' as const, gap: '1.75rem', marginTop: '1rem', padding: '1rem 1.25rem', backgroundColor: '#f9fafb', border: '1px solid #eeeee6', borderRadius: '10px' },
-  consumosTotalItem: { display: 'flex', flexDirection: 'column' as const, alignItems: 'flex-end' as const, gap: '0.3rem' },
+  consumosTotalBarMobile: { flexWrap: 'nowrap' as const, justifyContent: 'space-between' as const, gap: '0.5rem', padding: '0.75rem 0.85rem' },
+  consumosTotalItem: { display: 'flex', flexDirection: 'column' as const, alignItems: 'flex-end' as const, gap: '0.3rem', minWidth: 0 },
   consumosTotalValue: { fontSize: '0.95rem', fontWeight: 700 },
   tecnicoAvatar: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '50%', backgroundColor: '#e9f2d8', color: '#4d7a13', fontSize: '0.62rem', fontWeight: 700, flexShrink: 0 },
   modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 },

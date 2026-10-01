@@ -1979,7 +1979,7 @@ export default function ProgramacionDetailPage() {
                           : <><Circle size={13} color="#9ca3af" /><span style={{ color: '#9ca3af' }}>Pendiente</span></>
                         }
                       </div>
-                      <span style={{ ...styles.requisicionCellText, ...(isMobile ? { fontSize: '0.75rem', fontWeight: 600, color: '#374151' } : { textAlign: 'right' as const, fontWeight: 600, color: '#333' }) }}>{formatMoney(rem.total)}</span>
+                      <span style={{ ...styles.requisicionCellText, ...(isMobile ? { fontWeight: 600, color: '#333' } : { textAlign: 'right' as const, fontWeight: 600, color: '#333' }) }}>{formatMoney(rem.total)}</span>
                     </div>
                   ))}
                 </div>
@@ -2267,13 +2267,11 @@ export default function ProgramacionDetailPage() {
             <div style={styles.emptyState}>No hay datos relacionados</div>
           ) : (
             <div style={styles.remList}>
-              <div style={{ ...styles.comisionRow, ...styles.colHeader }}>
-                <span style={styles.colHeaderText}>Categoría</span>
-                <span style={{ ...styles.colHeaderText, paddingLeft: '0.75rem' }}>Técnico</span>
-                <span style={{ ...styles.colHeaderText, textAlign: 'right' }}>Comisión</span>
-              </div>
               <div ref={comisionesScrollRef} style={styles.comisionScrollBody}>
                 <div style={styles.comisionGrid}>
+                  <span style={{ ...styles.colHeaderText, ...styles.comisionHeaderCell }}>Categoría</span>
+                  <span style={{ ...styles.colHeaderText, ...styles.comisionHeaderCell, paddingLeft: '0.75rem' }}>Técnico</span>
+                  <span style={{ ...styles.colHeaderText, ...styles.comisionHeaderCell, textAlign: 'right' as const }}>Comisión</span>
                   {comisionGrupos.map((grupo, gi) => {
                     const subtotalGrupo = grupo.items.reduce((sum, it) => sum + it.monto, 0);
                     const totalFilasGrupo = grupo.items.reduce((sum, item) => {
@@ -2495,14 +2493,14 @@ export default function ProgramacionDetailPage() {
               <div style={styles.infoRow}>
                 <span style={styles.label}>Remisión</span>
                 <span
-                  style={{ ...styles.value, color: '#db2777', cursor: selectedTecnico.remision ? 'pointer' : 'default' }}
+                  style={{ ...styles.value, color: '#4d7a13', cursor: selectedTecnico.remision ? 'pointer' : 'default' }}
                   onClick={() => selectedTecnico.remision && navigate(`/operacion/remisiones/${selectedTecnico.remision.id}`, '/operacion/remisiones/:id')}
                 >
                   {selectedTecnico.remision?.numRemision || selectedTecnico.remision?.id || '-'}
                 </span>
               </div>
               <div style={styles.infoRow}><span style={styles.label}>Fecha de Registro</span><span style={styles.value}>{formatDateTime(selectedTecnico.fechaRegistro)}</span></div>
-              <div style={styles.infoRow}><span style={styles.label}>Registrado Por</span><span style={styles.value}>{selectedTecnico.registradoPor?.nombreCompleto || '-'}</span></div>
+              <div style={styles.infoRow}><span style={styles.label}>Registrado Por</span><span style={styles.greenTag}>{selectedTecnico.registradoPor?.nombreCompleto || '-'}</span></div>
               <div style={styles.infoRow}><span style={styles.label}>Última Edición</span><span style={styles.value}>{formatDateTime(selectedTecnico.ultimaEdicion)}</span></div>
               <div style={{ ...styles.infoRow, borderBottom: 'none' }}><span style={styles.label}>Editado Por</span><span style={styles.value}>{selectedTecnico.editadoPor?.nombreCompleto || '-'}</span></div>
             </div>
@@ -4595,17 +4593,18 @@ export const styles: Record<string, React.CSSProperties> = {
   sectionTitle: { fontSize: '1.1rem', fontWeight: 700, color: '#333', margin: 0 },
   badge: { backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '0.75rem', fontWeight: 700, minWidth: '1.5rem', height: '1.5rem', padding: '0 0.4rem', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
   remisionesGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1rem' },
-  remList: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', overflow: 'hidden' as const },
+  remList: { width: '100%', maxWidth: '100%', boxSizing: 'border-box' as const, backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', overflow: 'hidden' as const },
   emptyState: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #f3f4f6', padding: '2rem', textAlign: 'center' as const, color: '#9ca3af', fontSize: '0.875rem' },
   // overflowX explícito porque dejar overflow-x en su valor por defecto ("visible") mientras
   // overflow-y es "auto" hace que el navegador lo compute también como "auto" (así lo pide el
   // spec de CSS) — esto creaba una SEGUNDA barra de scroll horizontal propia de este contenedor,
   // además de la que ya pone remList por fuera (header + body juntos). Con overflowX:'hidden' acá,
   // solo queda la barra externa de remList.
-  scrollBody: { height: '135px', overflowY: 'auto' as const, overflowX: 'auto' as const, backgroundColor: '#f9fafb' },
+  scrollBody: { width: '100%', maxWidth: '100%', boxSizing: 'border-box' as const, height: '135px', overflowY: 'auto' as const, overflowX: 'auto' as const, backgroundColor: '#f9fafb' },
   tecnicoScrollBody: { height: '135px', overflowY: 'auto' as const, overflowX: 'hidden' as const, backgroundColor: '#f9fafb' },
   remRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem 1.25rem', backgroundColor: '#fff' },
-  remGridRow: { display: 'grid', gridTemplateColumns: '190px 110px 130px 110px', alignItems: 'center', padding: '0.45rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff' },
+  remGridRow: { display: 'grid', gridTemplateColumns: '190px 110px 130px 110px', alignItems: 'center', padding: '0.45rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff', width: '100%', minWidth: 'max-content' as const, boxSizing: 'border-box' as const },
+  remGridRowMobile: { gridTemplateColumns: '150px 90px 90px 90px', gap: '0.3rem' },
   remGridRowMobile: { gridTemplateColumns: '150px 90px 90px 90px', padding: '0.45rem 0.75rem', gap: '0.35rem' },
   remRowBorder: { borderTop: '1px solid #f3f4f6' },
   remRowLeft: { display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0, overflow: 'hidden' as const },
@@ -4629,12 +4628,12 @@ export const styles: Record<string, React.CSSProperties> = {
   consumoSubtotalRow: { gridColumn: '1 / -1', display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 -1.25rem', padding: '0.5rem 1.25rem', backgroundColor: '#f9fafb', borderTop: '1px dashed #e5e7eb' },
   consumoSubtotalLabel: { fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
   consumoSubtotalValue: { fontSize: '0.85rem', fontWeight: 700, color: '#6b8c1f' },
-  comisionRow: { display: 'grid', gridTemplateColumns: '140px 1fr 130px', alignItems: 'center', padding: '0.6rem 1.25rem', backgroundColor: '#fff', minWidth: '480px' },
-  comisionGrid: { display: 'grid', gridTemplateColumns: '140px 1fr 130px', padding: '0 1.25rem', backgroundColor: '#fff', minWidth: '480px', backgroundImage: 'linear-gradient(to right, #eeeee6, #eeeee6)', backgroundRepeat: 'no-repeat' as const, backgroundSize: '1px 100%', backgroundPosition: 'calc(1.25rem + 140px) 0' },
+  comisionGrid: { display: 'grid', gridTemplateColumns: '140px 1fr 130px', padding: '0 1.25rem', backgroundColor: '#fff', width: '100%', minWidth: '700px', boxSizing: 'border-box' as const, backgroundImage: 'linear-gradient(to right, #eeeee6, #eeeee6)', backgroundRepeat: 'no-repeat' as const, backgroundSize: '1px 100%', backgroundPosition: 'calc(1.25rem + 140px) 0' },
+  comisionHeaderCell: { position: 'sticky' as const, top: 0, zIndex: 1, backgroundColor: '#f9fafb', borderBottom: '2px solid #e5e7eb', padding: '0.6rem 0.75rem' },
   comisionCategoriaCell: { alignSelf: 'start', display: 'flex', alignItems: 'center', padding: '0.6rem 0.75rem 0.6rem 0', backgroundColor: '#fff', fontSize: '0.85rem', fontWeight: 700, color: '#374151' },
   comisionTecnicoCell: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0 0.4rem 0.75rem', overflow: 'hidden', fontSize: '0.85rem', color: '#374151' },
   comisionMontoCell: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0.4rem 1.25rem 0.4rem 0', margin: '0 -1.25rem 0 0', fontSize: '0.85rem', fontWeight: 600, color: '#333' },
-  comisionScrollBody: { minHeight: '110px', maxHeight: '220px', overflowY: 'auto' as const, overflowX: 'hidden' as const, backgroundColor: '#f9fafb' },
+  comisionScrollBody: { minHeight: '110px', maxHeight: '220px', overflowY: 'auto' as const, overflowX: 'auto' as const, width: '100%', maxWidth: '100%', boxSizing: 'border-box' as const, backgroundColor: '#f9fafb' },
   // 190px porque el id se debe ver completo sin truncar (a diferencia de Usuario, que sí trunca
   // con "...") — el formato actual es "REQ_0000123_0000001" (~19 caracteres), no un hash largo.
   requisicionRow: { display: 'grid', gridTemplateColumns: '190px 120px 1fr 90px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '540px' },
@@ -4721,6 +4720,7 @@ export const styles: Record<string, React.CSSProperties> = {
   ciudadPill: { display: 'inline-flex', alignSelf: 'flex-start' as const, padding: '0.4rem 0.85rem', borderRadius: '999px', border: '1px solid #dbe8c2', backgroundColor: '#e9f2d8', fontSize: '0.85rem', fontWeight: 600, color: '#3f6510' },
   medicoTagsWrap: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.5rem' },
   medicoTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#f3f4f6', color: '#333', fontSize: '0.8rem', fontWeight: 600 },
+  greenTag: { display: 'inline-flex', alignItems: 'center', padding: '0.3rem 0.65rem', borderRadius: '999px', border: '1px solid #dbe8c2', backgroundColor: '#e9f2d8', color: '#3f6510', fontSize: '0.85rem', fontWeight: 600 },
   // Mismo chip/botón que usa el campo Cotización en Nueva Programación (ProgramacionesPage.tsx).
   cotizacionChip: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '8px', backgroundColor: '#f4f8ea', border: '1px solid #dbe8c2', color: '#3f6510', fontSize: '0.8rem', fontWeight: 700 },
   addFromCatalogBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.35rem 0.65rem', border: '1.5px solid #dbe8c2', borderRadius: '999px', backgroundColor: '#f4f8ea', color: '#3f6510', fontSize: '0.75rem', fontWeight: 400, cursor: 'pointer' },
