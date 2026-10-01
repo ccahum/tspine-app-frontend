@@ -4605,7 +4605,6 @@ export const styles: Record<string, React.CSSProperties> = {
   remRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem 1.25rem', backgroundColor: '#fff' },
   remGridRow: { display: 'grid', gridTemplateColumns: '190px 110px 130px 110px', alignItems: 'center', padding: '0.45rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff', width: '100%', minWidth: 'max-content' as const, boxSizing: 'border-box' as const },
   remGridRowMobile: { gridTemplateColumns: '150px 90px 90px 90px', gap: '0.3rem' },
-  remGridRowMobile: { gridTemplateColumns: '150px 90px 90px 90px', padding: '0.45rem 0.75rem', gap: '0.35rem' },
   remRowBorder: { borderTop: '1px solid #f3f4f6' },
   remRowLeft: { display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0, overflow: 'hidden' as const },
   remRowCode: { fontSize: '0.875rem', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' as const, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const },
