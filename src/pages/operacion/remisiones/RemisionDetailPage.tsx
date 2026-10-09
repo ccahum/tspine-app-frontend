@@ -1612,7 +1612,6 @@ export default function RemisionDetailPage() {
         <>
           {(() => {
             const totalRemisionado = remision.subtotal;
-            const cantValidadaTotal = validacionItems.reduce((sum, v) => sum + v.cantRealValidada, 0);
             const costoRealTotal = validacionItems.reduce((sum, v) => sum + v.costoReal, 0);
             const hayValidacion = validacionItems.length > 0;
             return (
