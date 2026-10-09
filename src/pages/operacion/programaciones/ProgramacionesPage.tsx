@@ -12,6 +12,7 @@ import ProgramacionesStats from './ProgramacionesStats';
 import SuccessToast from '../../../components/SuccessToast';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { programacionesService } from '../../../services/programaciones.service';
 import type { ProgramacionQuery, ProgramacionItem, SedeOption, HospitalOption, MedicoOption, CotizacionOption, ProgramacionSortField } from '../../../services/programaciones.service';
@@ -269,26 +270,7 @@ export default function ProgramacionesPage() {
     return () => { document.body.style.overflow = ''; };
   }, [indicadoresAbiertos]);
 
-  useEffect(() => {
-    if (!showNewModal) return;
-    // overflow:hidden solo en el body no basta en iOS Safari — el fondo se sigue pudiendo
-    // deslizar con el dedo. Fijar la posición del body en el scroll actual sí lo bloquea ahí, y
-    // se restaura la posición exacta al cerrar el modal.
-    const scrollY = window.scrollY;
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.left = '0';
-    document.body.style.right = '0';
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.position = '';
-      document.body.style.top = '';
-      document.body.style.left = '';
-      document.body.style.right = '';
-      document.body.style.overflow = '';
-      window.scrollTo(0, scrollY);
-    };
-  }, [showNewModal]);
+  useBodyScrollLock(showNewModal);
 
   const [newForm, setNewForm] = useState({ fechaQx: '', horaQx: '', sedeId: getUsuarioActualSedeId(), hospitalId: '' });
   const newHoraDropdownRef = useRef<OptionDropdownHandle>(null);
@@ -458,11 +440,13 @@ export default function ProgramacionesPage() {
     placeholderData: keepPreviousData,
   });
 
-  const { data: sedeOptions = [] } = useQuery<SedeOption[]>({
+  const { data: sedeOptionsRaw = [] } = useQuery<SedeOption[]>({
     queryKey: ['programaciones-sedes'],
     queryFn: () => programacionesService.getSedes(),
     enabled: showNewModal,
   });
+  // Sede Global y Sede Vallarta no son opciones válidas para el campo Sede de Nueva Programación.
+  const sedeOptions = sedeOptionsRaw.filter(s => s.nombre !== 'Sede Global' && s.nombre !== 'Sede Vallarta');
 
   const { data: hospitalOptions = [] } = useQuery<HospitalOption[]>({
     queryKey: ['programaciones-hospitales'],
@@ -478,9 +462,9 @@ export default function ProgramacionesPage() {
 
   const newMedicoNombres = newMedicos.map(m => m.nombreCompleto);
   const { data: newCotizacionResults = [] } = useQuery<CotizacionOption[]>({
-    queryKey: ['programaciones-cotizaciones', newMedicoNombres],
-    queryFn: () => programacionesService.searchCotizaciones(undefined, newMedicoNombres),
-    enabled: showNewModal && newCotizacionFocused && newMedicoNombres.length > 0,
+    queryKey: ['programaciones-cotizaciones', newMedicoNombres, newForm.hospitalId],
+    queryFn: () => programacionesService.searchCotizaciones(undefined, newMedicoNombres, newForm.hospitalId || undefined),
+    enabled: showNewModal && newCotizacionFocused && newMedicoNombres.length > 0 && !!newForm.hospitalId,
   });
   // El servidor ya acota a las cotizaciones de los médicos seleccionados — esto solo afina esa
   // lista en el navegador por folio/cirugía/fecha/total, sin volver a pedirle nada al backend.
@@ -505,8 +489,8 @@ export default function ProgramacionesPage() {
   });
 
   const { data: newTecnicoSugeridoResults = [] } = useQuery<TecnicoOption[]>({
-    queryKey: ['tecnicos-comisionistas', newTecnicoSugeridoSearch],
-    queryFn: () => remisionesService.searchTecnicosComisionistas(newTecnicoSugeridoSearch),
+    queryKey: ['tecnicos-sugeridos-busqueda', newTecnicoSugeridoSearch],
+    queryFn: () => remisionesService.searchTecnicosSugeridos(newTecnicoSugeridoSearch),
     enabled: showNewModal && newTecnicoSugeridoFocused,
   });
 
@@ -1037,12 +1021,20 @@ export default function ProgramacionesPage() {
                     ))}
                   </div>
                 )}
-                {newMedicos.length === 0 ? (
+                {newMedicos.length === 0 || !selectedNewHospital ? (
                   <span style={{ ...styles.input, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>
-                    Selecciona primero un médico
+                    {newMedicos.length === 0 && !selectedNewHospital
+                      ? 'Selecciona primero un médico y un hospital'
+                      : newMedicos.length === 0
+                        ? 'Selecciona primero un médico'
+                        : 'Selecciona primero un hospital'}
                   </span>
                 ) : (
                 <div style={{ position: 'relative' as const }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', color: '#9ca3af', marginBottom: '0.4rem' }}>
+                    <MaterialIcon name="filter_alt" size={13} />
+                    Mostrando solo cotizaciones de {newMedicos.map(m => m.nombreCompleto).join(', ')} en {selectedNewHospital.nombre}
+                  </div>
                   <input
                     style={styles.input}
                     placeholder={`Buscar por folio, cirugía, fecha o total entre las cotizaciones de ${newMedicos.map(m => m.nombreCompleto).join(', ')}...`}
@@ -1870,7 +1862,7 @@ const styles: Record<string, React.CSSProperties> = {
   errorText: { fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 },
   horaGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' },
   sedeGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' },
-  sedeBtn: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 0.75rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', color: '#374151', fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const },
+  sedeBtn: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 0.75rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', color: '#374151', fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const },
   sedeBtnActive: { backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' },
   ciudadPill: { display: 'inline-flex', alignSelf: 'flex-start' as const, padding: '0.4rem 0.85rem', borderRadius: '999px', border: '1px solid #dbe8c2', backgroundColor: '#e9f2d8', fontSize: '0.85rem', fontWeight: 600, color: '#3f6510' },
   medicoTagsWrap: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.5rem' },

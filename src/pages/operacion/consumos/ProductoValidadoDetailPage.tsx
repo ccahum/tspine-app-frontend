@@ -8,6 +8,7 @@ import { programacionesService, type SedeOption } from '../../../services/progra
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 
 const formatMoney = (value: any): string => {
   if (value === null || value === undefined) return '-';
@@ -69,10 +70,7 @@ export default function ProductoValidadoDetailPage() {
   const [addLoteError, setAddLoteError] = useState<{ field: string; message: string } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    document.body.style.overflow = (selectedLote || showAddLoteModal) ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [selectedLote, showAddLoteModal]);
+  useBodyScrollLock(!!(selectedLote || showAddLoteModal));
 
   const { data: pv, isLoading, error } = useQuery<ValConsumoDetalle | null>({
     queryKey: ['valconsumo-detalle', id],

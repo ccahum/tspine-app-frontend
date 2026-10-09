@@ -6,6 +6,7 @@ import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import SuccessToast from '../../../components/SuccessToast';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 import {
   autorizacionConsumosService,
   type EstadoAutorizacion,
@@ -86,10 +87,7 @@ export default function AutorizacionConsumosPage() {
   const [rejectTarget, setRejectTarget] = useState<AutorizacionConsumoItem | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    document.body.style.overflow = rejectTarget ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [rejectTarget]);
+  useBodyScrollLock(!!rejectTarget);
 
   // Le da sombra a la tarjeta fija (título + tabs) solo mientras está "pegada" arriba por el
   // scroll — mismo patrón que Solicitud de Programación / Remisiones.

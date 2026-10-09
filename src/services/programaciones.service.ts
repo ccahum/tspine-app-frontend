@@ -71,6 +71,8 @@ export type FlagsUpdate = Partial<Pick<ProgramacionItem, 'cerrada' | 'alertaCons
 
 export interface ProgramacionDetail {
   id: string;
+  createdAt: string;
+  creadoPorTercero: { nombreCompleto: string } | null;
   fechaQx: string | null;
   horaQx: string | null;
   sede: { id: string; nombre: string } | null;
@@ -99,6 +101,7 @@ export interface ProgramacionDetail {
   alertaConsumos: boolean;
   avance: number | null;
   estadoRequisicion: string | null;
+  ediciones: { editadoEn: string | null; editadoPor: string | null }[];
 }
 
 export interface SedeOption {
@@ -208,9 +211,9 @@ export const programacionesService = {
     return res.data;
   },
 
-  searchCotizaciones: async (search?: string, medicos?: string[]): Promise<CotizacionOption[]> => {
+  searchCotizaciones: async (search?: string, medicos?: string[], hospitalId?: string): Promise<CotizacionOption[]> => {
     const res = await api.get<CotizacionOption[]>('/operacion/programaciones/cotizaciones', {
-      params: { search, medicos: medicos && medicos.length > 0 ? medicos.join(',') : undefined },
+      params: { search, medicos: medicos && medicos.length > 0 ? medicos.join(',') : undefined, hospitalId },
     });
     return res.data;
   },

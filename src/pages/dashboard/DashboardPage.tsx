@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Wrench, ShoppingCart, Archive, Landmark,
   TrendingUp, ClipboardList, Users, Truck,
@@ -7,6 +7,7 @@ import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 import { esSuperAdmin } from '../../lib/auth.utils';
 import { tieneAccesoAVista, moduloTieneAlgunAcceso } from '../../lib/permissions.utils';
 import { useNavigateWithLoading } from '../../hooks/useNavigateWithLoading';
+import { useBodyScrollLock } from '../../hooks/useBodyScrollLock';
 
 const ACCENT = '#4a7c59';
 
@@ -60,10 +61,7 @@ export default function DashboardPage() {
   // Mismo patrón que OperacionPage/CotizacionesPage: pageWrapper anclado al viewport +
   // scroll del body bloqueado mientras esta página está montada, para que todos los módulos
   // den completos en una sola pantalla sin barra de scroll de la página.
-  useEffect(() => {
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = ''; };
-  }, []);
+  useBodyScrollLock(true);
 
   return (
       <div style={{ ...styles.pageWrapper, left: isMobile ? 0 : '60px', paddingLeft: isMobile ? '1rem' : '2rem', paddingRight: isMobile ? '1rem' : '2rem' }}>

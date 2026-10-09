@@ -62,7 +62,7 @@ export default function AgregarRemisionModal({ programacion, programacionId, onC
     paciente: '',
     cirugiaRealizada: '',
     anestesiologo: '',
-    impuestos: '',
+    impuestos: 'I.V.A.',
     tieneDcto: false,
     porcentajeDcto: '',
     vrDctoPesos: '',
@@ -111,12 +111,17 @@ export default function AgregarRemisionModal({ programacion, programacionId, onC
     return () => clearTimeout(timer);
   }, [remisionImportNotaActual]);
 
+  // A diferencia de remisionImportNotaQueue (aviso transitorio que se cierra solo), esto queda
+  // fijo en el formulario mientras dure la sesión de "Agregar remisión" — de qué cotización(es) se
+  // trajeron los consumos ya importados, para que no se pierda de vista al seguir llenando el resto.
+  const [remisionConsumosCotizacionLabels, setRemisionConsumosCotizacionLabels] = useState<string[]>([]);
+
   const [remisionPaquetePanelOpen, setRemisionPaquetePanelOpen] = useState(false);
   const [remisionPaqueteId, setRemisionPaqueteId] = useState('');
   const [remisionPaqueteLabel, setRemisionPaqueteLabel] = useState('');
   const [remisionPaqueteSearch, setRemisionPaqueteSearch] = useState('');
   const [remisionPaqueteHighlighted, setRemisionPaqueteHighlighted] = useState(0);
-  const [remisionPaqueteNivel, setRemisionPaqueteNivel] = useState('');
+  const [remisionPaqueteNivel, setRemisionPaqueteNivel] = useState(REMISION_NIVEL_OPTIONS[0]);
   const [remisionPaqueteNivelOpen, setRemisionPaqueteNivelOpen] = useState(false);
   const [importandoRemisionPaquete, setImportandoRemisionPaquete] = useState(false);
   const [importandoRemisionCotizaciones, setImportandoRemisionCotizaciones] = useState(false);
@@ -224,7 +229,7 @@ export default function AgregarRemisionModal({ programacion, programacionId, onC
     setRemisionPaqueteId('');
     setRemisionPaqueteLabel('');
     setRemisionPaqueteSearch('');
-    setRemisionPaqueteNivel('');
+    setRemisionPaqueteNivel(REMISION_NIVEL_OPTIONS[0]);
     setRemisionPaqueteNivelOpen(false);
   };
 
@@ -326,6 +331,9 @@ export default function AgregarRemisionModal({ programacion, programacionId, onC
         observaciones: it.observaciones ?? '',
       })));
       setRemisionConsumos(merged);
+      // Solo las cotizaciones que de verdad aportaron algún ítem, no todas las asociadas.
+      const cotizacionesConItems = cotizaciones.filter((_c, i) => detalles[i].items.some(it => !!it.productoId));
+      setRemisionConsumosCotizacionLabels(cotizacionesConItems.map(c => c.numCotizacion || c.id));
       const partes: string[] = [];
       if (agregados > 0) partes.push(`se agregaron ${agregados} producto${agregados === 1 ? '' : 's'}`);
       if (actualizados > 0) partes.push(`se sumó la cantidad de ${actualizados} que ya estaba${actualizados === 1 ? '' : 'n'} agregado${actualizados === 1 ? '' : 's'}`);
@@ -421,7 +429,7 @@ export default function AgregarRemisionModal({ programacion, programacionId, onC
           <div style={styles.editModalBody}>
             <div style={styles.formGroup}>
               <label style={styles.remisionLabel}>Programación *</label>
-              <span style={styles.readOnlyPill}>{programacion.id}</span>
+              <span style={{ ...styles.readOnlyPill, backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' }}>{programacion.id}</span>
             </div>
 
             <div style={styles.formGroup}>
@@ -431,7 +439,12 @@ export default function AgregarRemisionModal({ programacion, programacionId, onC
 
             <div style={styles.formGroup}>
               <label style={styles.remisionLabel}>Usuario *</label>
-              <span style={{ ...styles.readOnlyPill, padding: '0.35rem 0.6rem', fontSize: '0.8rem', fontWeight: 600 }}>{usuarioActual?.nombreCompleto ?? '-'}</span>
+              <span style={{ ...styles.readOnlyPill, padding: '0.35rem 0.6rem', fontSize: '0.8rem', fontWeight: 600, backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' }}>{usuarioActual?.nombreCompleto ?? '-'}</span>
+            </div>
+
+            <div style={styles.formGroup}>
+              <label style={styles.remisionLabel}>Médico</label>
+              <span style={{ ...styles.readOnlyPill, padding: '0.35rem 0.6rem', fontSize: '0.8rem', fontWeight: 600, backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' }}>{programacion.medicos.length > 0 ? programacion.medicos.map(m => m.medico.nombreCompleto).join(', ') : '-'}</span>
             </div>
 
             <div style={styles.formGroup} id="remision-field-paciente">
@@ -549,7 +562,7 @@ export default function AgregarRemisionModal({ programacion, programacionId, onC
               <label style={styles.remisionLabel}>Responsable Económico *</label>
               {remisionResponsable ? (
                 <div style={styles.medicoTagsWrap}>
-                  <span style={{ ...styles.readOnlyPill, padding: '0.35rem 0.6rem', fontSize: '0.8rem', fontWeight: 600 }}>
+                  <span style={{ ...styles.readOnlyPill, padding: '0.35rem 0.6rem', fontSize: '0.8rem', fontWeight: 600, backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' }}>
                     {remisionResponsable.nombreCompleto}
                     <X
                       size={12}
@@ -633,7 +646,7 @@ export default function AgregarRemisionModal({ programacion, programacionId, onC
                 <span style={{ ...styles.input, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>Selecciona primero el responsable económico</span>
               ) : remisionForm.anestesiologo ? (
                 <div style={styles.medicoTagsWrap}>
-                  <span style={{ ...styles.readOnlyPill, padding: '0.35rem 0.6rem', fontSize: '0.8rem', fontWeight: 600 }}>
+                  <span style={{ ...styles.readOnlyPill, padding: '0.35rem 0.6rem', fontSize: '0.8rem', fontWeight: 600, backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' }}>
                     {remisionForm.anestesiologo}
                     <X
                       size={12}
@@ -821,12 +834,18 @@ export default function AgregarRemisionModal({ programacion, programacionId, onC
                     type="button"
                     style={{ ...styles.rowDeleteBtn, marginLeft: 'auto' }}
                     title="Limpiar consumos"
-                    onClick={() => setRemisionConsumos([])}
+                    onClick={() => { setRemisionConsumos([]); setRemisionConsumosCotizacionLabels([]); }}
                   >
                     <Trash2 size={13} />
                   </button>
                 )}
               </div>
+
+              {remisionConsumosCotizacionLabels.length > 0 && (
+                <div style={{ ...styles.tarifaHint, marginTop: '0.5rem', marginBottom: 0 }}>
+                  Se agregaron consumos importados de la cotización{remisionConsumosCotizacionLabels.length === 1 ? '' : 'es'} <strong style={{ color: '#3f6510' }}>{remisionConsumosCotizacionLabels.join(', ')}</strong>.
+                </div>
+              )}
 
               {remisionConsumos.length > 0 && remisionTarifaLabel && (
                 <div style={{ ...styles.tarifaHint, marginTop: '0.5rem', marginBottom: 0 }}>
@@ -963,6 +982,7 @@ export default function AgregarRemisionModal({ programacion, programacionId, onC
                       setRemisionError(null);
                     }}
                     onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); focusNextInEnterNavRoot(e.currentTarget); } }}
+                    onWheel={e => e.currentTarget.blur()}
                   />
                   {remisionError?.field === 'porcentajeDcto' && <span style={styles.errorText}>{remisionError.message}</span>}
                 </div>
@@ -987,6 +1007,7 @@ export default function AgregarRemisionModal({ programacion, programacionId, onC
                       setRemisionError(null);
                     }}
                     onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); focusNextInEnterNavRoot(e.currentTarget); } }}
+                    onWheel={e => e.currentTarget.blur()}
                   />
                   {remisionError?.field === 'vrDctoPesos' && <span style={styles.errorText}>{remisionError.message}</span>}
                 </div>
@@ -1106,7 +1127,7 @@ export default function AgregarRemisionModal({ programacion, programacionId, onC
               <div style={styles.formGroup}>
                 <label style={styles.remisionLabel}>Paquete</label>
                 {remisionPaqueteLabel ? (
-                  <span style={{ ...styles.readOnlyPill, padding: '0.35rem 0.6rem', fontSize: '0.8rem', fontWeight: 600, borderRadius: '10px', alignItems: 'flex-start' as const }}>
+                  <span style={{ ...styles.readOnlyPill, padding: '0.35rem 0.6rem', fontSize: '0.8rem', fontWeight: 600, borderRadius: '10px', alignItems: 'flex-start' as const, backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' }}>
                     {remisionPaqueteLabel}
                     <X size={12} style={{ cursor: 'pointer', flexShrink: 0 }} onClick={() => { setRemisionPaqueteId(''); setRemisionPaqueteLabel(''); }} />
                   </span>

@@ -6,6 +6,7 @@ import { programacionesService } from '../../../services/programaciones.service'
 import { toLocalDateString } from '../../../lib/date.utils';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 
 const getDaysInMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
 const getFirstDayOfMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1).getDay();
@@ -40,10 +41,7 @@ export default function CalendarPage() {
   // Mismo patrón que CotizacionesPage/OperacionPage: pageWrapper anclado al viewport +
   // scroll del body bloqueado mientras esta página está montada, para que todo el contenido dé
   // en una sola pantalla (el calendario en sí scrollea internamente si le hace falta).
-  useEffect(() => {
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = ''; };
-  }, []);
+  useBodyScrollLock(true);
   const [view, setView] = useState<ViewType>('mes');
   const [programacionesByDate, setProgramacionesByDate] = useState<{ [key: string]: ProgramacionInfo[] }>({});
   const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);

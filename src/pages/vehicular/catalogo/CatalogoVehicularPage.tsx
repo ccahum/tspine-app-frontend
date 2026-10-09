@@ -11,6 +11,7 @@ import {
 } from '../../../services/vehiculoCatalogo.service';
 import { programacionesService, type SedeOption } from '../../../services/programaciones.service';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 
 const ESTADOS = ['Activo', 'Inactivo'];
 const MAX_FOTO_BYTES = 8 * 1024 * 1024;
@@ -609,10 +610,7 @@ export default function CatalogoVehicularPage() {
   const tableWrapRef = useRef<HTMLDivElement>(null);
   useSmoothWheelScroll(tableWrapRef, [], 3);
 
-  useEffect(() => {
-    document.body.style.overflow = (selected || showCreateModal) ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [selected, showCreateModal]);
+  useBodyScrollLock(!!(selected || showCreateModal));
 
   const [isStuck, setIsStuck] = useState(false);
   useEffect(() => {

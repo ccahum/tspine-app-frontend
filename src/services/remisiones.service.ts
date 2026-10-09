@@ -46,6 +46,7 @@ export interface RemisionItem {
   estadoFactura: string | null;
   creadoEn: string | null;
   tarifa: { nombre: string } | null;
+  usuario: string | null;
   subtotal: number;
   total: number;
 }
@@ -94,7 +95,7 @@ export interface RemisionCxcStats {
 
 export interface RemTecnicoItem {
   id: string;
-  tecnico: { nombreCompleto: string } | null;
+  tecnico: { id: string; nombreCompleto: string } | null;
   programacion: { id: string; numProgram: string | null } | null;
   remision: { id: string; numRemision: string | null } | null;
   fechaRegistro: string | null;
@@ -112,6 +113,8 @@ export interface ConsumoItem {
   valorUnitario: number;
   valor: number;
   validado: boolean;
+  /** true si alguna validación de este consumo se hizo con un producto distinto al remisionado. */
+  productoCambiado: boolean;
 }
 
 export interface ConsumoGrupo {
@@ -142,6 +145,7 @@ export interface ConsumoProductoValidadoItem {
   productoValidadoDescripcion: string | null;
   numeroOC: string | null;
   sedeConsumo: string | null;
+  costoUnitario: number;
   prodRealConsumido: boolean | null;
   prodDeTspine: boolean | null;
   observacionesAlm: string | null;
@@ -153,12 +157,14 @@ export interface ConsumoDetalle {
   id: string;
   remisionId: string | null;
   numRemision: string | null;
+  tarifaId: string | null;
   programacionId: string | null;
   numProgram: string | null;
   fechaQx: string | null;
   doctor: string | null;
   hospital: string | null;
   consumo: string | null;
+  productoId: string | null;
   referencia: string | null;
   descripcion: string | null;
   cantidad: number;
@@ -268,6 +274,11 @@ export interface ValidacionConsumoItem {
   referenciaValidada: string | null;
   nombreValidado: string | null;
   valor: number;
+  costoReal: number;
+  costoUnitario: number;
+  marcaTiempo: string | null;
+  usuario: string | null;
+  productoCambiado: boolean;
 }
 
 export interface ValidacionConsumoGrupo {
@@ -282,6 +293,8 @@ export interface ComisionDetalleLinea {
   remisionLabel: string | null;
   productoLabel: string | null;
   valor: number;
+  marcaTiempo: string | null;
+  registradoPor: string | null;
 }
 
 export interface ComisionItem {
@@ -450,9 +463,11 @@ export interface RequisicionItem {
   id: string;
   marcaDeTiempo: string | null;
   status: string | null;
+  total: number;
   fecha: string | null;
   provieneDeProgramacion: boolean | null;
   folio: string | null;
+  programacionId: string | null;
   validacion: string | null;
   existeProgramacion: boolean | null;
   cubrimientoId: string | null;
@@ -540,6 +555,8 @@ export interface RemisionDetailConsumo {
   valor: number;
   facturado: number;
   porFacturar: number;
+  /** true si alguna validación de este consumo se hizo con un producto distinto al remisionado. */
+  productoCambiado: boolean;
 }
 
 export interface RemisionDetailTecnico {
@@ -556,6 +573,7 @@ export interface RemisionDetailTecnico {
 export interface BonoComisionItem {
   id: string;
   tecnico: string | null;
+  tipo: string | null;
   monto: number;
 }
 
@@ -596,6 +614,7 @@ export interface RemisionDetail {
   facturadoPor: string | null;
   tieneCotizacion: boolean;
   cotizacion: string | null;
+  costoInterno: number;
   firma: string | null;
   firmaDisponible: boolean;
   status: boolean;
@@ -623,9 +642,10 @@ export interface RemisionDetail {
     consumo: string | null;
     observaciones: string | null;
     sede: { nombre: string } | null;
-    hospital: { nombre: string; ciudadCat: { nombre: string } | null; tercero: { id: string; nombreCompleto: string } | null } | null;
+    hospital: { nombre: string; ciudadCat: { nombre: string; estado: { nombre: string } | null } | null; tercero: { id: string; nombreCompleto: string } | null } | null;
     medicos: { medico: { nombreCompleto: string } }[];
     consumoNoValidado: boolean;
+    cotizaciones: { id: string; numCotizacion: string | null; status: string | null }[];
   } | null;
   subtotal: number;
   descuentos: number;
@@ -639,6 +659,7 @@ export interface RemisionDetail {
   bonosComisiones: BonoComisionGrupo[];
   facturas: RemisionDetailFactura[];
   puedeConvertirFactura: boolean;
+  ediciones: { editadoEn: string | null; editadoPor: string | null }[];
 }
 
 export const remisionesService = {
@@ -661,6 +682,9 @@ export const remisionesService = {
 
   searchTecnicosComisionistas: (search?: string): Promise<TecnicoOption[]> =>
     api.get('/operacion/remisiones/tecnicos-comisionistas', { params: { search } }).then(r => r.data),
+
+  searchTecnicosSugeridos: (search?: string): Promise<TecnicoOption[]> =>
+    api.get('/operacion/remisiones/tecnicos-sugeridos-busqueda', { params: { search } }).then(r => r.data),
 
   findTecnicosSugeridosByProgramacion: (programacionId: string): Promise<TecnicoSugeridoItem[]> =>
     api.get('/operacion/remisiones/tecnicos-sugeridos', { params: { programacionId } }).then(r => r.data),
@@ -764,8 +788,8 @@ export const remisionesService = {
   deleteDetRequisicion: (id: string) =>
     api.delete(`/operacion/remisiones/detalles-requisicion/${id}`).then(r => r.data),
 
-  searchLotes: (search?: string): Promise<LoteOption[]> =>
-    api.get('/operacion/remisiones/lotes', { params: { search } }).then(r => r.data),
+  searchLotes: (search?: string, productoId?: string, sedeId?: string): Promise<LoteOption[]> =>
+    api.get('/operacion/remisiones/lotes', { params: { search, productoId, sedeId } }).then(r => r.data),
 
   searchProductos: (search?: string, tarifaId?: string, soloCotizables?: boolean): Promise<ProductoOption[]> =>
     api.get('/operacion/remisiones/productos', { params: { search, tarifaId, soloCotizables } }).then(r => r.data),
@@ -784,6 +808,9 @@ export const remisionesService = {
 
   createDocumentoProgramacion: (payload: CreateDocumentoProgramacionPayload): Promise<DocumentoProgramacionItem> =>
     api.post('/operacion/remisiones/documentos', payload).then(r => r.data),
+
+  deleteDocumentoProgramacion: (id: string): Promise<{ success: boolean }> =>
+    api.delete(`/operacion/remisiones/documentos/${id}`).then(r => r.data),
 
   abrirDocumentoArchivo: async (id: string): Promise<void> => {
     const res = await api.get(`/operacion/remisiones/documentos/${id}/archivo`, { responseType: 'blob' });

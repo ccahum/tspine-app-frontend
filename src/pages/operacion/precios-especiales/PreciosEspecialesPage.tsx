@@ -7,6 +7,7 @@ import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import SuccessToast from '../../../components/SuccessToast';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 import {
   preciosEspecialesService,
   type PrecioEspecialItem,
@@ -606,10 +607,7 @@ export default function PreciosEspecialesPage() {
   // visible — mismo patrón que CotizacionesPage/ListasPrecioPage. Como el scroll del body queda
   // bloqueado mientras esta página está montada, no hace falta un efecto aparte para los
   // modales de detalle/creación.
-  useEffect(() => {
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = ''; };
-  }, []);
+  useBodyScrollLock(true);
 
   const query = { page, limit: 200, search: search || undefined };
 

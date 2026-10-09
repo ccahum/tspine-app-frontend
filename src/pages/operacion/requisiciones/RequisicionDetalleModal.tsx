@@ -1,10 +1,13 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader, FileText, X, Plus, Pencil, Trash2, AlertCircle, Check } from 'lucide-react';
+import { Loader, FileText, X, Plus, Pencil, Trash2, AlertCircle, Check, Search } from 'lucide-react';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import SuccessToast from '../../../components/SuccessToast';
 import DatePicker from '../../../components/DatePicker';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
+import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
+import InsumoFormModal, { type InsumoFormValues } from './InsumoFormModal';
 import {
   remisionesService,
   type RequisicionItem,
@@ -14,9 +17,6 @@ import {
   type CubrimientoOption,
   type TarifaOption,
 } from '../../../services/remisiones.service';
-
-const formatProductoLabel = (p: ProductoOption): string =>
-  p.referencia ? `${p.referencia} / ${p.nombre}` : p.nombre ?? '-';
 
 const formatDate = (dateString: string | null): string => {
   if (!dateString) return '-';
@@ -53,6 +53,16 @@ const formatMoney = (value: number | null): string => {
   return Number.isNaN(num) ? '-' : `$${num.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
+// Paleta fija para los puntos de color de categoría/sistema — esos valores vienen de datos libres
+// en BD (sin un catálogo de colores propio), así que se asigna un color determinístico por nombre
+// (mismo nombre siempre cae en el mismo color) en vez de un mapeo manual que se desactualizaría.
+const GROUP_COLORS = ['#6b8c1f', '#2563eb', '#c2730c', '#6d28d9', '#db2777', '#0d9488', '#dc2626', '#4338ca'];
+function colorForGroup(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  return GROUP_COLORS[hash % GROUP_COLORS.length];
+}
+
 // Parte el id en el segundo guion bajo, dejando el guion bajo en la primera línea (ej.
 // "REQ_0000005_0000001" → "REQ_0000005_" / "0000001") para que el título del modal se muestre en
 // 2 líneas fijas en vez de cortarse en cualquier punto.
@@ -63,13 +73,6 @@ function splitIdAtSecondUnderscore(id: string): [string, string | null] {
   if (secondUnderscore === -1) return [id, null];
   return [id.slice(0, secondUnderscore + 1), id.slice(secondUnderscore + 1)];
 }
-
-const PRECIO_POR_CUBRIMIENTO: Record<string, keyof ProductoOption> = {
-  PARTICULARES: 'particulares',
-  HOSPITALES: 'hospitales',
-  DISTRIBUIDOR: 'distribuidor',
-  ASEGURADORA: 'aseguradora',
-};
 
 // Par label/valor del mismo tipo que usa el detalle de Cotizaciones (DetalleItem en CotizacionesPage.tsx)
 function DetalleItem({ label, value }: { label: string; value: React.ReactNode }) {
@@ -100,7 +103,7 @@ interface RequisicionDetalleModalProps {
 export default function RequisicionDetalleModal({ id, onClose }: RequisicionDetalleModalProps) {
   const { isMobile } = useResponsiveStyles();
   const queryClient = useQueryClient();
-  const [mainTab, setMainTab] = useState<'general' | 'insumos'>('general');
+  const navigate = useNavigateWithLoading();
   const [hoveredPdfBtn, setHoveredPdfBtn] = useState<'pdf' | 'sos' | null>(null);
   const [selectedInsumo, setSelectedInsumo] = useState<DetRequisicionItem | null>(null);
   const [hoveredInsumoId, setHoveredInsumoId] = useState<string | null>(null);
@@ -109,8 +112,11 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
-  const bodyContentRef = useRef<HTMLDivElement>(null);
-  const [bodyHeight, setBodyHeight] = useState<number | null>(null);
+  const [search, setSearch] = useState('');
+  const [agruparPor, setAgruparPor] = useState<'categoria' | 'sistema'>('categoria');
+  const [soloSinLote, setSoloSinLote] = useState(false);
+  const [activeChip, setActiveChip] = useState<string | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!showMoreMenu) return;
@@ -134,21 +140,7 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
   });
 
   // Bloquea el scroll del fondo mientras el modal está montado.
-  useEffect(() => {
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = ''; };
-  }, []);
-
-  // Anima el alto del contenedor del body al cambiar de pestaña, en vez de saltar de golpe.
-  useEffect(() => {
-    const el = bodyContentRef.current;
-    if (!el) return;
-    const resizeObserver = new ResizeObserver(() => {
-      setBodyHeight(el.scrollHeight);
-    });
-    resizeObserver.observe(el);
-    return () => resizeObserver.disconnect();
-  }, [!!req]);
+  useBodyScrollLock(true);
 
   const [showEditModal, setShowEditModal] = useState(false);
   const [editFecha, setEditFecha] = useState('');
@@ -162,6 +154,33 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
   const [editTarifaFocused, setEditTarifaFocused] = useState(false);
   const [editError, setEditError] = useState<{ field: string; message: string } | null>(null);
   const [showEditSuccess, setShowEditSuccess] = useState(false);
+  const [showDeleteSuccess, setShowDeleteSuccess] = useState(false);
+
+  // Borrador local de los insumos dentro de "Editar Requisición": agregar/editar/eliminar un
+  // insumo ahí solo modifica este arreglo en memoria — nada llega al backend hasta que se le da
+  // clic a "Guardar" (ver guardarInsumosDraftMutation más abajo). `id: null` = insumo nuevo,
+  // todavía no existe en el backend. `eliminado` solo aplica a insumos que sí existían (id
+  // distinto de null): se quedan en el arreglo pero se filtran al renderizar, para saber al
+  // guardar que hay que borrarlos de verdad.
+  interface EditInsumoDraft {
+    key: string;
+    id: string | null;
+    loteId?: string;
+    lote: string | null;
+    productoId?: string;
+    producto: string | null;
+    referencia: string | null;
+    cantidad: number;
+    precio: number;
+    eliminado: boolean;
+  }
+  const [editInsumosDraft, setEditInsumosDraft] = useState<EditInsumoDraft[]>([]);
+  // Igual que "Agregar insumo"/"Asignar lote" fuera de este modal (botón del header y badge de
+  // las tablas agrupadas): esos siguen aplicando el cambio de inmediato contra el backend — solo
+  // dentro de "Editar Requisición" se difiere hasta Guardar. Este flag distingue cuál de los dos
+  // comportamientos debe usar handleGuardarInsumo.
+  const [insumoModalMode, setInsumoModalMode] = useState<'directo' | 'borrador'>('directo');
+  const [editingDraftKey, setEditingDraftKey] = useState<string | null>(null);
 
   const { data: cubrimientos = [] } = useQuery<CubrimientoOption[]>({
     queryKey: ['cubrimientos'],
@@ -206,6 +225,7 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['requisicion-detalle', id] });
+      queryClient.invalidateQueries({ queryKey: ['remisiones-requisiciones'] });
       setShowEditModal(false);
       setShowEditSuccess(true);
     },
@@ -218,18 +238,19 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
     mutationFn: () => remisionesService.deleteRequisicion(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['requisiciones'] });
-      onClose();
+      // Match parcial a propósito (sin el id de programación): la mini-tarjeta de Requisiciones
+      // en ProgramacionDetailPage cachea bajo ['remisiones-requisiciones', programacionId], que
+      // este modal no conoce directamente — invalidateQueries con un prefijo matchea cualquier
+      // query cuya key empiece así, sin importar el segundo elemento.
+      queryClient.invalidateQueries({ queryKey: ['remisiones-requisiciones'] });
+      // No se llama onClose() de inmediato — se espera a que el toast termine su animación (ver
+      // SuccessToast más abajo, que recibe onClose como su propio callback de cierre) para que el
+      // usuario alcance a ver la confirmación antes de que el modal desaparezca.
+      setShowDeleteConfirm(false);
+      setShowDeleteSuccess(true);
     },
     onError: (err: any) => {
       setDeleteError(err?.response?.data?.message ?? 'No se pudo eliminar la requisición.');
-    },
-  });
-
-  const deleteDetRequisicionMutation = useMutation({
-    mutationFn: (detId: string) => remisionesService.deleteDetRequisicion(detId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['requisicion-detalles', id] });
-      setConfirmDeleteInsumoId(null);
     },
   });
 
@@ -242,61 +263,93 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
     setEditTarifaSearch('');
     setEditError(null);
     setConfirmDeleteInsumoId(null);
+    // Borrador de insumos partiendo de los ya guardados — ver comentario de editInsumosDraft.
+    setEditInsumosDraft(detalles.map(d => ({
+      key: d.id,
+      id: d.id,
+      loteId: d.loteId ?? undefined,
+      lote: d.lote,
+      productoId: d.productoId ?? undefined,
+      producto: d.producto,
+      referencia: d.referencia,
+      cantidad: d.cantidad ?? 0,
+      precio: d.precio ?? 0,
+      eliminado: false,
+    })));
     setShowEditModal(true);
   };
 
-  const handleGuardarEdit = () => {
+  // Aplica de verdad contra el backend lo que haya quedado en editInsumosDraft (crear los nuevos,
+  // actualizar los modificados, borrar los marcados) — se llama solo al dar clic en "Guardar".
+  const guardarInsumosDraftMutation = useMutation({
+    mutationFn: async () => {
+      const nuevos = editInsumosDraft.filter(d => d.id === null);
+      const modificados = editInsumosDraft.filter(d => d.id !== null && !d.eliminado);
+      const eliminados = editInsumosDraft.filter(d => d.id !== null && d.eliminado);
+      await Promise.all([
+        ...nuevos.map(d => remisionesService.createDetRequisicion({
+          requisicionId: id,
+          loteId: d.loteId,
+          productoId: d.productoId,
+          tarifaAsociadaId: editTarifaId || undefined,
+          cantidad: d.cantidad,
+          precio: d.precio,
+        })),
+        ...modificados.map(d => remisionesService.updateDetRequisicion(d.id!, {
+          loteId: d.loteId,
+          productoId: d.productoId,
+          cantidad: d.cantidad,
+          precio: d.precio,
+        })),
+        ...eliminados.map(d => remisionesService.deleteDetRequisicion(d.id!)),
+      ]);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['requisicion-detalles', id] });
+    },
+  });
+
+  const handleGuardarEdit = async () => {
     if (!editFecha) { setEditError({ field: 'fecha', message: 'Selecciona la fecha.' }); return; }
     if (!editCubrimiento) { setEditError({ field: 'cubrimiento', message: 'Selecciona el cubrimiento.' }); return; }
     if (!editTarifaId) { setEditError({ field: 'tarifa', message: 'Selecciona la tarifa.' }); return; }
     setEditError(null);
+    try {
+      await guardarInsumosDraftMutation.mutateAsync();
+    } catch {
+      setEditError({ field: 'general', message: 'No se pudieron guardar los insumos.' });
+      return;
+    }
     updateRequisicionMutation.mutate();
   };
 
   const [showInsumoModal, setShowInsumoModal] = useState(false);
   const [editingInsumoId, setEditingInsumoId] = useState<string | null>(null);
-  const [insumoLote, setInsumoLote] = useState<LoteOption | null>(null);
-  const [loteSearch, setLoteSearch] = useState('');
-  const [loteFocused, setLoteFocused] = useState(false);
-  const [insumoProducto, setInsumoProducto] = useState<ProductoOption | null>(null);
-  const [productoSearch, setProductoSearch] = useState('');
-  const [productoFocused, setProductoFocused] = useState(false);
-  const [productoHighlighted, setProductoHighlighted] = useState(0);
-  const productoOptionRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const [insumoCantidad, setInsumoCantidad] = useState('');
-  const [insumoPrecio, setInsumoPrecio] = useState('');
-  const [insumoError, setInsumoError] = useState<{ field: string; message: string } | null>(null);
+  const [insumoSeedLote, setInsumoSeedLote] = useState<LoteOption | null>(null);
+  const [insumoSeedProducto, setInsumoSeedProducto] = useState<ProductoOption | null>(null);
+  const [insumoSeedCantidad, setInsumoSeedCantidad] = useState('');
+  const [insumoSeedPrecio, setInsumoSeedPrecio] = useState('');
 
   useEffect(() => {
     if (!editError) return;
     document.getElementById(`edit-requisicion-field-${editError.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [editError]);
 
-  const { data: loteResults = [] } = useQuery<LoteOption[]>({
-    queryKey: ['lotes', loteSearch],
-    queryFn: () => remisionesService.searchLotes(loteSearch),
-    enabled: showInsumoModal,
-  });
-
   // Misma tarifa que ya usa createDetRequisicionMutation para tarifaAsociadaId: la del formulario
   // de edición si está abierto (puede no estar guardada todavía), si no la ya guardada.
   const insumoTarifaId = (showEditModal ? editTarifaId : req?.tarifaId) || undefined;
-  const { data: productoResults = [] } = useQuery<ProductoOption[]>({
-    queryKey: ['productos', productoSearch, insumoTarifaId],
-    queryFn: () => remisionesService.searchProductos(productoSearch, insumoTarifaId),
-    enabled: showInsumoModal,
-  });
-  useEffect(() => { setProductoHighlighted(0); }, [productoResults.length, productoSearch]);
-  useEffect(() => { productoOptionRefs.current[productoHighlighted]?.scrollIntoView({ block: 'nearest' }); }, [productoHighlighted]);
+  const insumoCubrimientoNombre = showEditModal ? editCubrimiento?.nombre : req?.cubrimiento;
+  const insumoTarifaLabel = showEditModal ? (tarifasCubrimiento.find(t => t.id === editTarifaId)?.nombre ?? req?.tarifa ?? '-') : (req?.tarifa ?? '-');
+  const insumoFecha = showEditModal ? (editFecha || req?.fecha || null) : (req?.fecha ?? null);
 
   const createDetRequisicionMutation = useMutation({
-    mutationFn: () => remisionesService.createDetRequisicion({
+    mutationFn: (vars: { loteId?: string; productoId?: string; cantidad: number; precio: number }) => remisionesService.createDetRequisicion({
       requisicionId: id,
-      loteId: insumoLote?.id,
-      productoId: insumoProducto?.id,
+      loteId: vars.loteId,
+      productoId: vars.productoId,
       tarifaAsociadaId: (showEditModal ? editTarifaId : req?.tarifaId) || undefined,
-      cantidad: Number(insumoCantidad),
-      precio: Number(insumoPrecio),
+      cantidad: vars.cantidad,
+      precio: vars.precio,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['requisicion-detalles', id] });
@@ -305,12 +358,7 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
   });
 
   const updateDetRequisicionMutation = useMutation({
-    mutationFn: () => remisionesService.updateDetRequisicion(editingInsumoId!, {
-      loteId: insumoLote?.id,
-      productoId: insumoProducto?.id,
-      cantidad: Number(insumoCantidad),
-      precio: Number(insumoPrecio),
-    }),
+    mutationFn: (vars: { id: string; loteId?: string; productoId?: string; cantidad: number; precio: number }) => remisionesService.updateDetRequisicion(vars.id, vars),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['requisicion-detalles', id] });
       setShowInsumoModal(false);
@@ -318,22 +366,20 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
   });
 
   const openInsumoModal = () => {
+    setInsumoModalMode('directo');
     setEditingInsumoId(null);
-    setInsumoLote(null);
-    setLoteSearch('');
-    setInsumoProducto(null);
-    setProductoSearch('');
-    setInsumoCantidad('');
-    setInsumoPrecio('');
-    setInsumoError(null);
+    setInsumoSeedLote(null);
+    setInsumoSeedProducto(null);
+    setInsumoSeedCantidad('');
+    setInsumoSeedPrecio('');
     setShowInsumoModal(true);
   };
 
   const openEditInsumoModal = (d: DetRequisicionItem) => {
+    setInsumoModalMode('directo');
     setEditingInsumoId(d.id);
-    setInsumoLote(d.loteId ? { id: d.loteId, lote: d.lote } : null);
-    setLoteSearch('');
-    setInsumoProducto(d.productoId ? {
+    setInsumoSeedLote(d.loteId ? { id: d.loteId, lote: d.lote } : null);
+    setInsumoSeedProducto(d.productoId ? {
       id: d.productoId,
       nombre: d.producto,
       referencia: d.referencia,
@@ -345,44 +391,157 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
       categoria: d.categoria,
       precioSugerido: null,
     } : null);
-    setProductoSearch('');
-    setInsumoCantidad(d.cantidad !== null ? String(d.cantidad) : '');
-    setInsumoPrecio(d.precio !== null ? String(d.precio) : '');
-    setInsumoError(null);
+    setInsumoSeedCantidad(d.cantidad !== null ? String(d.cantidad) : '');
+    setInsumoSeedPrecio(d.precio !== null ? String(d.precio) : '');
     setShowInsumoModal(true);
   };
 
-  const handleSelectProducto = (p: ProductoOption) => {
-    setInsumoProducto(p);
-    setProductoSearch('');
-    setInsumoError(null);
-    // Precio de la tarifa específica de la requisición (ListaPrecio) si existe; si ese producto no
-    // tiene precio cargado para esa tarifa puntual, se cae a la columna genérica por categoría de
-    // cubrimiento (mismo respaldo de siempre). Usa el cubrimiento vigente en pantalla (el del
-    // formulario de edición si está abierto, aunque no se haya guardado, no el ya guardado).
-    const cubrimientoVigente = showEditModal ? editCubrimiento?.nombre : req?.cubrimiento;
-    const key = PRECIO_POR_CUBRIMIENTO[(cubrimientoVigente ?? '').trim().toUpperCase()];
-    const precio = p.precioSugerido ?? (key ? p[key] : null);
-    setInsumoPrecio(precio !== null && precio !== undefined ? String(precio) : '');
+  // Mismos dos abridores que arriba, pero para el borrador de "Editar Requisición" (ver
+  // editInsumosDraft) — no tocan editingInsumoId (ese sigue siendo del modo "directo").
+  const openInsumoDraftModal = () => {
+    setInsumoModalMode('borrador');
+    setEditingDraftKey(null);
+    setInsumoSeedLote(null);
+    setInsumoSeedProducto(null);
+    setInsumoSeedCantidad('');
+    setInsumoSeedPrecio('');
+    setShowInsumoModal(true);
   };
 
-  const handleGuardarInsumo = () => {
-    if (!insumoLote) { setInsumoError({ field: 'lote', message: 'Selecciona un lote válido de la lista.' }); return; }
-    if (!insumoProducto) { setInsumoError({ field: 'producto', message: 'Selecciona un producto válido de la lista.' }); return; }
-    if (!insumoCantidad || Number(insumoCantidad) <= 0) { setInsumoError({ field: 'cantidad', message: 'La cantidad debe ser mayor a cero.' }); return; }
-    if (!insumoPrecio || Number(insumoPrecio) <= 0) { setInsumoError({ field: 'precio', message: 'El precio debe ser mayor a cero.' }); return; }
-    setInsumoError(null);
+  const openEditInsumoDraftModal = (d: EditInsumoDraft) => {
+    setInsumoModalMode('borrador');
+    setEditingDraftKey(d.key);
+    setInsumoSeedLote(d.loteId ? { id: d.loteId, lote: d.lote } : null);
+    setInsumoSeedProducto(d.productoId ? {
+      id: d.productoId,
+      nombre: d.producto,
+      referencia: d.referencia,
+      particulares: null,
+      hospitales: null,
+      distribuidor: null,
+      aseguradora: null,
+      sistema: null,
+      categoria: null,
+      precioSugerido: null,
+    } : null);
+    setInsumoSeedCantidad(String(d.cantidad));
+    setInsumoSeedPrecio(String(d.precio));
+    setShowInsumoModal(true);
+  };
+
+  const handleGuardarInsumo = (values: InsumoFormValues) => {
+    const vars = { loteId: values.lote?.id, productoId: values.producto.id, cantidad: values.cantidad, precio: values.precio };
+
+    if (insumoModalMode === 'borrador') {
+      if (editingDraftKey) {
+        setEditInsumosDraft(prev => prev.map(it => it.key === editingDraftKey ? {
+          ...it,
+          loteId: vars.loteId,
+          lote: values.lote?.lote ?? null,
+          productoId: vars.productoId,
+          producto: values.producto.nombre,
+          referencia: values.producto.referencia,
+          cantidad: vars.cantidad,
+          precio: vars.precio,
+        } : it));
+      } else {
+        // Mismo producto y mismo lote (o ambos sin lote) que un insumo ya en el borrador: en vez
+        // de agregar una fila duplicada, se suma la cantidad a la que ya tenía.
+        const existente = editInsumosDraft.find(d => !d.eliminado && d.productoId === vars.productoId && (d.loteId ?? null) === (vars.loteId ?? null));
+        if (existente) {
+          setEditInsumosDraft(prev => prev.map(it => it.key === existente.key ? { ...it, cantidad: it.cantidad + vars.cantidad } : it));
+        } else {
+          setEditInsumosDraft(prev => [...prev, {
+            key: `new-${Date.now()}-${Math.random()}`,
+            id: null,
+            loteId: vars.loteId,
+            lote: values.lote?.lote ?? null,
+            productoId: vars.productoId,
+            producto: values.producto.nombre,
+            referencia: values.producto.referencia,
+            cantidad: vars.cantidad,
+            precio: vars.precio,
+            eliminado: false,
+          }]);
+        }
+      }
+      setShowInsumoModal(false);
+      return;
+    }
+
     if (editingInsumoId) {
-      updateDetRequisicionMutation.mutate();
+      updateDetRequisicionMutation.mutate({ id: editingInsumoId, ...vars });
+      return;
+    }
+    // Mismo producto y mismo lote (o ambos sin lote) que un insumo ya agregado: en vez de crear
+    // una fila duplicada, se suma la cantidad a la que ya tenía.
+    const existente = detalles.find(d => d.productoId === values.producto.id && (d.loteId ?? null) === (values.lote?.id ?? null));
+    if (existente) {
+      updateDetRequisicionMutation.mutate({ id: existente.id, ...vars, cantidad: (existente.cantidad ?? 0) + values.cantidad });
     } else {
-      createDetRequisicionMutation.mutate();
+      createDetRequisicionMutation.mutate(vars);
     }
   };
 
-  useEffect(() => {
-    if (!insumoError) return;
-    document.getElementById(`insumo-field-${insumoError.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [insumoError]);
+  // Al cambiar el criterio de agrupación el chip activo (que es un valor de categoría o de
+  // sistema) deja de tener sentido, así que se limpia.
+  useEffect(() => { setActiveChip(null); }, [agruparPor]);
+
+  const groupLabelFallback = agruparPor === 'categoria' ? 'Sin categoría' : 'Sin sistema';
+
+  const searchFiltered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return detalles.filter(d => {
+      if (soloSinLote && d.loteId) return false;
+      if (!term) return true;
+      return (
+        d.referencia?.toLowerCase().includes(term) ||
+        d.descripcion?.toLowerCase().includes(term) ||
+        d.sistema?.toLowerCase().includes(term)
+      );
+    });
+  }, [detalles, search, soloSinLote]);
+
+  const chipCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const d of searchFiltered) {
+      const value = (agruparPor === 'categoria' ? d.categoria : d.sistema) || groupLabelFallback;
+      map.set(value, (map.get(value) ?? 0) + 1);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0], 'es'));
+  }, [searchFiltered, agruparPor, groupLabelFallback]);
+
+  const filteredDetalles = useMemo(() => {
+    if (!activeChip) return searchFiltered;
+    return searchFiltered.filter(d => ((agruparPor === 'categoria' ? d.categoria : d.sistema) || groupLabelFallback) === activeChip);
+  }, [searchFiltered, activeChip, agruparPor, groupLabelFallback]);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, DetRequisicionItem[]>();
+    for (const d of filteredDetalles) {
+      const value = (agruparPor === 'categoria' ? d.categoria : d.sistema) || groupLabelFallback;
+      if (!map.has(value)) map.set(value, []);
+      map.get(value)!.push(d);
+    }
+    return Array.from(map.entries())
+      .sort((a, b) => a[0].localeCompare(b[0], 'es'))
+      .map(([label, items]) => ({
+        label,
+        items,
+        subtotal: items.reduce((sum, d) => sum + Number(d.cantidad ?? 0) * Number(d.precio ?? 0), 0),
+      }));
+  }, [filteredDetalles, agruparPor, groupLabelFallback]);
+
+  const totalUnidades = useMemo(() => detalles.reduce((sum, d) => sum + Number(d.cantidad ?? 0), 0), [detalles]);
+  const sinLoteCount = useMemo(() => detalles.filter(d => !d.loteId).length, [detalles]);
+
+  const toggleGroup = (label: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label); else next.add(label);
+      return next;
+    });
+  };
 
   return (
     <>
@@ -404,17 +563,21 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', minWidth: 0 }}>
                       <span style={styles.titleLabel}>Requisición</span>
-                      {isMobile ? (() => {
-                        const [primeraLinea, segundaLinea] = splitIdAtSecondUnderscore(req.id);
-                        return (
-                          <h2 style={{ ...styles.title, whiteSpace: 'nowrap' as const }}>
-                            {primeraLinea}
-                            {segundaLinea && <><br />{segundaLinea}</>}
-                          </h2>
-                        );
-                      })() : (
-                        <h2 style={styles.title}>{req.id}</h2>
-                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' as const }}>
+                        {isMobile ? (() => {
+                          const [primeraLinea, segundaLinea] = splitIdAtSecondUnderscore(req.id);
+                          return (
+                            <h2 style={{ ...styles.title, whiteSpace: 'nowrap' as const }}>
+                              {primeraLinea}
+                              {segundaLinea && <><br />{segundaLinea}</>}
+                            </h2>
+                          );
+                        })() : (
+                          <h2 style={styles.title}>{req.id}</h2>
+                        )}
+                        {req.status && <span style={styles.reqStatusBadge}>{req.status}</span>}
+                      </div>
+                      <span style={styles.reqEditedSub}>Editado {formatDateTime(req.marcaDeTiempo)}</span>
                     </div>
                   </div>
 
@@ -478,105 +641,219 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
                     </button>
                   )}
                 </div>
-
-                <div style={styles.summaryBar}>
-                  <div style={styles.summaryBarItem}>
-                    <span style={styles.detalleLabel}>Fecha</span>
-                    <span style={styles.summaryBarValue}>{formatDate(req.fecha)}</span>
-                  </div>
-                  <div style={styles.summaryBarItem}>
-                    <span style={styles.detalleLabel}>Status</span>
-                    <span style={styles.summaryBarValue}>{req.status || '-'}</span>
-                  </div>
-                  <div style={styles.summaryBarItem}>
-                    <span style={styles.detalleLabel}>Cubrimiento</span>
-                    <span style={styles.summaryBarValue}>{req.cubrimiento || '-'}</span>
-                  </div>
-                  <div style={styles.summaryBarItem}>
-                    <span style={styles.detalleLabel}>Tarifa</span>
-                    <span style={{ ...styles.summaryBarValue, fontWeight: 700, color: '#3f6510' }}>{req.tarifa || '-'}</span>
-                  </div>
-                </div>
-
-                <div style={styles.infoTabBar}>
-                  <button type="button" style={{ ...styles.infoTabBtn, ...(mainTab === 'general' ? styles.infoTabBtnActive : styles.infoTabBtnInactive) }} onClick={() => setMainTab('general')}>
-                    Información General
-                  </button>
-                  <button type="button" style={{ ...styles.infoTabBtn, ...(mainTab === 'insumos' ? styles.infoTabBtnActive : styles.infoTabBtnInactive) }} onClick={() => setMainTab('insumos')}>
-                    Insumos
-                    <span style={{ ...styles.countBadge, ...(mainTab === 'insumos' ? styles.countBadgeActive : {}) }}>{detalles.length}</span>
-                  </button>
-                </div>
               </div>
 
-              <div style={{ overflow: 'hidden', transition: 'height 0.28s cubic-bezier(0.4, 0, 0.2, 1)', ...(bodyHeight !== null ? { height: `${bodyHeight}px` } : {}) }}>
-              <div ref={bodyContentRef} style={styles.modalBody}>
-              <div key={mainTab} className="page-fade-in">
-                {mainTab === 'general' && (
-                  <div style={styles.infoSectionBox}>
-                    <div style={{ ...styles.detalleGrid, ...(isMobile ? { gridTemplateColumns: '1fr' } : {}) }}>
-                      <DetalleItem label="ID Movimiento" value={req.id} />
-                      <DetalleItem label="Marca de Tiempo" value={formatDateTime(req.marcaDeTiempo)} />
-                      <TagItem label="Usuario" value={req.usuario || '-'} />
-                      <DetalleItem label="Proviene de Programación?" value={req.provieneDeProgramacion === null ? '-' : req.provieneDeProgramacion ? 'SI' : 'NO'} />
-                      <DetalleItem label="No Programación" value={req.folio || '-'} />
-                      <DetalleItem label="Validación" value={req.validacion || '-'} />
-                      <DetalleItem label="Existe Programación?" value={req.existeProgramacion === null ? '-' : req.existeProgramacion ? 'SI' : 'NO'} />
-                      <TagItem label="Contacto" value={req.contacto || '-'} />
-                      <DetalleItem label="Sede Origen" value={req.sedeOrigen || '-'} />
-                      <DetalleItem label="Año" value={req.anio || '-'} />
-                      <DetalleItem label="Mes" value={req.mes || '-'} />
+              <div style={styles.modalBody}>
+                <div style={{ ...styles.reqFlowRow, ...(isMobile ? { flexDirection: 'column' as const } : {}) }}>
+                  <div style={styles.reqFlowBox}>
+                    <span style={styles.reqFlowIconCircle}><MaterialIcon name="warehouse" size={16} color="#4d7a13" /></span>
+                    <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', minWidth: 0 }}>
+                      <span style={styles.detalleLabel}>Origen</span>
+                      <span style={styles.reqFlowValue}>{req.sedeOrigen || '-'}</span>
                     </div>
                   </div>
-                )}
+                  <div style={{ ...styles.reqFlowConnector, ...(isMobile ? { flexDirection: 'column' as const, height: '3rem' } : {}) }}>
+                    <span style={styles.reqFlowDotFilled} />
+                    <span style={{ ...styles.reqFlowConnectorLine, ...(isMobile ? { width: 0, height: '100%', borderTop: 'none', borderLeft: '2px dashed #6b8c1f' } : {}) }} />
+                    <span style={styles.reqFlowIconBadge}><MaterialIcon name="swap_horiz" size={16} color="#4d7a13" /></span>
+                    <span style={{ ...styles.reqFlowConnectorLine, ...(isMobile ? { width: 0, height: '100%', borderTop: 'none', borderLeft: '2px dashed #6b8c1f' } : {}) }} />
+                    <span style={styles.reqFlowDotHollow} />
+                  </div>
+                  <div style={{ ...styles.reqFlowBox, ...(isMobile ? {} : { justifyContent: 'flex-end' as const }) }}>
+                    <span style={styles.reqFlowIconCircle}><MaterialIcon name="local_hospital" size={16} color="#4d7a13" /></span>
+                    <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', minWidth: 0 }}>
+                      <span style={styles.detalleLabel}>Destino</span>
+                      <span style={styles.reqFlowValue}>{req.contacto || '-'}</span>
+                    </div>
+                  </div>
+                </div>
 
-                {mainTab === 'insumos' && (
-                  <>
-                    {detalles.length === 0 ? (
-                      <div style={styles.emptySection}>No hay datos relacionados</div>
+                <div style={styles.reqStatsOuter}>
+                <div style={{ ...styles.reqStatsBar, borderBottom: '1px solid #eeeee6', ...(isMobile ? { flexWrap: 'wrap' as const } : {}) }}>
+                  <div style={{ ...styles.reqStatsSegment, backgroundColor: '#fff', ...(isMobile ? { flex: '1 1 50%', minWidth: '150px' } : {}) }}>
+                    <span style={{ ...styles.detalleLabel, textTransform: 'none' as const, fontSize: '0.75rem' }}>Programación</span>
+                    {req.programacionId ? (
+                      <span
+                        style={{ ...styles.detalleValue, fontSize: '0.82rem', fontWeight: 700, color: '#3f6510', cursor: 'pointer', width: 'fit-content' as const }}
+                        onClick={() => navigate(`/operacion/programaciones/${req.programacionId}`, '/operacion/programaciones/:id')}
+                      >
+                        {req.folio || req.programacionId}
+                      </span>
                     ) : (
-                      <div style={styles.consumosTableWrap}>
-                        <table style={styles.consumosTable}>
-                          <thead>
-                            <tr>
-                              <th style={styles.consumosTh}>Producto</th>
-                              <th style={styles.consumosTh}>Descripción</th>
-                              <th style={styles.consumosTh}>Categoría</th>
-                              <th style={styles.consumosTh}>Sistema</th>
-                              <th style={styles.consumosTh}>Lote</th>
-                              <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Cantidad</th>
-                              <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Precio</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {detalles.map(d => (
-                              <tr
-                                key={d.id}
-                                style={{ cursor: 'pointer', ...(hoveredInsumoId === d.id ? { backgroundColor: '#f3faec' } : {}) }}
-                                onMouseEnter={() => setHoveredInsumoId(d.id)}
-                                onMouseLeave={() => setHoveredInsumoId(null)}
-                                onClick={() => setSelectedInsumo(d)}
-                              >
-                                <td style={{ ...styles.consumosTd, fontWeight: 700, color: '#3f6510' }}>{d.referencia ?? d.producto ?? '-'}</td>
-                                <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={d.descripcion ?? undefined}>{d.descripcion ?? '-'}</td>
-                                <td style={styles.consumosTd}>{d.categoria ?? '-'}</td>
-                                <td style={styles.consumosTd}>{d.sistema ?? '-'}</td>
-                                <td style={styles.consumosTd}>{d.lote ?? '-'}</td>
-                                <td style={{ ...styles.consumosTd, textAlign: 'right' as const }}>{d.cantidad ?? '-'}</td>
-                                <td style={{ ...styles.consumosTd, textAlign: 'right' as const, fontWeight: 700 }}>{formatMoney(d.precio)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                      <span style={{ ...styles.detalleValue, fontSize: '0.82rem' }}>{req.folio || '-'}</span>
                     )}
-                    <button type="button" className="btn-press" style={styles.addInsumoBtn} onClick={openInsumoModal}>
-                      <Plus size={14} /> Agregar Insumo
+                  </div>
+                  <div style={{ ...styles.reqStatsSegment, backgroundColor: '#fff', ...(isMobile ? { flex: '1 1 50%', minWidth: '150px' } : {}) }}>
+                    <span style={{ ...styles.detalleLabel, textTransform: 'none' as const, fontSize: '0.75rem' }}>Cubrimiento</span>
+                    <span style={{ ...styles.detalleValue, fontSize: '0.82rem' }}>{req.cubrimiento || '-'}</span>
+                  </div>
+                  <div style={{ ...styles.reqStatsSegment, backgroundColor: '#fff', ...(isMobile ? { flex: '1 1 50%', minWidth: '150px' } : {}) }}>
+                    <span style={{ ...styles.detalleLabel, textTransform: 'none' as const, fontSize: '0.75rem' }}>Tarifa</span>
+                    <span style={{ ...styles.detalleValue, fontSize: '0.82rem' }}>{req.tarifa || '-'}</span>
+                  </div>
+                  <div style={{ ...styles.reqStatsSegment, backgroundColor: '#fff', ...(isMobile ? { flex: '1 1 50%', minWidth: '150px' } : {}) }}>
+                    <span style={{ ...styles.detalleLabel, textTransform: 'none' as const, fontSize: '0.75rem' }}>Fecha</span>
+                    <span style={{ ...styles.detalleValue, fontSize: '0.82rem' }}>{formatDate(req.fecha)}</span>
+                  </div>
+                  <div style={{ ...styles.reqStatsSegment, backgroundColor: '#fff', ...(isMobile ? { flex: '1 1 50%', minWidth: '150px' } : {}) }}>
+                    <span style={{ ...styles.detalleLabel, textTransform: 'none' as const, fontSize: '0.75rem' }}>Creado por</span>
+                    <span style={{ ...styles.detalleValue, fontSize: '0.82rem' }}>{req.usuario || '-'}</span>
+                  </div>
+                  <div style={{ ...styles.reqStatsSegment, backgroundColor: '#fff', borderRight: 'none', ...(isMobile ? { flex: '1 1 50%', minWidth: '150px' } : {}) }}>
+                    <span style={{ ...styles.detalleLabel, textTransform: 'none' as const, fontSize: '0.75rem' }}>Validación</span>
+                    {req.validacion ? (
+                      <span style={{
+                        ...styles.reqValidacionBadge,
+                        ...(req.validacion.trim().toLowerCase() === 'pendiente' ? styles.reqValidacionBadgePendiente : styles.reqValidacionBadgeOk),
+                      }}>
+                        {req.validacion}
+                      </span>
+                    ) : (
+                      <span style={{ ...styles.detalleValue, fontSize: '0.82rem' }}>-</span>
+                    )}
+                  </div>
+                </div>
+
+                <div style={styles.reqStatsBar}>
+                  <div style={styles.reqStatsSegment}>
+                    <span style={styles.detalleLabel}>Insumos</span>
+                    <span style={styles.reqStatsValue}>{detalles.length}</span>
+                  </div>
+                  <div style={styles.reqStatsSegment}>
+                    <span style={styles.detalleLabel}>Unidades</span>
+                    <span style={styles.reqStatsValue}>{totalUnidades}</span>
+                  </div>
+                  <div style={styles.reqStatsSegment}>
+                    <span style={{ ...styles.detalleLabel, color: '#c2730c' }}>Sin lote</span>
+                    <span style={{ ...styles.reqStatsValue, color: '#c2730c' }}>{sinLoteCount}</span>
+                  </div>
+                  <div style={{ ...styles.reqStatsSegment, ...styles.reqStatsSegmentDark }}>
+                    <span style={{ ...styles.detalleLabel, color: '#d1d5db' }}>Total</span>
+                    <span style={{ ...styles.reqStatsValue, color: '#fff' }}>{formatMoney(req.total)}</span>
+                  </div>
+                </div>
+                </div>
+
+                <div style={{ ...styles.reqToolbar, ...(isMobile ? { flexDirection: 'column' as const, alignItems: 'stretch' as const } : {}) }}>
+                  <div style={styles.reqSearchWrap}>
+                    <Search size={15} color="#9ca3af" style={{ position: 'absolute' as const, left: 12, top: '50%', transform: 'translateY(-50%)' }} />
+                    <input
+                      style={styles.reqSearchInput}
+                      placeholder="Buscar por código, descripción o sistema..."
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                    />
+                  </div>
+                  <div style={{ ...styles.reqToolbarRight, ...(isMobile ? { justifyContent: 'space-between' as const } : {}) }}>
+                    <div style={styles.reqGroupToggle}>
+                      <button type="button" style={{ ...styles.reqGroupToggleBtn, ...(agruparPor === 'categoria' ? styles.reqGroupToggleBtnActive : {}) }} onClick={() => setAgruparPor('categoria')}>
+                        Categoría
+                      </button>
+                      <button type="button" style={{ ...styles.reqGroupToggleBtn, ...(agruparPor === 'sistema' ? styles.reqGroupToggleBtnActive : {}) }} onClick={() => setAgruparPor('sistema')}>
+                        Sistema
+                      </button>
+                    </div>
+                    <label style={styles.reqCheckboxLabel}>
+                      <input type="checkbox" checked={soloSinLote} onChange={e => setSoloSinLote(e.target.checked)} />
+                      Solo sin lote
+                    </label>
+                    <button type="button" className="btn-press" style={styles.reqAddInsumoBtn} onClick={openInsumoModal}>
+                      <Plus size={14} /> Agregar insumo
                     </button>
-                  </>
+                  </div>
+                </div>
+
+                <div style={styles.reqChipsRow}>
+                  <button type="button" style={{ ...styles.reqChip, ...(activeChip === null ? styles.reqChipActive : {}) }} onClick={() => setActiveChip(null)}>
+                    Todas <span style={styles.reqChipCount}>{searchFiltered.length}</span>
+                  </button>
+                  {chipCounts.map(([label, count]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      style={{ ...styles.reqChip, ...(activeChip === label ? styles.reqChipActive : {}) }}
+                      onClick={() => setActiveChip(label)}
+                    >
+                      <span style={{ ...styles.reqChipDot, backgroundColor: colorForGroup(label) }} />
+                      {label} <span style={styles.reqChipCount}>{count}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {filteredDetalles.length === 0 ? (
+                  <div style={styles.emptySection}>No hay insumos que coincidan con los filtros</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.75rem' }}>
+                    {groups.map(group => {
+                      const collapsed = collapsedGroups.has(group.label);
+                      return (
+                        <div key={group.label} style={styles.reqGroupCard}>
+                          <button type="button" style={styles.reqGroupHeader} onClick={() => toggleGroup(group.label)}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: 0 }}>
+                              <MaterialIcon
+                                name="expand_more"
+                                size={16}
+                                color="#6b7280"
+                                style={{ transform: collapsed ? 'rotate(-90deg)' : undefined, transition: 'transform 0.15s ease', flexShrink: 0 }}
+                              />
+                              <span style={{ ...styles.reqChipDot, backgroundColor: colorForGroup(group.label) }} />
+                              <span style={styles.reqGroupHeaderLabel}>{group.label}</span>
+                              <span style={styles.countBadge}>{group.items.length}</span>
+                            </div>
+                            <span style={styles.reqGroupHeaderTotal}>{formatMoney(group.subtotal)}</span>
+                          </button>
+                          <div style={{ display: 'grid', gridTemplateRows: collapsed ? '0fr' : '1fr', transition: 'grid-template-rows 0.25s ease' }}>
+                          <div style={{ overflow: 'hidden' as const }}>
+                            <div style={styles.consumosTableWrap}>
+                              <table style={styles.consumosTable}>
+                                <thead>
+                                  <tr>
+                                    <th style={styles.consumosTh}>Insumo</th>
+                                    <th style={styles.consumosTh}>Sistema</th>
+                                    <th style={styles.consumosTh}>Lote</th>
+                                    <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Cant.</th>
+                                    <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>P. unitario</th>
+                                    <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Importe</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {group.items.map(d => (
+                                    <tr
+                                      key={d.id}
+                                      style={{ cursor: 'pointer', ...(hoveredInsumoId === d.id ? { backgroundColor: '#f3faec' } : {}) }}
+                                      onMouseEnter={() => setHoveredInsumoId(d.id)}
+                                      onMouseLeave={() => setHoveredInsumoId(null)}
+                                      onClick={() => setSelectedInsumo(d)}
+                                    >
+                                      <td style={{ ...styles.consumosTd, fontWeight: 700, color: '#16170f' }}>
+                                        {d.referencia ? `${d.referencia} / ` : ''}{d.descripcion ?? d.producto ?? '-'}
+                                      </td>
+                                      <td style={styles.consumosTd}>{d.sistema ?? '-'}</td>
+                                      <td style={styles.consumosTd}>
+                                        {d.lote ? d.lote : (
+                                          <span
+                                            style={styles.reqAsignarLoteBadge}
+                                            onClick={e => { e.stopPropagation(); openEditInsumoModal(d); }}
+                                          >
+                                            Asignar lote
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td style={{ ...styles.consumosTd, textAlign: 'right' as const }}>{d.cantidad ?? '-'}</td>
+                                      <td style={{ ...styles.consumosTd, textAlign: 'right' as const }}>{formatMoney(d.precio)}</td>
+                                      <td style={{ ...styles.consumosTd, textAlign: 'right' as const, fontWeight: 700 }}>{formatMoney(Number(d.cantidad ?? 0) * Number(d.precio ?? 0))}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
-              </div>
-              </div>
               </div>
             </>
           )}
@@ -665,7 +942,7 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
               </button>
             </div>
 
-            <div style={styles.modalBody}>
+            <div style={{ ...styles.modalBody, display: 'flex', flexDirection: 'column' as const, gap: '1.25rem' }}>
               <div style={styles.formGroup} id="edit-requisicion-field-fecha">
                 <label style={styles.formLabel}>Fecha *</label>
                 <DatePicker
@@ -773,48 +1050,73 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
 
               <div style={styles.formGroup}>
                 <label style={styles.formLabel}>Insumos</label>
-                {detalles.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.5rem', marginBottom: '0.5rem' }}>
-                    {detalles.map(d => (
-                      <div key={d.id} style={styles.insumoDraftRow}>
-                        {confirmDeleteInsumoId === d.id ? (
-                          <>
-                            <span style={{ ...styles.insumoDraftText, color: '#6b7280' }}>¿Eliminar este insumo?</span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
-                              <button
-                                type="button"
-                                style={{ ...styles.rowDeleteBtn, color: '#dc2626' }}
-                                disabled={deleteDetRequisicionMutation.isPending}
-                                onClick={() => deleteDetRequisicionMutation.mutate(d.id)}
-                              >
-                                <Check size={14} />
-                              </button>
-                              <button
-                                type="button"
-                                style={styles.rowDeleteBtn}
-                                onClick={() => setConfirmDeleteInsumoId(null)}
-                              >
-                                <X size={14} />
-                              </button>
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <span style={styles.insumoDraftText}>
-                              {d.referencia ?? d.producto ?? 'Sin producto'} — {d.cantidad ?? 0} × {formatMoney(d.precio)}
-                              {d.lote ? ` (Lote: ${d.lote})` : ''}
-                            </span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
-                              <Pencil size={14} style={{ cursor: 'pointer', color: '#6b7280' }} onClick={() => openEditInsumoModal(d)} />
-                              <Trash2 size={14} style={{ cursor: 'pointer', color: '#dc2626' }} onClick={() => setConfirmDeleteInsumoId(d.id)} />
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    ))}
+                {editInsumosDraft.filter(d => !d.eliminado).length > 0 && (
+                  <div style={{ ...styles.consumosTableWrap, maxHeight: '260px', marginBottom: '0.5rem' }}>
+                    <table style={styles.consumosTable}>
+                      <thead>
+                        <tr>
+                          <th style={styles.consumosTh}>Producto</th>
+                          <th style={styles.consumosTh}>Lote</th>
+                          <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Cant.</th>
+                          <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Precio</th>
+                          <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Importe</th>
+                          <th style={styles.consumosTh} />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {editInsumosDraft.filter(d => !d.eliminado).map(d => (
+                          <tr key={d.key}>
+                            {confirmDeleteInsumoId === d.key ? (
+                              <td colSpan={6} style={styles.consumosTd}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                  <span style={{ color: '#6b7280' }}>¿Eliminar este insumo?</span>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+                                    <button
+                                      type="button"
+                                      style={{ ...styles.rowDeleteBtn, color: '#dc2626' }}
+                                      onClick={() => {
+                                        setEditInsumosDraft(prev => d.id === null
+                                          ? prev.filter(it => it.key !== d.key)
+                                          : prev.map(it => it.key === d.key ? { ...it, eliminado: true } : it));
+                                        setConfirmDeleteInsumoId(null);
+                                      }}
+                                    >
+                                      <Check size={14} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      style={styles.rowDeleteBtn}
+                                      onClick={() => setConfirmDeleteInsumoId(null)}
+                                    >
+                                      <X size={14} />
+                                    </button>
+                                  </div>
+                                </div>
+                              </td>
+                            ) : (
+                              <>
+                                <td style={{ ...styles.consumosTd, whiteSpace: 'normal' as const }}>
+                                  {d.referencia ? `${d.referencia} / ` : ''}{d.producto ?? 'Sin producto'}
+                                </td>
+                                <td style={styles.consumosTd}>{d.lote ?? '-'}</td>
+                                <td style={{ ...styles.consumosTd, textAlign: 'right' as const }}>{d.cantidad}</td>
+                                <td style={{ ...styles.consumosTd, textAlign: 'right' as const }}>{formatMoney(d.precio)}</td>
+                                <td style={{ ...styles.consumosTd, textAlign: 'right' as const, fontWeight: 700 }}>{formatMoney(d.cantidad * d.precio)}</td>
+                                <td style={{ ...styles.consumosTd, textAlign: 'center' as const }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.6rem' }}>
+                                    <Pencil size={14} style={{ cursor: 'pointer', color: '#6b7280' }} onClick={() => openEditInsumoDraftModal(d)} />
+                                    <Trash2 size={14} style={{ cursor: 'pointer', color: '#dc2626' }} onClick={() => setConfirmDeleteInsumoId(d.key)} />
+                                  </div>
+                                </td>
+                              </>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
-                <button type="button" style={styles.addInsumoBtn} onClick={openInsumoModal}>
+                <button type="button" style={styles.addInsumoBtn} onClick={openInsumoDraftModal}>
                   <Plus size={14} /> Nuevo
                 </button>
               </div>
@@ -827,9 +1129,9 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
               <button
                 style={styles.saveBtn}
                 onClick={handleGuardarEdit}
-                disabled={updateRequisicionMutation.isPending}
+                disabled={updateRequisicionMutation.isPending || guardarInsumosDraftMutation.isPending}
               >
-                {updateRequisicionMutation.isPending ? 'Guardando...' : 'Guardar'}
+                {(updateRequisicionMutation.isPending || guardarInsumosDraftMutation.isPending) ? 'Guardando...' : 'Guardar'}
               </button>
             </div>
           </div>
@@ -837,196 +1139,24 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
       )}
 
       <SuccessToast show={showEditSuccess} message="Requisición editada" onClose={() => setShowEditSuccess(false)} />
+      <SuccessToast show={showDeleteSuccess} message="Requisición eliminada" onClose={onClose} />
 
       {showInsumoModal && (
-        <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10100 }}>
-          <div className="modal-content-anim" style={styles.subModalContent} onClick={e => e.stopPropagation()}>
-            <div style={styles.subModalHeader}>
-              <h2 style={styles.modalTitle}>{editingInsumoId ? 'Editar Insumo' : 'Nuevo insumo'}</h2>
-              <button style={styles.closeBtn} onClick={() => setShowInsumoModal(false)}>
-                <X size={18} />
-              </button>
-            </div>
-
-            <div style={styles.modalBody}>
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Movimiento *</label>
-                <span style={styles.readOnlyField}>{req?.id}</span>
-              </div>
-
-              <div style={styles.formGroup} id="insumo-field-lote">
-                <label style={styles.formLabel}>Lote</label>
-                {insumoLote ? (
-                  <div>
-                    <span style={styles.tagPill}>
-                      {insumoLote.lote}
-                      <X size={12} style={{ cursor: 'pointer', marginLeft: '0.4rem' }} onClick={() => setInsumoLote(null)} />
-                    </span>
-                  </div>
-                ) : (
-                  <div style={{ position: 'relative' as const }}>
-                    <input
-                      style={{ ...styles.formInput, ...(insumoError?.field === 'lote' ? styles.inputError : {}) }}
-                      placeholder="Buscar lote..."
-                      value={loteSearch}
-                      onChange={e => { setLoteSearch(e.target.value); setInsumoError(null); }}
-                      onFocus={() => setLoteFocused(true)}
-                      onBlur={() => setTimeout(() => setLoteFocused(false), 150)}
-                    />
-                    {loteFocused && (
-                      <div style={styles.medicoDropdown}>
-                        {loteResults.length === 0 ? (
-                          <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
-                        ) : (
-                          loteResults.map(l => (
-                            <div key={l.id} style={styles.medicoDropdownItem} onMouseDown={e => e.preventDefault()} onClick={() => { setInsumoLote(l); setLoteSearch(''); }}>
-                              {l.lote}
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {insumoError?.field === 'lote' && <span style={styles.errorText}>{insumoError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="insumo-field-producto">
-                <label style={styles.formLabel}>Producto</label>
-                {!insumoLote ? (
-                  <span style={{ ...styles.formInput, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>Selecciona primero un lote</span>
-                ) : insumoProducto ? (
-                  <div>
-                    <span style={styles.tagPill}>
-                      {formatProductoLabel(insumoProducto)}
-                      <X size={12} style={{ cursor: 'pointer', marginLeft: '0.4rem' }} onClick={() => setInsumoProducto(null)} />
-                    </span>
-                  </div>
-                ) : (
-                  <div style={{ position: 'relative' as const }}>
-                    <input
-                      style={{ ...styles.formInput, ...(insumoError?.field === 'producto' ? styles.inputError : {}) }}
-                      placeholder="Buscar por clave, nombre o sistema..."
-                      value={productoSearch}
-                      onChange={e => { setProductoSearch(e.target.value); setInsumoError(null); }}
-                      onFocus={() => setProductoFocused(true)}
-                      onBlur={() => setTimeout(() => setProductoFocused(false), 150)}
-                      onKeyDown={e => {
-                        if (!productoFocused || productoResults.length === 0) return;
-                        if (e.key === 'ArrowDown') {
-                          e.preventDefault();
-                          setProductoHighlighted(i => Math.min(i + 1, productoResults.length - 1));
-                        } else if (e.key === 'ArrowUp') {
-                          e.preventDefault();
-                          setProductoHighlighted(i => Math.max(i - 1, 0));
-                        } else if (e.key === 'Enter') {
-                          e.preventDefault();
-                          const p = productoResults[productoHighlighted];
-                          if (p) handleSelectProducto(p);
-                        }
-                      }}
-                    />
-                    {productoFocused && (
-                      <div style={styles.medicoDropdown}>
-                        {productoResults.length === 0 ? (
-                          <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
-                        ) : (
-                          productoResults.map((p, i) => (
-                            <div
-                              key={p.id}
-                              ref={el => { productoOptionRefs.current[i] = el; }}
-                              style={{ ...styles.medicoDropdownItem, justifyContent: 'space-between' as const, ...(i === productoHighlighted ? { backgroundColor: '#e9f2d8', color: '#3f6510' } : {}) }}
-                              onMouseDown={e => e.preventDefault()}
-                              onMouseEnter={() => setProductoHighlighted(i)}
-                              onClick={() => handleSelectProducto(p)}
-                            >
-                              <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
-                                {p.referencia && <span style={{ color: '#3f6510' }}>{p.referencia}</span>}
-                                {p.referencia ? ' / ' : ''}{p.nombre}
-                              </span>
-                              {p.sistema && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: '#9ca3af', whiteSpace: 'nowrap' as const, flexShrink: 0 }}>{p.sistema}</span>}
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {insumoError?.field === 'producto' && <span style={styles.errorText}>{insumoError.message}</span>}
-              </div>
-
-              {insumoProducto && (
-                <>
-                  <div style={styles.formGroup}>
-                    <label style={styles.formLabel}>Sistema</label>
-                    <span style={styles.readOnlyField}>{insumoProducto.sistema || '-'}</span>
-                  </div>
-                  <div style={styles.formGroup}>
-                    <label style={styles.formLabel}>Referencia</label>
-                    <span style={styles.readOnlyField}>{insumoProducto.referencia || '-'}</span>
-                  </div>
-                  <div style={styles.formGroup}>
-                    <label style={styles.formLabel}>Descripción</label>
-                    <span style={styles.readOnlyField}>{insumoProducto.nombre || '-'}</span>
-                  </div>
-                  <div style={styles.formGroup}>
-                    <label style={styles.formLabel}>Categoría</label>
-                    <span style={styles.readOnlyField}>{insumoProducto.categoria || '-'}</span>
-                  </div>
-                </>
-              )}
-
-              <div style={styles.formGroup} id="insumo-field-cantidad">
-                <label style={styles.formLabel}>Cantidad *</label>
-                {!insumoProducto ? (
-                  <span style={{ ...styles.formInput, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>Selecciona primero un producto</span>
-                ) : (
-                  <div style={styles.stepperWrap}>
-                    <input
-                      type="number"
-                      style={{ ...styles.formInput, paddingRight: '5rem', ...(insumoError?.field === 'cantidad' ? styles.inputError : {}) }}
-                      placeholder="0"
-                      value={insumoCantidad}
-                      onChange={e => { setInsumoCantidad(e.target.value); setInsumoError(null); }}
-                    />
-                    <div style={styles.stepperBtns}>
-                      <button type="button" style={styles.stepperBtn} onClick={() => { setInsumoCantidad(String((Number(insumoCantidad) || 0) - 1)); setInsumoError(null); }}>−</button>
-                      <button type="button" style={styles.stepperBtn} onClick={() => { setInsumoCantidad(String((Number(insumoCantidad) || 0) + 1)); setInsumoError(null); }}>+</button>
-                    </div>
-                  </div>
-                )}
-                {insumoError?.field === 'cantidad' && <span style={styles.errorText}>{insumoError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="insumo-field-precio">
-                <label style={styles.formLabel}>Precio *</label>
-                <span style={styles.readOnlyField}>{insumoPrecio ? formatMoney(Number(insumoPrecio)) : '-'}</span>
-                {insumoError?.field === 'precio' && <span style={styles.errorText}>{insumoError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Tarifa Asociada</label>
-                <span style={styles.readOnlyField}>{showEditModal ? (tarifasCubrimiento.find(t => t.id === editTarifaId)?.nombre ?? req?.tarifa ?? '-') : (req?.tarifa ?? '-')}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Fecha</label>
-                <span style={styles.readOnlyField}>{formatDate(showEditModal ? (editFecha || req?.fecha || null) : (req?.fecha ?? null))}</span>
-              </div>
-            </div>
-
-            <div style={styles.subModalFooter}>
-              <button style={styles.cancelBtn} onClick={() => setShowInsumoModal(false)}>Cancelar</button>
-              <button
-                style={styles.saveBtn}
-                onClick={handleGuardarInsumo}
-                disabled={createDetRequisicionMutation.isPending || updateDetRequisicionMutation.isPending}
-              >
-                {(createDetRequisicionMutation.isPending || updateDetRequisicionMutation.isPending) ? 'Guardando...' : 'Guardar'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <InsumoFormModal
+          title={(insumoModalMode === 'borrador' ? !!editingDraftKey : !!editingInsumoId) ? 'Editar Insumo' : 'Nuevo insumo'}
+          movimientoId={req?.id}
+          tarifaId={insumoTarifaId}
+          cubrimientoNombre={insumoCubrimientoNombre}
+          tarifaLabel={insumoTarifaLabel}
+          fecha={insumoFecha}
+          initialLote={insumoSeedLote}
+          initialProducto={insumoSeedProducto}
+          initialCantidad={insumoSeedCantidad}
+          initialPrecio={insumoSeedPrecio}
+          isSaving={insumoModalMode === 'directo' && (createDetRequisicionMutation.isPending || updateDetRequisicionMutation.isPending)}
+          onSubmit={handleGuardarInsumo}
+          onClose={() => setShowInsumoModal(false)}
+        />
       )}
     </>
   );
@@ -1034,7 +1164,7 @@ export default function RequisicionDetalleModal({ id, onClose }: RequisicionDeta
 
 const styles: Record<string, React.CSSProperties> = {
   modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: '2rem' },
-  modalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '90%', maxWidth: '900px', maxHeight: '90dvh', overflowY: 'auto' as const, overflowX: 'hidden' as const, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
+  modalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '90%', maxWidth: '1100px', maxHeight: '90dvh', overflowY: 'auto' as const, overflowX: 'hidden' as const, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
   subModalContent: { backgroundColor: '#fff', borderRadius: '16px', width: '90%', maxWidth: '640px', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
   subModalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.25rem 1.5rem', backgroundColor: '#f9fafb', borderBottom: '1px solid #eeeee6', borderTopLeftRadius: '16px', borderTopRightRadius: '16px', position: 'sticky' as const, top: 0 },
   subModalFooter: { display: 'flex', gap: '0.75rem', padding: '1.25rem 1.5rem', borderTop: '1px solid #eeeee6', justifyContent: 'flex-end' as const },
@@ -1042,11 +1172,13 @@ const styles: Record<string, React.CSSProperties> = {
   modalBody: { padding: '1.5rem' },
   closeBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '34px', height: '34px', border: 'none', backgroundColor: '#f4f4ee', borderRadius: '8px', cursor: 'pointer', color: '#6b6b60', flexShrink: 0 },
 
-  headerCard: { borderBottom: '1px solid #eeeee6', padding: '1.5rem 1.5rem 1.25rem', position: 'sticky' as const, top: 0, backgroundColor: '#fff', borderTopLeftRadius: '16px', borderTopRightRadius: '16px', zIndex: 1 },
-  headerTopRow: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' as const, marginBottom: '1.25rem' },
+  headerCard: { borderBottom: '1px solid #eeeee6', padding: '1.25rem 1.5rem', position: 'sticky' as const, top: 0, backgroundColor: '#fff', borderTopLeftRadius: '16px', borderTopRightRadius: '16px', zIndex: 1, display: 'flex', flexDirection: 'column' as const, gap: '1rem' },
+  headerTopRow: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' as const },
   titleIconBadge: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '40px', height: '40px', borderRadius: '12px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', flexShrink: 0 },
   titleLabel: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
   title: { fontSize: '1.05rem', fontWeight: 700, color: '#16170f', margin: 0, lineHeight: 1.3 },
+  reqStatusBadge: { display: 'inline-flex', alignItems: 'center', padding: '0.2rem 0.6rem', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, backgroundColor: '#f4f4ee', color: '#6b6b60' },
+  reqEditedSub: { fontSize: '0.75rem', color: '#9ca3af', fontWeight: 500 },
 
   btnPill: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.55rem 1rem', border: '1px solid #e5e7eb', borderRadius: '12px', backgroundColor: '#fff', color: '#33342a', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer', whiteSpace: 'nowrap' as const, flexShrink: 0, transition: 'background-color 0.15s' },
   btnPillHover: { backgroundColor: '#f4f4ee' },
@@ -1057,17 +1189,53 @@ const styles: Record<string, React.CSSProperties> = {
   moreMenuItemDanger: { color: '#a8503c' },
   moreMenuDivider: { height: '1px', backgroundColor: '#eeeee6', margin: '0.3rem 0' },
 
-  summaryBar: { backgroundColor: '#f9fafb', border: '1px solid #eeeee6', borderRadius: '10px', padding: '1rem 1.25rem', display: 'flex', flexWrap: 'wrap' as const, gap: '1.75rem' },
-  summaryBarItem: { display: 'flex', flexDirection: 'column' as const, gap: '0.3rem' },
-  summaryBarValue: { fontSize: '0.9375rem', fontWeight: 600, color: '#16170f' },
+  reqFlowRow: { display: 'flex', alignItems: 'center', gap: '1rem', padding: '0 0 1rem' },
+  reqFlowBox: { display: 'flex', alignItems: 'center', gap: '0.65rem', flex: 1, minWidth: 0 },
+  reqFlowIconCircle: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px', borderRadius: '999px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', flexShrink: 0 },
+  reqFlowValue: { fontSize: '0.9rem', fontWeight: 700, color: '#16170f', overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, whiteSpace: 'nowrap' as const },
+  reqFlowConnector: { display: 'flex', alignItems: 'center', gap: '0.5rem', flex: '0 1 220px', minWidth: '120px' },
+  reqFlowConnectorLine: { flex: 1, height: 0, borderTop: '2px dashed #6b8c1f' },
+  reqFlowDotFilled: { width: '9px', height: '9px', borderRadius: '999px', backgroundColor: '#4d7a13', flexShrink: 0 },
+  reqFlowDotHollow: { width: '9px', height: '9px', borderRadius: '999px', border: '2px solid #4d7a13', backgroundColor: '#fff', flexShrink: 0, boxSizing: 'border-box' as const },
+  reqFlowIconBadge: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '34px', height: '34px', borderRadius: '999px', backgroundColor: '#fff', boxShadow: '0 2px 6px rgba(0,0,0,0.15)', flexShrink: 0 },
+
+  reqValidacionBadge: { display: 'inline-flex', alignSelf: 'flex-start' as const, padding: '0.3rem 0.65rem', borderRadius: '999px', fontSize: '0.8rem', fontWeight: 700 },
+  reqValidacionBadgePendiente: { backgroundColor: '#fef3c7', border: '1px solid #fde68a', color: '#c2730c' },
+  reqValidacionBadgeOk: { backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#3f6510' },
+
+  reqStatsOuter: { border: '1px solid #eeeee6', borderRadius: '10px', overflow: 'hidden' as const, marginBottom: '1rem' },
+  reqStatsBar: { display: 'flex' },
+  reqStatsSegment: { flex: 1, display: 'flex', flexDirection: 'column' as const, gap: '0.3rem', padding: '0.9rem 1.1rem', borderRight: '1px solid #eeeee6', backgroundColor: '#f9fafb' },
+  reqStatsSegmentDark: { backgroundColor: '#16170f', borderRight: 'none' },
+  reqStatsValue: { fontSize: '1.1rem', fontWeight: 700, color: '#16170f' },
+  reqStatsLinkBtn: { border: 'none', background: 'transparent', color: '#c2730c', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer', padding: 0, textDecoration: 'underline' as const },
+
+  reqToolbar: { display: 'flex', alignItems: 'center', gap: '0.75rem', margin: '1rem 0 0.75rem', flexWrap: 'wrap' as const },
+  reqSearchWrap: { position: 'relative' as const, flex: 1, minWidth: '220px' },
+  reqSearchInput: { width: '100%', padding: '0.6rem 0.75rem 0.6rem 2.1rem', border: '1px solid #e5e7eb', borderRadius: '10px', fontSize: '0.85rem', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' as const },
+  reqToolbarRight: { display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' as const },
+  reqGroupToggle: { display: 'flex', border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden' as const },
+  reqGroupToggleBtn: { padding: '0.45rem 0.8rem', border: 'none', background: '#fff', color: '#6b7280', fontWeight: 600, fontSize: '0.78rem', cursor: 'pointer' },
+  reqGroupToggleBtnActive: { backgroundColor: '#e9f2d8', color: '#3f6510' },
+  reqCheckboxLabel: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', fontWeight: 600, color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' as const },
+  reqAddInsumoBtn: { display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.55rem 1rem', border: 'none', borderRadius: '10px', backgroundColor: '#6b8c1f', color: '#fff', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', whiteSpace: 'nowrap' as const },
+
+  reqChipsRow: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.5rem', marginBottom: '1rem' },
+  reqChip: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.4rem 0.75rem', border: '1px solid #e5e7eb', borderRadius: '999px', backgroundColor: '#fff', color: '#374151', fontWeight: 600, fontSize: '0.78rem', cursor: 'pointer' },
+  reqChipActive: { backgroundColor: '#f4f4ee', borderColor: '#d4d4c8' },
+  reqChipDot: { width: '8px', height: '8px', borderRadius: '999px', flexShrink: 0 },
+  reqChipCount: { color: '#9ca3af', fontWeight: 700 },
+
+  reqGroupCard: { border: '1px solid #eeeee6', borderRadius: '10px', overflow: 'hidden' as const },
+  reqGroupHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '0.7rem 0.9rem', border: 'none', backgroundColor: '#f9fafb', cursor: 'pointer', textAlign: 'left' as const },
+  reqGroupHeaderLabel: { fontSize: '0.84rem', fontWeight: 700, color: '#16170f' },
+  reqGroupHeaderTotal: { fontSize: '0.84rem', fontWeight: 700, color: '#3f6510' },
+  reqAsignarLoteBadge: { display: 'inline-flex', padding: '0.25rem 0.55rem', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, backgroundColor: '#fef3c7', border: '1px dashed #fde68a', color: '#c2730c', cursor: 'pointer', whiteSpace: 'nowrap' as const },
+
+  reqFooterBar: { position: 'sticky' as const, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', padding: '1rem 1.5rem', backgroundColor: '#fff', borderTop: '1px solid #eeeee6', borderBottomLeftRadius: '16px', borderBottomRightRadius: '16px', flexWrap: 'wrap' as const },
+  reqFooterCount: { fontSize: '0.8rem', fontWeight: 600, color: '#6b7280' },
 
   countBadge: { backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '0.72rem', fontWeight: 700, minWidth: '1.4rem', height: '1.4rem', padding: '0 0.4rem', borderRadius: '999px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
-  countBadgeActive: { backgroundColor: '#e9f2d8', color: '#3f6510' },
-
-  infoTabBar: { display: 'flex', gap: '0.25rem', borderBottom: '1px solid #eeeee6', marginTop: '1.25rem', overflowX: 'auto' as const, overflowY: 'hidden' as const },
-  infoTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.75rem 1rem', border: 'none', background: 'transparent', fontSize: '0.84375rem', fontWeight: 600, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none', flexShrink: 0 as const, whiteSpace: 'nowrap' as const },
-  infoTabBtnActive: { color: '#4d7a13', borderBottomColor: '#4d7a13' },
-  infoTabBtnInactive: { color: '#6b7280', borderBottomColor: 'transparent' },
 
   infoSectionBox: { backgroundColor: '#f9fafb', border: '1px solid #eeeee6', borderRadius: '10px', padding: '1.25rem' },
   detalleGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '1.25rem 1.5rem' },

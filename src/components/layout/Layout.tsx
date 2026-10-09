@@ -5,6 +5,7 @@ import Sidebar from './Sidebar';
 import InactivityLogout from './InactivityLogout';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 import { NavigationLoadingContext } from '../../hooks/useNavigateWithLoading';
+import { useBodyScrollLock } from '../../hooks/useBodyScrollLock';
 
 // Antes cada página se envolvía en <Layout>{contenido}</Layout> por su cuenta, lo que significaba
 // que Header/Sidebar vivían DENTRO de cada chunk cargado con React.lazy() — al navegar a una
@@ -43,26 +44,7 @@ export default function Layout() {
     window.scrollTo(0, 0);
   }, [location.pathname]);
 
-  useEffect(() => {
-    if (!mobileNavOpen) return;
-    // overflow:hidden solo en el body no basta en iOS Safari — el fondo se sigue pudiendo
-    // deslizar con el dedo mientras el drawer del menú está abierto. Fijar la posición del body
-    // en el scroll actual sí lo bloquea ahí (mismo patrón que los modales de detalle).
-    const scrollY = window.scrollY;
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.left = '0';
-    document.body.style.right = '0';
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.position = '';
-      document.body.style.top = '';
-      document.body.style.left = '';
-      document.body.style.right = '';
-      document.body.style.overflow = '';
-      window.scrollTo(0, scrollY);
-    };
-  }, [mobileNavOpen]);
+  useBodyScrollLock(mobileNavOpen);
 
   return (
     <NavigationLoadingContext.Provider value={{ start: () => setIsNavigating(true), end: () => setIsNavigating(false) }}>

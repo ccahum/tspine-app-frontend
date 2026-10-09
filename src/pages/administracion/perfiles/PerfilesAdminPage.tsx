@@ -1,10 +1,11 @@
-import { useState, useEffect, memo } from 'react';
+import { useState, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Search, Plus, X } from 'lucide-react';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import SuccessToast from '../../../components/SuccessToast';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 import {
   perfilesAdminService,
   type PerfilAdminItem,
@@ -235,10 +236,7 @@ export default function PerfilesAdminPage() {
   const [selected, setSelected] = useState<PerfilAdminItem | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    document.body.style.overflow = (showCreateModal || selected) ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [showCreateModal, selected]);
+  useBodyScrollLock(!!(showCreateModal || selected));
 
   const { data: perfiles = [], isLoading } = useQuery({
     queryKey: ['perfiles-admin'],

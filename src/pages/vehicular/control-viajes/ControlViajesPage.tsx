@@ -9,6 +9,7 @@ import { viajeVehiculoService, type ViajeVehiculoItem } from '../../../services/
 import { vehiculoCatalogoService, type VehiculoCatalogoItem } from '../../../services/vehiculoCatalogo.service';
 import { programacionesService, type SedeOption } from '../../../services/programaciones.service';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 
 const formatDateTime = (dateString: string | null): string => {
   if (!dateString) return '-';
@@ -517,10 +518,7 @@ export default function ControlViajesPage() {
   const tableWrapRef = useRef<HTMLDivElement>(null);
   useSmoothWheelScroll(tableWrapRef, [], 3);
 
-  useEffect(() => {
-    document.body.style.overflow = (selected || showCreateModal) ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [selected, showCreateModal]);
+  useBodyScrollLock(!!(selected || showCreateModal));
 
   const { data: vehiculos = [] } = useQuery<VehiculoCatalogoItem[]>({
     queryKey: ['viajes-vehiculos-catalogo'],

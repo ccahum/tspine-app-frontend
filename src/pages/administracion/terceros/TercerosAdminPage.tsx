@@ -8,6 +8,7 @@ import SuccessToast from '../../../components/SuccessToast';
 import OptionDropdown from '../../../components/OptionDropdown';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 import {
   tercerosAdminService,
   CLASIFICACIONES_TERCERO,
@@ -1275,10 +1276,7 @@ export default function TercerosAdminPage() {
   const tableWrapRef = useRef<HTMLDivElement>(null);
   useSmoothWheelScroll(tableWrapRef, [], 3);
 
-  useEffect(() => {
-    document.body.style.overflow = (selected || showCreateModal) ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [selected, showCreateModal]);
+  useBodyScrollLock(!!(selected || showCreateModal));
 
   const [isStuck, setIsStuck] = useState(false);
   useEffect(() => {

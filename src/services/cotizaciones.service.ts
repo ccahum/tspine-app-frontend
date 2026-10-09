@@ -27,6 +27,7 @@ export interface CotizacionItem {
   valor: number | null;
   observaciones: string | null;
   esEspecial: boolean;
+  esRenta: boolean;
 }
 
 export interface RemisionAsociada {
@@ -73,6 +74,9 @@ export interface CotizacionDetail extends CotizacionListItem {
   contadorPaquetes: number | null;
   nivel: string | null;
   firma: string | null;
+  firmadoEn: string | null;
+  firmadoPor: string | null;
+  ediciones: { editadoEn: string | null; editadoPor: string | null }[];
   items: CotizacionItem[];
   remisionesAsociadas: RemisionAsociada[];
   programacionAsociada: ProgramacionAsociada | null;
@@ -240,6 +244,9 @@ export const cotizacionesService = {
 
   getPreciosPorProductos: (productoIds: string[], tarifaId: string): Promise<{ productoId: string; precio: number | null }[]> =>
     api.post('/operacion/cotizaciones/productos/precios', { productoIds, tarifaId }).then(r => r.data),
+
+  getNombresPorProductos: (productoIds: string[], hospitalId: string | null): Promise<{ productoId: string; referencia: string | null; descripcion: string | null }[]> =>
+    api.post('/operacion/cotizaciones/productos/nombres', { productoIds, ...(hospitalId ? { hospitalId } : {}) }).then(r => r.data),
 
   updateCotizacion: (id: string, payload: UpdateCotizacionPayload): Promise<CotizacionDetail> =>
     api.patch(`/operacion/cotizaciones/${id}`, payload).then(r => r.data),

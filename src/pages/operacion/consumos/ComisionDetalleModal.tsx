@@ -4,6 +4,7 @@ import { Loader, X } from 'lucide-react';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 import { remisionesService, type DetTecnicoDetalle, type ProgramacionRealizadaItem, type EjecucionPagoItem } from '../../../services/remisiones.service';
 
 const formatMoney = (value: any): string => {
@@ -87,10 +88,7 @@ export default function ComisionDetalleModal({ id, onClose }: ComisionDetalleMod
     queryFn: () => remisionesService.getDetTecnicoDetalle(id),
   });
 
-  useEffect(() => {
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = ''; };
-  }, []);
+  useBodyScrollLock(true);
 
   // Anima el alto del contenedor del body al cambiar de pestaña, en vez de saltar de golpe.
   useEffect(() => {

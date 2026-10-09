@@ -45,9 +45,15 @@ interface EditarRemisionModalProps {
   remisionId: string;
   onClose: () => void;
   onUpdated: () => void;
+  // Para el botón "+ Agregar" de la tarjeta Consumos remisionados: abre el modal directo en el
+  // picker de productos, sin que el usuario tenga que entrar a Editar Remisión y buscar el botón.
+  openAddConsumo?: boolean;
+  // Se llama al agregar un consumo desde ese picker suelto (openAddConsumo), para que la página
+  // pueda mostrar su propio toast de éxito ("Consumo agregado").
+  onConsumoAdded?: () => void;
 }
 
-export default function EditarRemisionModal({ remision, remisionId, onClose, onUpdated }: EditarRemisionModalProps) {
+export default function EditarRemisionModal({ remision, remisionId, onClose, onUpdated, openAddConsumo, onConsumoAdded }: EditarRemisionModalProps) {
   const queryClient = useQueryClient();
   const invalidateRemision = () => queryClient.invalidateQueries({ queryKey: ['remision', remisionId] });
 
@@ -97,31 +103,62 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
   // controles como si funcionaran.
   const puedeEditarTecnicosConsumos = remision.facturas.length === 0;
 
-  // Técnicos asociados (Rem_Tecnicos) — a diferencia de Agregar Remisión (donde se arman en
-  // memoria y se envían de una sola vez al crear), aquí la remisión ya existe: cada alta/baja se
-  // persiste de inmediato contra el servidor y la lista se refleja siempre desde `remision.tecnicos`
-  // (prop que se refresca solo al invalidar la query 'remision' en el padre).
+  // Técnicos asociados (Rem_Tecnicos) y Consumos (Det_Consumo) de la remisión completa (modo
+  // formulario, no el picker suelto de "+ Agregar"): antes cada alta/edición/baja se persistía de
+  // inmediato contra el servidor, así que cerrar/cancelar sin dar "Guardar" no revertía nada — bug
+  // reportado por el usuario. Ahora se arman en memoria (como en Agregar Remisión) y se confirman
+  // todos juntos al dar Guardar; `remision` (la prop) no cambia durante la sesión del modal en este
+  // modo — nada invalida su query hasta el guardado final — así que sirve de "original" estable
+  // para calcular qué agregar/actualizar/quitar contra el servidor.
+  type LocalTecnico = { id: string; tecnico: { nombreCompleto: string } | null; tecnicoId?: string };
+  const [localTecnicos, setLocalTecnicos] = useState<LocalTecnico[]>(() => remision.tecnicos.map(t => ({ id: t.id, tecnico: t.tecnico })));
+
   const [editTecnicoSearch, setEditTecnicoSearch] = useState('');
   const [editTecnicoFocused, setEditTecnicoFocused] = useState(false);
   const [editTecnicoHighlighted, setEditTecnicoHighlighted] = useState(0);
   const editTecnicoOptionRefs = useRef<(HTMLDivElement | null)[]>([]);
 
-  const addTecnicoMutation = useMutation({
-    mutationFn: (tecnicoId: string) => remisionesService.addRemTecnico(remisionId, tecnicoId),
-    onSuccess: () => { invalidateRemision(); setTecnicoApiError(null); },
-    onError: () => setTecnicoApiError('No se pudo agregar el técnico.'),
-  });
-  const removeTecnicoMutation = useMutation({
-    mutationFn: (relId: string) => remisionesService.removeRemTecnico(relId),
-    onSuccess: () => { invalidateRemision(); setTecnicoApiError(null); },
-    onError: () => setTecnicoApiError('No se pudo quitar el técnico.'),
-  });
+  const agregarTecnicoLocal = (t: TecnicoOption) => {
+    setLocalTecnicos(prev => [...prev, { id: `new-${crypto.randomUUID()}`, tecnico: { nombreCompleto: t.nombreCompleto ?? '' }, tecnicoId: t.id }]);
+    setTecnicoApiError(null);
+  };
+  const quitarTecnicoLocal = (id: string) => {
+    if (localTecnicos.length <= 1) { setTecnicoApiError('Debe haber al menos un técnico asociado.'); return; }
+    setLocalTecnicos(prev => prev.filter(x => x.id !== id));
+  };
 
-  // Consumos (Det_Consumo) — mismo criterio: cada alta/edición/baja se persiste de inmediato,
-  // reflejado siempre desde `remision.consumos`.
-  const [showAddConsumoModal, setShowAddConsumoModal] = useState(false);
+  // showAddConsumoModal/selectedStagedItem se usan tanto en el picker suelto ("+ Agregar", que
+  // sigue guardando de inmediato — no hay un botón "Guardar" en ese modo) como dentro del
+  // formulario completo (donde ahora todo queda en `localConsumos` hasta dar Guardar).
+  const [showAddConsumoModal, setShowAddConsumoModal] = useState(openAddConsumo ?? false);
   const [selectedStagedItem, setSelectedStagedItem] = useState<StagedItem | null>(null);
+  // Lista "en vivo" del servidor — solo la usa el modo picker suelto (openAddConsumo), que sí
+  // persiste cada alta de inmediato y por tanto necesita reflejar lo que ya hay en el servidor.
   const editConsumosStaged = remision.consumos.map(consumoToStagedItem);
+  // Lista en memoria del formulario completo — se siembra una sola vez al abrir y no se vuelve a
+  // sincronizar con el servidor hasta que se guarda.
+  const [localConsumos, setLocalConsumos] = useState<StagedItem[]>(() => remision.consumos.map(consumoToStagedItem));
+
+  // Mismo criterio que addDetConsumo en el backend: si el producto ya está en la lista, se suma la
+  // cantidad en vez de duplicar la fila — aplicado en memoria porque todavía no se ha guardado.
+  const agregarConsumoLocal = (item: StagedItem) => {
+    setLocalConsumos(prev => {
+      const idx = prev.findIndex(x => x.productoId === item.productoId);
+      if (idx === -1) return [...prev, item];
+      const existente = prev[idx];
+      const nuevaCantidad = (Number(existente.cantidad) || 0) + (Number(item.cantidad) || 0);
+      const actualizado: StagedItem = { ...existente, cantidad: String(nuevaCantidad), valor: String(nuevaCantidad * (Number(existente.valorUnitario) || 0)) };
+      return prev.map((x, i) => (i === idx ? actualizado : x));
+    });
+    setConsumoApiError(null);
+  };
+  const editarConsumoLocal = (updated: StagedItem) => {
+    setLocalConsumos(prev => prev.map(x => (x.localId === updated.localId ? updated : x)));
+  };
+  const quitarConsumoLocal = (localId: string) => {
+    if (localConsumos.length <= 1) { setConsumoApiError('Debe haber al menos un consumo.'); return; }
+    setLocalConsumos(prev => prev.filter(x => x.localId !== localId));
+  };
 
   const [editImportNotaQueue, setEditImportNotaQueue] = useState<string[]>([]);
   const pushEditImportNota = (msg: string) => setEditImportNotaQueue(prev => [...prev, msg]);
@@ -144,7 +181,7 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
   const addConsumoMutation = useMutation({
     mutationFn: (payload: { productoId: string; cantidad: number; valorUnitario: number; observaciones?: string }) =>
       remisionesService.addDetConsumo(remisionId, payload),
-    onSuccess: () => { invalidateRemision(); setConsumoApiError(null); },
+    onSuccess: () => { invalidateRemision(); setConsumoApiError(null); onConsumoAdded?.(); },
     onError: () => setConsumoApiError('No se pudo agregar el consumo.'),
   });
   const updateConsumoMutation = useMutation({
@@ -204,32 +241,32 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
 
   // Al cambiar de tarifa (por cambio de Cubrimiento o de Responsable Económico), los consumos ya
   // agregados deben recalcular su valor unitario según la tarifa nueva — mismo endpoint que usa
-  // Nueva Cotización para recalcular sus ítems en memoria al cambiar de tarifa, aquí aplicado de
-  // inmediato a los Det_Consumo ya guardados. Arranca en la tarifa original de la remisión para no
-  // disparar una actualización espuria al abrir el modal sin haber cambiado nada.
+  // Nueva Cotización para recalcular sus ítems en memoria al cambiar de tarifa, aplicado aquí sobre
+  // `localConsumos` (en memoria, no contra el servidor — solo este modo de formulario completo
+  // dispara este efecto). Arranca en la tarifa original de la remisión para no disparar una
+  // actualización espuria al abrir el modal sin haber cambiado nada.
   const consumosTarifaSyncRef = useRef<string | null>(remision.tarifa?.id ?? null);
   const [actualizandoPreciosTarifa, setActualizandoPreciosTarifa] = useState(false);
   useEffect(() => {
     if (!editTarifaId || editTarifaId === consumosTarifaSyncRef.current) return;
     consumosTarifaSyncRef.current = editTarifaId;
     if (!puedeEditarTecnicosConsumos) return;
-    const productoIds = [...new Set(remision.consumos.map(c => c.productoId).filter((id): id is string => !!id))];
+    const productoIds = [...new Set(localConsumos.map(c => c.productoId).filter((id): id is string => !!id))];
     if (productoIds.length === 0) return;
     setActualizandoPreciosTarifa(true);
     cotizacionesService.getPreciosPorProductos(productoIds, editTarifaId)
-      .then(async precios => {
+      .then(precios => {
         const precioPorProducto = new Map(precios.map(p => [p.productoId, p.precio]));
-        const aActualizar = remision.consumos.filter(c => {
-          if (!c.productoId) return false;
+        let actualizados = 0;
+        setLocalConsumos(prev => prev.map(c => {
+          if (!c.productoId) return c;
           const nuevoPrecio = precioPorProducto.get(c.productoId);
-          return nuevoPrecio != null && Number(nuevoPrecio) !== Number(c.valorUnitario);
-        });
-        if (aActualizar.length === 0) return;
-        await Promise.all(aActualizar.map(c =>
-          remisionesService.updateDetConsumo(c.id, { valorUnitario: Number(precioPorProducto.get(c.productoId!)) }),
-        ));
-        pushEditImportNota(`Se actualizó el precio de ${aActualizar.length} consumo${aActualizar.length === 1 ? '' : 's'} según la nueva tarifa.`);
-        invalidateRemision();
+          if (nuevoPrecio == null || Number(nuevoPrecio) === Number(c.valorUnitario)) return c;
+          actualizados++;
+          const cantidad = Number(c.cantidad) || 0;
+          return { ...c, valorUnitario: String(nuevoPrecio), valor: String(cantidad * Number(nuevoPrecio)) };
+        }));
+        if (actualizados > 0) pushEditImportNota(`Se actualizó el precio de ${actualizados} consumo${actualizados === 1 ? '' : 's'} según la nueva tarifa.`);
       })
       .catch(() => setConsumoApiError('No se pudieron actualizar los precios de los consumos con la nueva tarifa.'))
       .finally(() => setActualizandoPreciosTarifa(false));
@@ -282,14 +319,19 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
     setImportandoEditPaquete(true);
     try {
       const { items, excluidosPorDenegado } = await cotizacionesService.getPaqueteConsumos(editPaqueteId, editPaqueteNivel, editTarifaId);
-      if (items.length > 0) {
-        await remisionesService.createDetConsumosBulk(remisionId, items.map(p => ({
+      // Se agrega en memoria (localConsumos), no contra el servidor — este panel solo se abre
+      // desde el formulario completo, nunca desde el picker suelto de "+ Agregar".
+      items.forEach(p => {
+        agregarConsumoLocal({
+          localId: crypto.randomUUID(),
           productoId: p.id,
-          cantidad: p.cantidad,
-          valorUnitario: p.precioSugerido ?? 0,
-        })));
-        invalidateRemision();
-      }
+          productoLabel: `${p.referencia ?? ''} / ${p.nombre ?? ''}`.replace(/^ \/ /, ''),
+          cantidad: String(p.cantidad),
+          valorUnitario: String(p.precioSugerido ?? 0),
+          valor: String(p.cantidad * (p.precioSugerido ?? 0)),
+          observaciones: '',
+        });
+      });
       const partes: string[] = [];
       if (items.length > 0) partes.push(`se agregaron ${items.length} producto${items.length === 1 ? '' : 's'}`);
       if (excluidosPorDenegado > 0) partes.push(`se omitieron ${excluidosPorDenegado} denegado${excluidosPorDenegado === 1 ? '' : 's'} para la tarifa actual`);
@@ -302,28 +344,60 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
     }
   };
 
-  const updateRemisionMutation = useMutation({
-    mutationFn: () => remisionesService.updateRemision(remisionId, {
-      paciente: editForm.paciente,
-      cirugiaRealizada: editForm.cirugiaRealizada,
-      cubrimientoId: editCubrimiento?.id,
-      tarifaId: editTarifaId,
-      empresaId: editEmpresa?.id,
-      responsableEconomicoId: editResponsable?.id,
-      anestesiologo: editForm.anestesiologo,
-      impuestos: editForm.impuestos || undefined,
-      tieneDcto: editForm.tieneDcto,
-      porcentajeDcto: editForm.tieneDcto && editForm.porcentajeDcto ? Number(editForm.porcentajeDcto) : undefined,
-      vrDctoPesos: editForm.tieneDcto && editForm.vrDctoPesos ? Number(editForm.vrDctoPesos) : undefined,
-    }),
+  // Guardar: confirma de una sola vez todo lo armado en memoria (técnicos, consumos y los campos
+  // del formulario) contra el servidor. Si el usuario cierra/cancela antes de llegar aquí, nada de
+  // esto se envió — ese era justo el bug reportado.
+  const guardarTodoMutation = useMutation({
+    mutationFn: async () => {
+      const tecnicosAAgregar = localTecnicos.filter(t => t.tecnicoId);
+      const tecnicosAQuitar = remision.tecnicos.filter(orig => !localTecnicos.some(lt => lt.id === orig.id));
+      const consumosAAgregar = localConsumos.filter(it => !remision.consumos.some(c => c.id === it.localId));
+      const consumosAQuitar = remision.consumos.filter(c => !localConsumos.some(it => it.localId === c.id));
+      const consumosAActualizar = localConsumos.filter(it => {
+        const orig = remision.consumos.find(c => c.id === it.localId);
+        return !!orig && (Number(it.cantidad) !== Number(orig.cantidad) || Number(it.valorUnitario) !== Number(orig.valorUnitario));
+      });
+
+      await Promise.all([
+        ...tecnicosAAgregar.map(t => remisionesService.addRemTecnico(remisionId, t.tecnicoId!)),
+        ...tecnicosAQuitar.map(t => remisionesService.removeRemTecnico(t.id)),
+        ...consumosAQuitar.map(c => remisionesService.removeDetConsumo(c.id)),
+        ...consumosAActualizar.map(it => remisionesService.updateDetConsumo(it.localId, {
+          cantidad: Number(it.cantidad),
+          valorUnitario: Number(it.valorUnitario),
+          observaciones: it.observaciones || undefined,
+        })),
+        ...consumosAAgregar.map(it => remisionesService.addDetConsumo(remisionId, {
+          productoId: it.productoId,
+          cantidad: Number(it.cantidad),
+          valorUnitario: Number(it.valorUnitario),
+          observaciones: it.observaciones || undefined,
+        })),
+      ]);
+
+      await remisionesService.updateRemision(remisionId, {
+        paciente: editForm.paciente,
+        cirugiaRealizada: editForm.cirugiaRealizada,
+        cubrimientoId: editCubrimiento?.id,
+        tarifaId: editTarifaId,
+        empresaId: editEmpresa?.id,
+        responsableEconomicoId: editResponsable?.id,
+        anestesiologo: editForm.anestesiologo,
+        impuestos: editForm.impuestos || undefined,
+        tieneDcto: editForm.tieneDcto,
+        porcentajeDcto: editForm.tieneDcto && editForm.porcentajeDcto ? Number(editForm.porcentajeDcto) : undefined,
+        vrDctoPesos: editForm.tieneDcto && editForm.vrDctoPesos ? Number(editForm.vrDctoPesos) : undefined,
+      });
+    },
     onSuccess: () => {
       invalidateRemision();
       onUpdated();
     },
+    onError: () => setConsumoApiError('No se pudieron guardar los cambios. Intenta de nuevo.'),
   });
 
   const round2 = (n: number) => Math.round(n * 100) / 100;
-  const editSubtotal = remision.consumos.reduce((sum, c) => sum + (Number(c.valor) || 0), 0);
+  const editSubtotal = localConsumos.reduce((sum, c) => sum + (Number(c.valor) || 0), 0);
   const editDescuentos = editForm.tieneDcto
     ? editSubtotal * (Number(editForm.porcentajeDcto || 0) / 100) + Number(editForm.vrDctoPesos || 0)
     : 0;
@@ -340,12 +414,12 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
     if (!editTarifaId) { setEditError({ field: 'tarifa', message: 'Selecciona la tarifa.' }); return; }
     if (!editForm.anestesiologo.trim()) { setEditError({ field: 'anestesiologo', message: 'Ingresa el anestesiólogo.' }); return; }
     if (!editForm.cirugiaRealizada.trim()) { setEditError({ field: 'cirugiaRealizada', message: 'Ingresa la cirugía realizada.' }); return; }
-    if (remision.tecnicos.length === 0) { setEditError({ field: 'tecnicos', message: 'Debe haber al menos un técnico asociado.' }); return; }
-    if (remision.consumos.length === 0) { setEditError({ field: 'consumos', message: 'Debe haber al menos un consumo.' }); return; }
+    if (localTecnicos.length === 0) { setEditError({ field: 'tecnicos', message: 'Debe haber al menos un técnico asociado.' }); return; }
+    if (localConsumos.length === 0) { setEditError({ field: 'consumos', message: 'Debe haber al menos un consumo.' }); return; }
     if (editForm.tieneDcto && !editForm.porcentajeDcto.trim() && !editForm.vrDctoPesos.trim()) { setEditError({ field: 'porcentajeDcto', message: 'Ingresa el porcentaje y/o el valor del descuento.' }); return; }
     if (!editForm.impuestos) { setEditError({ field: 'impuestos', message: 'Selecciona los impuestos.' }); return; }
     setEditError(null);
-    updateRemisionMutation.mutate();
+    guardarTodoMutation.mutate();
   };
 
   useEffect(() => {
@@ -355,6 +429,10 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
 
   return (
     <>
+      {/* openAddConsumo (desde el botón "+ Agregar" de Consumos remisionados): se salta este
+          formulario completo y abre directo el picker de productos de abajo — este modal no debe
+          asomarse detrás. */}
+      {!openAddConsumo && (
       <div className="modal-overlay-anim" style={styles.modalOverlay}>
         <div className="modal-content-anim" style={styles.editModalContent} data-enter-nav-root onClick={e => e.stopPropagation()}>
           <div style={styles.editModalHeader}>
@@ -585,20 +663,16 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
               {!puedeEditarTecnicosConsumos && (
                 <span style={{ fontSize: '0.78rem', color: '#9ca3af', display: 'block', marginBottom: '0.4rem' }}>Esta remisión ya tiene factura asociada — no se pueden editar sus técnicos.</span>
               )}
-              {remision.tecnicos.length > 0 && (
+              {localTecnicos.length > 0 && (
                 <div style={styles.medicoTagsWrap}>
-                  {remision.tecnicos.map(t => (
+                  {localTecnicos.map(t => (
                     <span key={t.id} style={styles.editMedicoTag}>
                       {t.tecnico?.nombreCompleto ?? '-'}
                       {puedeEditarTecnicosConsumos && (
                         <X
                           size={12}
-                          style={{ cursor: removeTecnicoMutation.isPending ? 'default' : 'pointer' }}
-                          onClick={() => {
-                            if (removeTecnicoMutation.isPending) return;
-                            if (remision.tecnicos.length <= 1) { setTecnicoApiError('Debe haber al menos un técnico asociado.'); return; }
-                            removeTecnicoMutation.mutate(t.id);
-                          }}
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => quitarTecnicoLocal(t.id)}
                         />
                       )}
                     </span>
@@ -615,7 +689,7 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
                     onFocus={() => setEditTecnicoFocused(true)}
                     onBlur={() => setTimeout(() => setEditTecnicoFocused(false), 150)}
                     onKeyDown={e => {
-                      const disponibles = editTecnicoResults.filter(t => !remision.tecnicos.some(x => x.tecnico?.nombreCompleto === t.nombreCompleto));
+                      const disponibles = editTecnicoResults.filter(t => !localTecnicos.some(x => x.tecnico?.nombreCompleto === t.nombreCompleto));
                       if (e.key === 'ArrowDown' && disponibles.length > 0) {
                         e.preventDefault();
                         setEditTecnicoHighlighted(i => Math.min(i + 1, disponibles.length - 1));
@@ -625,16 +699,16 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
                       } else if (e.key === 'Enter') {
                         e.preventDefault();
                         const t = disponibles[editTecnicoHighlighted];
-                        if (t) { addTecnicoMutation.mutate(t.id); setEditTecnicoSearch(''); }
+                        if (t) { agregarTecnicoLocal(t); setEditTecnicoSearch(''); }
                       }
                     }}
                   />
                   {editTecnicoFocused && (
                     <div style={styles.medicoDropdown}>
-                      {editTecnicoResults.filter(t => !remision.tecnicos.some(x => x.tecnico?.nombreCompleto === t.nombreCompleto)).length === 0 ? (
+                      {editTecnicoResults.filter(t => !localTecnicos.some(x => x.tecnico?.nombreCompleto === t.nombreCompleto)).length === 0 ? (
                         <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
                       ) : (
-                        editTecnicoResults.filter(t => !remision.tecnicos.some(x => x.tecnico?.nombreCompleto === t.nombreCompleto)).map((t, i) => (
+                        editTecnicoResults.filter(t => !localTecnicos.some(x => x.tecnico?.nombreCompleto === t.nombreCompleto)).map((t, i) => (
                           <div
                             key={t.id}
                             ref={el => { editTecnicoOptionRefs.current[i] = el; }}
@@ -642,7 +716,7 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
                             style={{ ...styles.medicoDropdownItem, ...(i === editTecnicoHighlighted ? { backgroundColor: '#e9f2d8' } : {}) }}
                             onMouseDown={e => e.preventDefault()}
                             onMouseEnter={() => setEditTecnicoHighlighted(i)}
-                            onClick={() => { addTecnicoMutation.mutate(t.id); setEditTecnicoSearch(''); }}
+                            onClick={() => { agregarTecnicoLocal(t); setEditTecnicoSearch(''); }}
                           >
                             <Plus size={14} /> {t.nombreCompleto}
                           </div>
@@ -659,7 +733,7 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
             <div style={styles.formGroup} id="remision-edit-field-consumos">
               <div style={styles.consumoSectionHeader}>
                 <label style={styles.remisionLabel}>Consumos *</label>
-                <span style={styles.consumoCountBadge}>{remision.consumos.length}</span>
+                <span style={styles.consumoCountBadge}>{localConsumos.length}</span>
               </div>
 
               {actualizandoPreciosTarifa && (
@@ -684,13 +758,13 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
                 </div>
               )}
 
-              {remision.consumos.length > 0 && editTarifaLabel && (
+              {localConsumos.length > 0 && editTarifaLabel && (
                 <div style={{ ...styles.tarifaHint, marginTop: '0.5rem', marginBottom: 0 }}>
                   El valor unitario de los consumos es referente a la tarifa <strong style={{ color: '#3f6510' }}>{editTarifaLabel}</strong>.
                 </div>
               )}
 
-              {remision.consumos.length === 0 ? (
+              {localConsumos.length === 0 ? (
                 <div style={{ ...styles.emptySection, marginTop: '0.5rem' }}>No hay consumos</div>
               ) : (
                 <div style={styles.consumosTableWrap}>
@@ -703,7 +777,7 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
                       </tr>
                     </thead>
                     <tbody>
-                      {editConsumosStaged.map(it => (
+                      {localConsumos.map(it => (
                         <tr
                           key={it.localId}
                           style={{ cursor: puedeEditarTecnicosConsumos ? 'pointer' : 'default' }}
@@ -719,11 +793,7 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
                                 type="button"
                                 style={styles.rowDeleteBtn}
                                 title="Eliminar"
-                                disabled={removeConsumoMutation.isPending}
-                                onClick={() => {
-                                  if (remision.consumos.length <= 1) { setConsumoApiError('Debe haber al menos un consumo.'); return; }
-                                  removeConsumoMutation.mutate(it.localId);
-                                }}
+                                onClick={() => quitarConsumoLocal(it.localId)}
                               >
                                 <Trash2 size={14} />
                               </button>
@@ -882,13 +952,14 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
             <button
               style={styles.saveBtn}
               onClick={handleGuardarEdit}
-              disabled={updateRemisionMutation.isPending}
+              disabled={guardarTodoMutation.isPending}
             >
-              {updateRemisionMutation.isPending ? 'Guardando...' : 'Guardar'}
+              {guardarTodoMutation.isPending ? 'Guardando...' : 'Guardar'}
             </button>
           </div>
         </div>
       </div>
+      )}
 
       {editPaquetePanelOpen && (
         <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10050 }}>
@@ -987,18 +1058,25 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
         <AddStagedItemForm
           tarifaId={editTarifaId}
           tarifaLabel={editTarifaLabel}
-          items={editConsumosStaged}
+          // openAddConsumo (picker suelto desde "+ Agregar", sin botón Guardar propio): persiste
+          // cada alta de inmediato, por eso usa la lista en vivo del servidor. Dentro del
+          // formulario completo, todo queda en localConsumos hasta dar Guardar.
+          items={openAddConsumo ? editConsumosStaged : localConsumos}
           searchProductos={searchEditProductosConPrecio}
           onSelectItem={setSelectedStagedItem}
           onAdd={item => {
-            addConsumoMutation.mutate({
-              productoId: item.productoId,
-              cantidad: Number(item.cantidad),
-              valorUnitario: Number(item.valorUnitario),
-              observaciones: item.observaciones || undefined,
-            });
+            if (openAddConsumo) {
+              addConsumoMutation.mutate({
+                productoId: item.productoId,
+                cantidad: Number(item.cantidad),
+                valorUnitario: Number(item.valorUnitario),
+                observaciones: item.observaciones || undefined,
+              });
+            } else {
+              agregarConsumoLocal(item);
+            }
           }}
-          onDone={() => setShowAddConsumoModal(false)}
+          onDone={() => { setShowAddConsumoModal(false); if (openAddConsumo) onClose(); }}
         />
       )}
 
@@ -1009,19 +1087,25 @@ export default function EditarRemisionModal({ remision, remisionId, onClose, onU
           searchProductos={searchEditProductosConPrecio}
           onClose={() => setSelectedStagedItem(null)}
           onSave={updated => {
-            updateConsumoMutation.mutate({
-              consumoId: updated.localId,
-              payload: {
-                cantidad: Number(updated.cantidad),
-                valorUnitario: Number(updated.valorUnitario),
-                observaciones: updated.observaciones || undefined,
-              },
-            });
+            if (openAddConsumo) {
+              updateConsumoMutation.mutate({
+                consumoId: updated.localId,
+                payload: {
+                  cantidad: Number(updated.cantidad),
+                  valorUnitario: Number(updated.valorUnitario),
+                  observaciones: updated.observaciones || undefined,
+                },
+              });
+            } else {
+              editarConsumoLocal(updated);
+            }
             setSelectedStagedItem(null);
           }}
           onDelete={() => {
-            if (remision.consumos.length <= 1) { setConsumoApiError('Debe haber al menos un consumo.'); setSelectedStagedItem(null); return; }
-            removeConsumoMutation.mutate(selectedStagedItem.localId);
+            const count = openAddConsumo ? remision.consumos.length : localConsumos.length;
+            if (count <= 1) { setConsumoApiError('Debe haber al menos un consumo.'); setSelectedStagedItem(null); return; }
+            if (openAddConsumo) removeConsumoMutation.mutate(selectedStagedItem.localId);
+            else quitarConsumoLocal(selectedStagedItem.localId);
             setSelectedStagedItem(null);
           }}
         />

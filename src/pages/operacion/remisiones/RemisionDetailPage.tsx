@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader, X, ChevronDown, Receipt, CheckCircle, Circle, Plus, AlertCircle } from 'lucide-react';
+import { Loader, X, ChevronDown, Receipt, Plus, AlertCircle } from 'lucide-react';
 // jsPDF (+ jspdf-autotable, html2canvas, dompurify) pesa ~380kB/124kB gzip. Se carga con import()
 // dinámico dentro de cada buildRemisionPdf*, solo cuando el usuario realmente pide un PDF.
 import type jsPDF from 'jspdf';
@@ -13,22 +13,23 @@ import PdfIcon from '../../../components/icons/PdfIcon';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import SuccessToast from '../../../components/SuccessToast';
+import { ActividadTimeline } from '../../../components/ActividadTimeline';
 import {
   remisionesService,
   ESTADOS_REMISION,
-  CATEGORIAS_COMISION,
-  TIPOS_COMISION,
-  SELECCIONE_TIPO_COMISION,
   type RemisionDetail,
   type RemisionDetailTecnico,
-  type TecnicoOption,
+  type ValidacionConsumoGrupo,
+  type ValidacionConsumoItem,
 } from '../../../services/remisiones.service';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { esSuperAdmin } from '../../../lib/auth.utils';
 import EditarRemisionModal from './EditarRemisionModal';
 import ConsumoDetalleModal from '../consumos/ConsumoDetalleModal';
 import ComisionDetalleModal from '../consumos/ComisionDetalleModal';
+import AgregarComisionModal from '../consumos/AgregarComisionModal';
 
 const getTecnicoInitials = (nombreCompleto: string): string => {
   const words = nombreCompleto.trim().split(/\s+/).filter(Boolean);
@@ -870,12 +871,11 @@ const getEstadoColors = (estado: string | null) => ESTADO_COLORS[(estado ?? '').
 export default function RemisionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigateWithLoading();
-  const { isMobile } = useResponsiveStyles();
+  const { isMobile, isNarrow } = useResponsiveStyles();
   const [mainTab, setMainTab] = useState('resumen');
   const [hoveredConsumoId, setHoveredConsumoId] = useState<string | null>(null);
   const [consumoExpanded, setConsumoExpanded] = useState(false);
   const [hoveredTecnicoId, setHoveredTecnicoId] = useState<string | null>(null);
-  const [hoveredBonoId, setHoveredBonoId] = useState<string | null>(null);
   const [hoveredFacturaId, setHoveredFacturaId] = useState<string | null>(null);
   const [selectedTecnico, setSelectedTecnico] = useState<RemisionDetailTecnico | null>(null);
   const [comisionTooltipPos, setComisionTooltipPos] = useState<{ top: number; left: number } | null>(null);
@@ -890,6 +890,10 @@ export default function RemisionDetailPage() {
   useSmoothWheelScroll(bonosScrollRef, [mainTab]);
   const consumosScrollRef = useRef<HTMLDivElement>(null);
   useSmoothWheelScroll(consumosScrollRef, [mainTab], 3);
+  const consumosResumenScrollRef = useRef<HTMLDivElement>(null);
+  useSmoothWheelScroll(consumosResumenScrollRef, [mainTab]);
+  const validacionResumenScrollRef = useRef<HTMLDivElement>(null);
+  useSmoothWheelScroll(validacionResumenScrollRef, [mainTab]);
   const facturacionScrollRef = useRef<HTMLDivElement>(null);
   useSmoothWheelScroll(facturacionScrollRef, [mainTab]);
 
@@ -911,12 +915,21 @@ export default function RemisionDetailPage() {
   }, [showMoreMenu]);
 
   const [showEditModal, setShowEditModal] = useState(false);
+  // "+ Agregar" de Consumos remisionados abre Editar Remisión directo en el picker de productos,
+  // en vez del formulario general — se resetea al cerrar para que "Editar" (el de más arriba)
+  // siga abriendo el formulario normal.
+  const [showEditModalAddConsumo, setShowEditModalAddConsumo] = useState(false);
   const [showEditSuccess, setShowEditSuccess] = useState(false);
+  const [showAddConsumoSuccess, setShowAddConsumoSuccess] = useState(false);
+  const [showDeleteSuccess, setShowDeleteSuccess] = useState(false);
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [selectedConsumoId, setSelectedConsumoId] = useState<string | null>(null);
+  const [selectedValConsumoId, setSelectedValConsumoId] = useState<string | null>(null);
   const [selectedComisionId, setSelectedComisionId] = useState<string | null>(null);
+  const [expandedBonoKeys, setExpandedBonoKeys] = useState<Set<string>>(new Set());
+  const [expandedValidacionKeys, setExpandedValidacionKeys] = useState<Set<string>>(new Set());
 
   const [isScrolled, setIsScrolled] = useState(false);
   const [showCompactHeader, setShowCompactHeader] = useState(false);
@@ -943,26 +956,13 @@ export default function RemisionDetailPage() {
     return () => clearTimeout(timer);
   }, [isScrolled, showCompactHeader]);
 
+  // El formulario de "Agregar Comisión" vive en AgregarComisionModal.tsx (componente compartido
+  // con ProgramacionDetailPage) — aquí solo queda abrirlo/cerrarlo, para no mantener dos copias
+  // del mismo formulario que terminan divergiendo (justo lo que pasó antes).
   const [showComisionModal, setShowComisionModal] = useState(false);
-  const [comisionForm, setComisionForm] = useState({
-    categoria: '',
-    tipo: '',
-    vrComision: '',
-    observaciones: '',
-    agregarIva: false,
-    cargarPorcentaje: '',
-    quieresDesglosar: false,
-    seleccioneTipo: '',
-  });
-  const [comisionTecnico, setComisionTecnico] = useState<TecnicoOption | null>(null);
-  const [tecnicoSearch, setTecnicoSearch] = useState('');
-  const [comisionError, setComisionError] = useState<{ field: string; message: string } | null>(null);
-  const [showConfirmComision, setShowConfirmComision] = useState(false);
+  const [showComisionSuccess, setShowComisionSuccess] = useState(false);
 
-  useEffect(() => {
-    document.body.style.overflow = (selectedTecnico || showComisionModal || showConfirmComision || showEditModal || showDeleteConfirm) ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [selectedTecnico, showComisionModal, showConfirmComision, showEditModal, showDeleteConfirm]);
+  useBodyScrollLock(!!(selectedTecnico || showEditModal || showDeleteConfirm));
 
   useEffect(() => {
     if (!estadoMenuOpen) return;
@@ -992,6 +992,15 @@ export default function RemisionDetailPage() {
     return () => cancelAnimationFrame(raf);
   }, [remision]);
 
+  // Consumo real validado (Validar Consumo, a nivel programación) filtrado a esta remisión — para
+  // la tarjeta "Consumos utilizados" arriba de Información General.
+  const { data: validacionGrupos = [] } = useQuery<ValidacionConsumoGrupo[]>({
+    queryKey: ['remisiones-validacion-consumos', remision?.programacion?.id],
+    queryFn: () => remisionesService.findValidacionConsumosByProgramacion(remision!.programacion!.id),
+    enabled: !!remision?.programacion?.id,
+  });
+  const validacionItems = validacionGrupos.find(g => g.remisionId === id)?.items ?? [];
+
   const updateEstadoMutation = useMutation({
     mutationFn: (estado: string) => remisionesService.updateEstado(id!, estado),
     onSuccess: () => {
@@ -1007,7 +1016,10 @@ export default function RemisionDetailPage() {
     mutationFn: () => remisionesService.deleteRemision(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['remisiones'] });
-      navigate('/operacion/remision');
+      // No se navega de inmediato — se espera a que el toast termine su animación (ver
+      // SuccessToast más abajo, que recibe la navegación como su propio callback de cierre).
+      setShowDeleteConfirm(false);
+      setShowDeleteSuccess(true);
     },
     onError: (err: any) => {
       setDeleteError(err?.response?.data?.message ?? 'No se pudo eliminar la remisión.');
@@ -1022,80 +1034,7 @@ export default function RemisionDetailPage() {
     },
   });
 
-  const autoResizeTextarea = (el: HTMLTextAreaElement | null) => {
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
-  };
-
-  const { data: tecnicoResults = [] } = useQuery<TecnicoOption[]>({
-    queryKey: ['comisiones-tecnicos', tecnicoSearch],
-    queryFn: () => remisionesService.searchTecnicos(tecnicoSearch),
-    enabled: showComisionModal,
-  });
-
-  const createComisionMutation = useMutation({
-    mutationFn: () => remisionesService.createComision({
-      programacionId: remision!.programacion!.id,
-      categoria: comisionForm.categoria,
-      tipo: comisionForm.tipo || undefined,
-      tecnicoId: comisionTecnico?.id,
-      remisionId: id!,
-      vrComision: Number(comisionForm.vrComision),
-      observaciones: comisionForm.observaciones || undefined,
-      agregarIva: comisionForm.agregarIva,
-      cargarPorcentaje: comisionForm.agregarIva && comisionForm.cargarPorcentaje ? Number(comisionForm.cargarPorcentaje) : undefined,
-      quieresDesglosar: comisionForm.quieresDesglosar,
-      seleccioneTipo: comisionForm.seleccioneTipo || undefined,
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['remision', id] });
-      setShowConfirmComision(false);
-      setShowComisionModal(false);
-    },
-  });
-
-  const openComisionModal = () => {
-    setComisionForm({
-      categoria: '',
-      tipo: '',
-      vrComision: '',
-      observaciones: '',
-      agregarIva: false,
-      cargarPorcentaje: '',
-      quieresDesglosar: false,
-      seleccioneTipo: '',
-    });
-    setComisionTecnico(null);
-    setTecnicoSearch('');
-    setComisionError(null);
-    setShowConfirmComision(false);
-    setShowComisionModal(true);
-  };
-
-  // TOTAL FACTURA (preview) — misma fórmula que getDetTecnicoDetalle
-  const comisionVrComision = Number(comisionForm.vrComision) || 0;
-  const comisionSubTotal = comisionForm.agregarIva ? comisionVrComision : comisionVrComision / 1.16;
-  const comisionIva = comisionForm.quieresDesglosar ? comisionSubTotal * 0.16 : 0;
-  const comisionRetIva = comisionForm.quieresDesglosar ? comisionSubTotal * 0.10667 : 0;
-  const comisionEsActEmpresarial = comisionForm.seleccioneTipo.trim().toUpperCase() === 'ACTIVIDAD EMPRESARIAL';
-  const comisionRetIsr = comisionForm.quieresDesglosar ? (comisionEsActEmpresarial ? 0 : comisionSubTotal * 0.0125) : 0;
-  const comisionTotalFactura = comisionSubTotal + comisionIva - comisionRetIva - comisionRetIsr;
-
-  const handleGuardarComision = () => {
-    if (!comisionForm.tipo) { setComisionError({ field: 'tipo', message: 'Selecciona el tipo de comisión.' }); return; }
-    if (!comisionForm.categoria) { setComisionError({ field: 'categoria', message: 'Selecciona la categoría.' }); return; }
-    if (!comisionTecnico) { setComisionError({ field: 'tecnico', message: 'Selecciona el nombre de contacto.' }); return; }
-    if (!comisionForm.vrComision || Number(comisionForm.vrComision) <= 0) { setComisionError({ field: 'vrComision', message: 'El valor de asignación debe ser mayor a cero.' }); return; }
-    if (!comisionForm.seleccioneTipo) { setComisionError({ field: 'seleccioneTipo', message: 'Selecciona el tipo (Actividad Empresarial o Resico).' }); return; }
-    setComisionError(null);
-    setShowConfirmComision(true);
-  };
-
-  useEffect(() => {
-    if (!comisionError) return;
-    document.getElementById(`comision-field-${comisionError.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [comisionError]);
+  const openComisionModal = () => setShowComisionModal(true);
 
   if (isLoading) return <div style={{ padding: '2rem', textAlign: 'center' }}><Loader className="spinner" size={32} /></div>;
   if (error) return <div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>Error al cargar: {(error as any)?.message || 'Error desconocido'}</div>;
@@ -1103,6 +1042,37 @@ export default function RemisionDetailPage() {
 
   const bonosComisionesFlat = remision.bonosComisiones.flatMap(g => g.items.map(it => ({ ...it, categoria: g.categoria })));
   const totalBonosComisiones = bonosComisionesFlat.reduce((sum, it) => sum + it.monto, 0);
+
+  // Si el mismo técnico ya tiene una comisión en esta categoría y se le agrega otra, no aparecen
+  // como filas separadas — se suman en una sola fila con un "×N" que avisa que son varias, y esa
+  // fila se puede desplegar para ver (y abrir) cada comisión individual.
+  const bonosComisionesAgrupados = (() => {
+    const grupos = new Map<string, { id: string; categoria: string; tecnico: string | null; monto: number; items: { id: string; monto: number; tipo: string | null }[] }>();
+    for (const it of bonosComisionesFlat) {
+      const key = `${it.categoria}__${it.tecnico ?? ''}`;
+      const existente = grupos.get(key);
+      if (existente) { existente.monto += it.monto; existente.items.push({ id: it.id, monto: it.monto, tipo: it.tipo }); }
+      else grupos.set(key, { id: it.id, categoria: it.categoria, tecnico: it.tecnico, monto: it.monto, items: [{ id: it.id, monto: it.monto, tipo: it.tipo }] });
+    }
+    return [...grupos.values()];
+  })();
+
+  // Si un producto ya validado recibe más cantidad y se vuelve a validar, no aparecen como filas
+  // separadas — se agrupan en una sola fila con un "×N" que avisa que hubo varias validaciones,
+  // desplegable para ver (y abrir) cada validación individual.
+  const validacionAgrupada = (() => {
+    const grupos = new Map<string, { key: string; referenciaValidada: string | null; nombreValidado: string | null; costoUnitario: number; cantRealValidada: number; costoReal: number; items: ValidacionConsumoItem[] }>();
+    for (const v of validacionItems) {
+      const key = v.detConsumoId ?? v.id;
+      const existente = grupos.get(key);
+      if (existente) { existente.cantRealValidada += v.cantRealValidada; existente.costoReal += v.costoReal; existente.items.push(v); }
+      else grupos.set(key, { key, referenciaValidada: v.referenciaValidada, nombreValidado: v.nombreValidado, costoUnitario: v.costoUnitario, cantRealValidada: v.cantRealValidada, costoReal: v.costoReal, items: [v] });
+    }
+    // Mismo orden que "Consumos remisionados" — si el consumo validado ya no tiene su consumo
+    // remisionado (se eliminó), se manda al final en vez de tratarlo como el primero.
+    const ordenRemisionado = new Map(remision.consumos.map((c, i) => [c.id, i]));
+    return [...grupos.values()].sort((a, b) => (ordenRemisionado.get(a.key) ?? Infinity) - (ordenRemisionado.get(b.key) ?? Infinity));
+  })();
 
   const bloqueosEliminar: string[] = [];
   if (!puedeEditarRemision) bloqueosEliminar.push('el estado no es Tramitada ni Descorche');
@@ -1117,6 +1087,216 @@ export default function RemisionDetailPage() {
     { key: 'consumos', label: 'Consumos', count: remision.consumos.length },
     { key: 'facturacion', label: 'Facturación', count: remision.facturas.length },
   ];
+
+  // Debajo del título: Hospital, Médico y Sede/Ciudad de la programación — reemplaza el folio de
+  // programación que iba ahí antes.
+  const medicosLabel = remision.programacion?.medicos.map(m => m.medico.nombreCompleto).join(', ') || null;
+  const ciudadCat = remision.programacion?.hospital?.ciudadCat;
+  const ciudadEstado = ciudadCat ? `${ciudadCat.nombre}${ciudadCat.estado ? `, ${ciudadCat.estado.nombre}` : ''}` : null;
+  const sedeNombre = remision.programacion?.sede?.nombre ?? null;
+  const sedeCiudadLabel = [sedeNombre, ciudadEstado].filter(Boolean).join(' · ') || null;
+
+  // Secciones de la pestaña Resumen armadas como variables (no inline) porque en pantallas anchas
+  // viven repartidas entre la columna principal y la barra lateral, pero en pantallas angostas
+  // (isNarrow) se apilan en el mismo orden de siempre — antes de que existiera la barra lateral —
+  // con Actividad agregada al final. Evita duplicar el JSX de cada tarjeta en los dos layouts.
+  const informacionGeneralCard = (
+    <div style={styles.generalCard}>
+      <div style={styles.sectionTitleRow}>
+        <span style={styles.miniCardIconBadge}><MaterialIcon name="description" size={18} color="#4d7a13" /></span>
+        <h2 style={styles.sectionTitle}>Información General</h2>
+      </div>
+      <div style={{ ...styles.generalGrid, ...(isMobile ? { gridTemplateColumns: '1fr' } : {}) }}>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Usuario</span><span style={styles.generalTagPill}>{remision.usuario?.nombreCompleto || '-'}</span></div>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Marca de Tiempo</span><span style={styles.generalValue}>{formatDateTime(remision.creadoEn)}</span></div>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Fecha QX</span><span style={styles.generalValue}>{formatDate(remision.programacion?.fechaQx ?? null)}</span></div>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Hora QX</span><span style={styles.generalValue}>{remision.programacion?.horaQx || '-'}</span></div>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Ciudad QX</span><span style={styles.generalValue}>{remision.programacion?.hospital?.ciudadCat?.nombre || '-'}</span></div>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Tarifa</span><span style={styles.generalValue}>{remision.tarifa?.nombre || '-'}</span></div>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Status</span><span style={styles.generalValue}>{remision.status ? 'Activa' : 'Inactiva'}</span></div>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Observaciones</span><span style={styles.generalValue}>{remision.programacion?.observaciones || '-'}</span></div>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Empresa</span><span style={styles.generalValue}>{remision.empresa?.nombreCompleto || '-'}</span></div>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Paciente</span><span style={styles.generalValue}>{remision.paciente || '-'}</span></div>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Cirugía Realizada</span><span style={styles.generalValue}>{remision.cirugiaRealizada || '-'}</span></div>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Cubrimiento</span><span style={styles.generalValue}>{remision.cubrimiento?.nombre || '-'}</span></div>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Responsable Económico</span><span style={styles.generalValue}>{remision.responsableEconomico?.nombreCompleto || '-'}</span></div>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Anestesiólogo</span><span style={styles.generalValue}>{remision.anestesiologo || '-'}</span></div>
+        <div style={styles.generalItem}><span style={styles.generalLabel}>Firma</span>{remision.firmaDisponible ? <RemisionFirma id={remision.id} /> : <span style={styles.firmaEmpty}>No disponible</span>}</div>
+        <div style={{ ...styles.generalItem, gridColumn: '1 / -1' }}>
+          <span style={styles.generalLabel}>Consumo</span>
+          <span style={{ ...styles.generalValue, ...(consumoExpanded ? {} : styles.generalValueClamp) }}>{remision.programacion?.consumo || '-'}</span>
+          {(remision.programacion?.consumo?.length ?? 0) > 180 && (
+            <button type="button" style={styles.verMasBtn} onClick={() => setConsumoExpanded(v => !v)}>
+              {consumoExpanded ? 'Ver menos' : 'Ver más'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  // Mismo formato de "Técnicos asociados" que en ProgramacionDetailPage (miniCard con icono +
+  // avatar/nombre) — antes era una tabla con N° Programación y Remisión como columnas aparte,
+  // pero esos dos datos son siempre los mismos en todas las filas (es la programación/remisión
+  // de esta página), así que sobraban.
+  const tecnicosAsociadosCard = (
+    <div style={styles.miniCard}>
+      <div style={styles.miniCardHeader}>
+        <div style={styles.miniCardHeaderLeft}>
+          <span style={styles.miniCardIconBadge}><MaterialIcon name="engineering" size={19} color="#6b8c1f" /></span>
+          <h3 style={styles.miniCardTitle}>Técnicos asociados</h3>
+          <span style={{ ...styles.miniCardBadge, backgroundColor: '#e5e7eb' }}>{remision.tecnicos.length}</span>
+        </div>
+      </div>
+      <div style={styles.miniCardBody}>
+        {remision.tecnicos.length === 0 ? (
+          <div style={styles.miniCardEmpty}>
+            <MaterialIcon name="engineering" size={22} color="#d1d5db" />
+            No hay datos relacionados
+          </div>
+        ) : (
+          <div ref={tecnicosScrollRef} style={styles.scrollBody}>
+            {remision.tecnicos.map((t, i) => {
+              const hoverStyle = hoveredTecnicoId === t.id ? styles.rowHover : {};
+              return (
+                <div
+                  key={t.id}
+                  style={{ ...styles.tecnicoListRow, ...(i > 0 ? styles.rowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
+                  onMouseEnter={() => setHoveredTecnicoId(t.id)}
+                  onMouseLeave={() => setHoveredTecnicoId(null)}
+                  onClick={() => setSelectedTecnico(t)}
+                >
+                  <span style={styles.tecnicoAvatar}>{getTecnicoInitials(t.tecnico?.nombreCompleto || '-')}</span>
+                  <span style={styles.tecnicoNombre}>{t.tecnico?.nombreCompleto || '-'}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const bonosComisionesCard = (
+    <div style={styles.consumosCard}>
+      <div style={styles.consumosCardHeader}>
+        <div style={styles.consumosCardHeaderLeft}>
+          <span style={{ ...styles.consumosCardIconBadge, backgroundColor: '#e9f2d8' }}><MaterialIcon name="payments" size={16} color="#4d7a13" /></span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={styles.consumosCardTitle}>Bonos y Comisiones</span>
+              <span style={styles.consumosCardBadge}>{bonosComisionesFlat.length}</span>
+            </div>
+          </div>
+        </div>
+        <div style={{ position: 'relative' as const }}>
+          <button
+            type="button"
+            style={{ ...styles.consumosCardAction, ...(!remision.programacion || remision.programacion.consumoNoValidado ? styles.consumosCardActionMuted : {}) }}
+            onClick={() => { if (remision.programacion && !remision.programacion.consumoNoValidado) openComisionModal(); }}
+            onMouseEnter={e => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setComisionTooltipPos({ top: rect.top, left: rect.left + rect.width / 2 });
+            }}
+            onMouseLeave={() => setComisionTooltipPos(null)}
+          >
+            <Plus size={13} /> Agregar
+          </button>
+          {comisionTooltipPos && (!remision.programacion || remision.programacion.consumoNoValidado) && (
+            <div style={{ ...styles.tooltipBubble, top: comisionTooltipPos.top - 8, left: comisionTooltipPos.left }}>
+              {!remision.programacion
+                ? 'Esta remisión no tiene una programación asociada.'
+                : 'La programación debe tener todos sus consumos validados para poder agregar comisiones.'}
+            </div>
+          )}
+        </div>
+      </div>
+      <div style={{ ...styles.consumosCardTableHeadCompact, gridTemplateColumns: '1fr 1.3fr 0.9fr' }}>
+        <span>Categoría</span>
+        <span>Técnico</span>
+        <span style={{ textAlign: 'right' as const }}>Monto</span>
+      </div>
+      {bonosComisionesFlat.length === 0 ? (
+        <div style={styles.consumosCardBody}>
+          <span style={{ ...styles.consumosCardDashedCircle, borderColor: '#4d7a13' }} />
+          <span style={styles.consumosCardBodyTitle}>Sin comisiones asignadas</span>
+          <span style={styles.consumosCardBodySub}>Aún no se han agregado bonos o comisiones a esta remisión.</span>
+        </div>
+      ) : (
+        <div ref={bonosScrollRef} style={styles.consumosCardScrollBody}>
+          {bonosComisionesAgrupados.map((item, i) => {
+            const key = `${item.categoria}__${item.tecnico ?? ''}`;
+            const esGrupo = item.items.length > 1;
+            const expandido = expandedBonoKeys.has(key);
+            return (
+              <div key={key}>
+                <div
+                  style={{ ...styles.consumosCardRowCompact, gridTemplateColumns: '1fr 1.3fr 0.9fr', ...(i > 0 ? styles.consumosCardRowBorder : {}) }}
+                  onClick={() => {
+                    if (!esGrupo) { setSelectedComisionId(item.id); return; }
+                    setExpandedBonoKeys(prev => {
+                      const next = new Set(prev);
+                      if (next.has(key)) next.delete(key); else next.add(key);
+                      return next;
+                    });
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f9fafb'; }}
+                  onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                >
+                  <span style={styles.consumosCardRowNombre}>{item.categoria}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+                    {item.tecnico && <span style={styles.tecnicoAvatar}>{getTecnicoInitials(item.tecnico)}</span>}
+                    <span style={styles.consumosCardRowNombre}>{item.tecnico ?? '-'}</span>
+                    {esGrupo && (
+                      <span style={{ ...styles.consumosCardBadge, gap: '0.1rem' }}>
+                        ×{item.items.length}
+                        <MaterialIcon name="expand_more" size={12} style={{ transform: expandido ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s ease' }} />
+                      </span>
+                    )}
+                  </div>
+                  <span style={{ textAlign: 'right' as const, fontWeight: 700 }}>{formatMoney(item.monto)}</span>
+                </div>
+                {esGrupo && expandido && item.items.map((sub, si) => (
+                  <div
+                    key={sub.id}
+                    style={{ ...styles.consumosCardRowCompact, gridTemplateColumns: '1fr 1.3fr 0.9fr', backgroundColor: '#f9fafb', borderTop: '1px solid #f3f4f6' }}
+                    onClick={e => { e.stopPropagation(); setSelectedComisionId(sub.id); }}
+                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f3f4f6'; }}
+                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#f9fafb'; }}
+                  >
+                    <span />
+                    <span style={{ ...styles.consumosCardRowNombre, color: '#9ca3af', fontWeight: 500, paddingLeft: '1.5rem' }}>{sub.tipo ?? `Comisión ${si + 1}`}</span>
+                    <span style={{ textAlign: 'right' as const }}>{formatMoney(sub.monto)}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div style={styles.consumosCardFooter}>
+        <span style={styles.consumosCardFooterLabel}>Total</span>
+        <span style={styles.consumosCardFooterValue}>{formatMoney(totalBonosComisiones)}</span>
+      </div>
+    </div>
+  );
+
+  const actividadCard = (
+    <div style={styles.miniCard}>
+      <div style={styles.miniCardHeader}>
+        <div style={styles.miniCardHeaderLeft}>
+          <span style={styles.miniCardIconBadge}><MaterialIcon name="history" size={19} color="#6b8c1f" /></span>
+          <h3 style={styles.miniCardTitle}>Actividad</h3>
+        </div>
+      </div>
+      <div style={styles.miniCardBody}>
+        <ActividadTimeline eventos={[
+          { key: 'creada', label: 'Remisión creada', sub: `${remision.usuario?.nombreCompleto ?? '-'} · ${formatDateTime(remision.creadoEn)}`, fecha: remision.creadoEn },
+          ...remision.ediciones.map((e, i) => ({ key: `editada-${i}`, label: 'Remisión editada', sub: `${e.editadoPor ?? '-'} · ${formatDateTime(e.editadoEn)}`, fecha: e.editadoEn })),
+        ]} />
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -1134,6 +1314,8 @@ export default function RemisionDetailPage() {
         </div>
       )}
       <div style={styles.container}>
+        <div style={{ ...styles.pageSplitRow, ...(isMobile || isNarrow ? { flexDirection: 'column' as const } : {}) }}>
+        <div style={styles.mainColumn}>
         <div style={styles.headerCard}>
           <div style={{ ...styles.header, ...(isMobile ? { flexWrap: 'wrap' as const } : {}) }}>
             <HeaderBackReveal
@@ -1149,7 +1331,24 @@ export default function RemisionDetailPage() {
                   <h1 style={{ ...styles.title, ...(isMobile ? { fontSize: '0.95rem' } : {}) }}>{remision.numRemision || remision.id}</h1>
                 </div>
                 <div style={styles.breadcrumbRow}>
-                  <span style={styles.breadcrumbId}> {remision.programacion?.numProgram || remision.programacion?.id || '-'}</span>
+                  {remision.programacion?.hospital?.nombre && (
+                    <span style={styles.breadcrumbItem}>
+                      <MaterialIcon name="local_hospital" size={14} />
+                      {remision.programacion.hospital.nombre}
+                    </span>
+                  )}
+                  {medicosLabel && (
+                    <span style={styles.breadcrumbItem}>
+                      <MaterialIcon name="stethoscope" size={14} />
+                      {medicosLabel}
+                    </span>
+                  )}
+                  {sedeCiudadLabel && (
+                    <span style={styles.breadcrumbItem}>
+                      <MaterialIcon name="location_on" size={14} />
+                      {sedeCiudadLabel}
+                    </span>
+                  )}
                 </div>
               </div>
             </HeaderBackReveal>
@@ -1239,23 +1438,27 @@ export default function RemisionDetailPage() {
 
           <div style={{ ...styles.infoBar, gridTemplateColumns: isMobile ? '1fr' : 'repeat(5, 1fr)' }}>
             <div style={styles.infoBarItem}>
-              <span style={styles.infoBarLabel}>Total</span>
+              <span style={styles.infoBarLabel}>Total Remisión</span>
               <span style={styles.infoBarValue}><AnimatedMoney value={remision.total} start={statsMounted} /></span>
+              <span style={styles.infoBarHelp}>Importe total de la remisión.</span>
+              {!isMobile && <span style={styles.infoBarDividerLine} />}
+            </div>
+            <div style={styles.infoBarItem}>
+              <span style={styles.infoBarLabel}>Costo Consumos Utilizados</span>
+              <span style={styles.infoBarValue}><AnimatedMoney value={validacionItems.reduce((sum, v) => sum + v.costoReal, 0)} start={statsMounted} /></span>
+              <span style={styles.infoBarHelp}>Costo real registrado en las validaciones de consumo.</span>
+              {!isMobile && <span style={styles.infoBarDividerLine} />}
+            </div>
+            <div style={styles.infoBarItem}>
+              <span style={styles.infoBarLabel}>Costo Interno</span>
+              <span style={styles.infoBarValue}><AnimatedMoney value={remision.costoInterno} start={statsMounted} /></span>
+              <span style={styles.infoBarHelp}>Costo real de adquisición de los productos consumidos.</span>
               {!isMobile && <span style={styles.infoBarDividerLine} />}
             </div>
             <div style={styles.infoBarItem}>
               <span style={styles.infoBarLabel}>Saldo</span>
               <span style={styles.infoBarValue}><AnimatedMoney value={remision.saldo} start={statsMounted} /></span>
-              {!isMobile && <span style={styles.infoBarDividerLine} />}
-            </div>
-            <div style={styles.infoBarItem}>
-              <span style={styles.infoBarLabel}>Hospital</span>
-              <span style={{ ...styles.infoBarValue, ...(isMobile ? { whiteSpace: 'normal' as const } : {}) }}>{remision.programacion?.hospital?.nombre || '-'}</span>
-              {!isMobile && <span style={styles.infoBarDividerLine} />}
-            </div>
-            <div style={styles.infoBarItem}>
-              <span style={styles.infoBarLabel}>Usuario</span>
-              <span style={{ ...styles.infoBarValue, ...(isMobile ? { whiteSpace: 'normal' as const } : {}) }}>{remision.usuario?.nombreCompleto || '-'}</span>
+              <span style={styles.infoBarHelp}>Saldo registrado de la remisión.</span>
               {!isMobile && <span style={styles.infoBarDividerLine} />}
             </div>
             <div style={{ ...styles.infoBarItem, position: 'relative' as const }} ref={estadoMenuRef}>
@@ -1273,6 +1476,7 @@ export default function RemisionDetailPage() {
                   </span>
                 );
               })()}
+              <span style={styles.infoBarHelp}>Estado actual del proceso de remisión.</span>
               {estadoMenuOpen && (
                 <div style={styles.estadoMenu}>
                   {ESTADOS_REMISION.map(opt => {
@@ -1299,6 +1503,92 @@ export default function RemisionDetailPage() {
             </div>
           </div>
 
+          {(() => {
+            // Mismo verde de marca para las 4 — "actual" (Remisión) usa el tono sólido, las demás
+            // el tinte claro; pendiente (sin cotización vinculada, sin factura) se queda gris.
+            const TRAZABILIDAD_COLOR = '#4d7a13';
+            const TRAZABILIDAD_TINT = '#e9f2d8';
+            const cotizacionProg = remision.programacion?.cotizaciones?.[0] ?? null;
+            const trazabilidadItems = [
+              {
+                key: 'cotizacion',
+                icon: 'request_quote',
+                label: 'Cotización',
+                folio: cotizacionProg?.numCotizacion ?? cotizacionProg?.id ?? null,
+                subLabel: cotizacionProg?.status ?? null,
+                pending: !cotizacionProg,
+                current: false,
+              },
+              {
+                key: 'programacion',
+                icon: 'event',
+                label: 'Programación',
+                folio: remision.programacion?.numProgram ?? remision.programacion?.id ?? null,
+                subLabel: remision.programacion?.fechaQx ? formatDate(remision.programacion.fechaQx) : null,
+                pending: !remision.programacion,
+                current: false,
+              },
+              {
+                key: 'remision',
+                icon: 'assignment_turned_in',
+                label: 'Remisión',
+                folio: remision.numRemision ?? remision.id,
+                subLabel: remision.estado,
+                pending: false,
+                current: true,
+              },
+              {
+                key: 'facturacion',
+                icon: 'receipt_long',
+                label: 'Facturación',
+                folio: remision.tieneFactura ? (remision.numFactura ?? remision.noFactura ?? remision.id) : null,
+                subLabel: remision.tieneFactura ? (remision.estadoFactura ?? 'Facturada') : 'Pendiente',
+                pending: !remision.tieneFactura,
+                current: false,
+              },
+            ];
+            return (
+              <div style={{ ...styles.trazabilidadBar, gridTemplateColumns: isMobile ? '1fr' : 'repeat(4, 1fr)' }}>
+                {trazabilidadItems.map((item, i) => (
+                  <div
+                    key={item.key}
+                    style={styles.trazabilidadItem}
+                  >
+                    {/* Fondo del chip como respaldo aparte (no margin/padding en el item real) —
+                        así su caja no se desplaza y la línea divisoria de abajo, anclada a esa
+                        caja, no se corre hacia el siguiente item. */}
+                    {item.current && <span style={styles.trazabilidadCurrentBackdrop} />}
+                    <span
+                      style={{
+                        ...styles.trazabilidadIconBadge,
+                        position: 'relative' as const,
+                        zIndex: 1,
+                        ...(item.pending ? styles.trazabilidadIconBadgePending : { backgroundColor: item.current ? TRAZABILIDAD_COLOR : TRAZABILIDAD_TINT }),
+                      }}
+                    >
+                      <MaterialIcon name={item.icon} size={16} color={item.pending ? '#9ca3af' : item.current ? '#fff' : TRAZABILIDAD_COLOR} />
+                    </span>
+                    <div style={{ minWidth: 0, position: 'relative' as const, zIndex: 1 }}>
+                      <div style={{ ...styles.trazabilidadLabel, ...(item.current ? styles.trazabilidadLabelCurrent : {}) }}>{item.label}</div>
+                      <div
+                        style={{
+                          ...styles.trazabilidadFolio,
+                          ...(item.pending ? styles.trazabilidadFolioPending : { color: item.current ? styles.trazabilidadFolioCurrent.color : TRAZABILIDAD_COLOR }),
+                        }}
+                      >
+                        {item.folio ?? '—'}
+                      </div>
+                      {item.subLabel && (
+                        <div style={{ ...styles.trazabilidadSub, ...(item.current ? styles.trazabilidadSubCurrent : {}) }}>{item.subLabel}</div>
+                      )}
+                    </div>
+                    {!isMobile && i < trazabilidadItems.length - 1 && <span style={styles.trazabilidadDividerLine} />}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
           <div style={styles.mainTabBar}>
             {mainTabItems.map(({ key, label, count }) => {
               const active = mainTab === key;
@@ -1319,148 +1609,235 @@ export default function RemisionDetailPage() {
         </div>
 
         {mainTab === 'resumen' && (
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.6fr 1fr', gap: '1.5rem', marginBottom: '2rem', alignItems: 'start' }}>
-          <div style={styles.generalCard}>
-            <div style={styles.sectionTitleRow}>
-              <h2 style={styles.sectionTitle}>Información General</h2>
-            </div>
-            <div style={{ ...styles.generalGrid, ...(isMobile ? { gridTemplateColumns: '1fr' } : {}) }}>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>N° Program</span><span style={styles.generalTagPill}>{remision.programacion?.numProgram || remision.programacion?.id || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>N° Remisión</span><span style={styles.generalValue}>{remision.numRemision || remision.id}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Usuario</span><span style={styles.generalTagPill}>{remision.usuario?.nombreCompleto || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Marca de Tiempo</span><span style={styles.generalValue}>{formatDateTime(remision.creadoEn)}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Fecha QX</span><span style={styles.generalValue}>{formatDate(remision.programacion?.fechaQx ?? null)}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Hora QX</span><span style={styles.generalValue}>{remision.programacion?.horaQx || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Sede</span><span style={styles.generalValue}>{remision.programacion?.sede?.nombre || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Ciudad QX</span><span style={styles.generalValue}>{remision.programacion?.hospital?.ciudadCat?.nombre || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Médico</span><span style={styles.generalTagPill}>{remision.programacion?.medicos.map(m => m.medico.nombreCompleto).join(', ') || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Hospital</span><span style={styles.generalTagPill}>{remision.programacion?.hospital?.nombre || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Tarifa</span><span style={styles.generalValue}>{remision.tarifa?.nombre || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Status</span><span style={styles.generalValue}>{remision.status ? 'Activa' : 'Inactiva'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Observaciones</span><span style={styles.generalValue}>{remision.programacion?.observaciones || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Empresa</span><span style={styles.generalValue}>{remision.empresa?.nombreCompleto || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Paciente</span><span style={styles.generalValue}>{remision.paciente || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Cirugía Realizada</span><span style={styles.generalValue}>{remision.cirugiaRealizada || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Cubrimiento</span><span style={styles.generalValue}>{remision.cubrimiento?.nombre || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Responsable Económico</span><span style={styles.generalValue}>{remision.responsableEconomico?.nombreCompleto || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Anestesiólogo</span><span style={styles.generalValue}>{remision.anestesiologo || '-'}</span></div>
-              <div style={styles.generalItem}><span style={styles.generalLabel}>Firma</span>{remision.firmaDisponible ? <RemisionFirma id={remision.id} /> : <span style={styles.firmaEmpty}>No disponible</span>}</div>
-              <div style={{ ...styles.generalItem, gridColumn: '1 / -1' }}>
-                <span style={styles.generalLabel}>Consumo</span>
-                <span style={{ ...styles.generalValue, ...(consumoExpanded ? {} : styles.generalValueClamp) }}>{remision.programacion?.consumo || '-'}</span>
-                {(remision.programacion?.consumo?.length ?? 0) > 180 && (
-                  <button type="button" style={styles.verMasBtn} onClick={() => setConsumoExpanded(v => !v)}>
-                    {consumoExpanded ? 'Ver menos' : 'Ver más'}
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '1.5rem', minWidth: 0 }}>
-            <div>
-              <div style={styles.sectionTitleRow}>
-                <h2 style={styles.sectionTitle}>Técnicos asociados</h2>
-                <span style={styles.badge}>{remision.tecnicos.length}</span>
-              </div>
-              {remision.tecnicos.length === 0 ? (
-                <div style={styles.emptyState}>No hay datos relacionados</div>
-              ) : (
-                <div style={styles.remList}>
-                  <div style={{ ...styles.tecnicoRow, ...styles.colHeader }}>
-                    <span style={styles.colHeaderText}>Nombre Técnico</span>
-                    <span style={styles.colHeaderText}>N° Programación</span>
-                    <span style={styles.colHeaderText}>Remisión</span>
-                  </div>
-                  <div ref={tecnicosScrollRef} style={styles.scrollBody}>
-                    {remision.tecnicos.map((t, i) => {
-                      const hoverStyle = hoveredTecnicoId === t.id ? styles.rowHover : {};
-                      return (
-                        <div
-                          key={t.id}
-                          style={{ ...styles.tecnicoRow, ...(i > 0 ? styles.rowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
-                          onMouseEnter={() => setHoveredTecnicoId(t.id)}
-                          onMouseLeave={() => setHoveredTecnicoId(null)}
-                          onClick={() => setSelectedTecnico(t)}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
-                            {t.tecnico?.nombreCompleto && <span style={styles.tecnicoAvatar}>{getTecnicoInitials(t.tecnico.nombreCompleto)}</span>}
-                            <span style={{ ...styles.cellText, fontWeight: 600 }}>{t.tecnico?.nombreCompleto || '-'}</span>
+        <>
+          {(() => {
+            const totalRemisionado = remision.subtotal;
+            const cantValidadaTotal = validacionItems.reduce((sum, v) => sum + v.cantRealValidada, 0);
+            const costoRealTotal = validacionItems.reduce((sum, v) => sum + v.costoReal, 0);
+            const hayValidacion = validacionItems.length > 0;
+            return (
+              <div style={styles.consumosResumenSection}>
+                <div style={{ ...styles.consumosResumenGrid, gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr' }}>
+                  <div style={styles.consumosCard}>
+                    <div style={styles.consumosCardHeader}>
+                      <div style={styles.consumosCardHeaderLeft}>
+                        <span style={{ ...styles.consumosCardIconBadge, backgroundColor: '#fef3c7' }}><MaterialIcon name="inventory_2" size={16} color="#d97706" /></span>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={styles.consumosCardTitle}>Consumos remisionados</span>
+                            <span style={styles.consumosCardBadge}>{remision.consumos.length}</span>
                           </div>
-                          <span style={{ ...styles.cellText, fontWeight: 600 }}>{remision.programacion?.numProgram || remision.programacion?.id || '-'}</span>
-                          <span style={{ ...styles.cellText, fontWeight: 600 }}>{remision.numRemision || remision.id}</span>
+                          <span style={styles.consumosCardSubtitle}>Productos remisionados para la cirugía</span>
                         </div>
-                      );
-                    })}
+                      </div>
+                      <button type="button" style={styles.consumosCardAction} onClick={() => { setShowEditModalAddConsumo(true); setShowEditModal(true); }}>
+                        <Plus size={13} /> Agregar
+                      </button>
+                    </div>
+                    <div style={{ ...styles.consumosCardTableHeadCompact, ...styles.consumosCardTableHeadAmberRow, gridTemplateColumns: '0.8fr 1.1rem 1.3fr 0.5fr 0.8fr 0.8fr' }}>
+                      <span>Producto</span>
+                      <span />
+                      <span>Descripción</span>
+                      <span>Cant.</span>
+                      <span style={{ textAlign: 'right' as const }}>P. Unitario</span>
+                      <span style={{ textAlign: 'right' as const }}>Subtotal</span>
+                    </div>
+                    {remision.consumos.length === 0 ? (
+                      <div style={styles.consumosCardBody}>
+                        <span style={{ ...styles.consumosCardDashedCircle, borderColor: '#d97706' }} />
+                        <span style={styles.consumosCardBodyTitle}>Sin productos remisionados</span>
+                        <span style={styles.consumosCardBodySub}>Aún no se han agregado consumos a esta remisión.</span>
+                      </div>
+                    ) : (
+                      <div ref={consumosResumenScrollRef} style={styles.consumosCardScrollBody}>
+                        {remision.consumos.map((c, i) => {
+                          const cantValidadaConsumo = validacionItems.filter(v => v.detConsumoId === c.id).reduce((sum, v) => sum + v.cantRealValidada, 0);
+                          const pendiente = cantValidadaConsumo < c.cantidad;
+                          const parcial = pendiente && cantValidadaConsumo > 0;
+                          return (
+                            <div
+                              key={c.id}
+                              style={{ ...styles.consumosCardRowCompact, gridTemplateColumns: '0.8fr 1.1rem 1.3fr 0.5fr 0.8fr 0.8fr', ...(i > 0 ? styles.consumosCardRowBorder : {}), ...(hoveredConsumoId === c.id ? styles.consumosCardRowHover : {}) }}
+                              onMouseEnter={() => setHoveredConsumoId(c.id)}
+                              onMouseLeave={() => setHoveredConsumoId(null)}
+                              onClick={() => setSelectedConsumoId(c.id)}
+                            >
+                              <span style={styles.consumosCardRowRef}>{c.productoReferencia || c.productoId || '-'}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.15rem' }}>
+                                {pendiente && (
+                                  <span
+                                    className="app-tooltip"
+                                    data-tooltip={parcial ? `Validación parcial: ${cantValidadaConsumo}/${c.cantidad}` : 'Validación pendiente'}
+                                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '1.1rem', height: '1.1rem', borderRadius: '50%', backgroundColor: '#fef3c7', color: '#b45309', flexShrink: 0 }}
+                                  >
+                                    <MaterialIcon name="schedule" size={11} />
+                                  </span>
+                                )}
+                                {c.productoCambiado && (
+                                  <span
+                                    className="app-tooltip"
+                                    data-tooltip="Se validó con un producto distinto al remisionado"
+                                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '1.1rem', height: '1.1rem', borderRadius: '50%', backgroundColor: '#e0e7ff', color: '#4338ca', flexShrink: 0 }}
+                                  >
+                                    <MaterialIcon name="swap_horiz" size={11} />
+                                  </span>
+                                )}
+                              </div>
+                              <span style={styles.consumosCardRowNombre} title={c.productoNombre ?? undefined}>{c.productoNombre || '-'}</span>
+                              <span>{c.cantidad}</span>
+                              <span style={{ textAlign: 'right' as const }}>{formatMoney(c.valorUnitario)}</span>
+                              <span style={{ textAlign: 'right' as const, fontWeight: 700 }}>{formatMoney(c.valor)}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <div style={{ ...styles.consumosCardFooter, ...styles.consumosCardFooterAmberRow }}>
+                      <span style={styles.consumosCardFooterLabel}>Total remisionado</span>
+                      <span style={{ ...styles.consumosCardFooterValue, color: styles.consumosCardFooterLabel.color }}>{formatMoney(totalRemisionado)}</span>
+                    </div>
+                  </div>
+
+                  <div style={styles.consumosCard}>
+                    <div style={styles.consumosCardHeader}>
+                      <div style={styles.consumosCardHeaderLeft}>
+                        <span style={{ ...styles.consumosCardIconBadge, backgroundColor: '#e9f2d8' }}><MaterialIcon name="fact_check" size={16} color="#4d7a13" /></span>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={styles.consumosCardTitle}>Consumos utilizados</span>
+                            <span style={styles.consumosCardBadge}>{hayValidacion ? validacionAgrupada.length : '0'}</span>
+                          </div>
+                          <span style={styles.consumosCardSubtitle}>Registro de consumo real</span>
+                        </div>
+                      </div>
+                      <span style={{ ...styles.consumosCardAction, ...(hayValidacion ? {} : styles.consumosCardActionMuted) }}>{hayValidacion ? 'Registrado' : 'Por registrar'}</span>
+                    </div>
+                    <div style={{ ...styles.consumosCardTableHeadCompact, ...styles.consumosCardTableHeadGreenRow, gridTemplateColumns: '0.8fr 1.1rem 1.3fr 0.5fr 0.8fr 0.8fr' }}>
+                      <span>Producto</span>
+                      <span />
+                      <span>Descripción</span>
+                      <span>Cant.</span>
+                      <span style={{ textAlign: 'right' as const }}>Costo Unit.</span>
+                      <span style={{ textAlign: 'right' as const }}>Total Real</span>
+                    </div>
+                    {hayValidacion ? (
+                      <div ref={validacionResumenScrollRef} style={styles.consumosCardScrollBody}>
+                        {validacionAgrupada.map((item, i) => {
+                          const esGrupo = item.items.length > 1;
+                          const expandido = expandedValidacionKeys.has(item.key);
+                          const algunoCambiado = item.items.some(it => it.productoCambiado);
+                          return (
+                            <div key={item.key}>
+                              <div
+                                style={{ ...styles.consumosCardRowCompact, gridTemplateColumns: '0.8fr 1.1rem 1.3fr 0.5fr 0.8fr 0.8fr', ...(i > 0 ? styles.consumosCardRowBorder : {}) }}
+                                onClick={() => {
+                                  if (!esGrupo) {
+                                    const v = item.items[0];
+                                    if (v.detConsumoId) { setSelectedConsumoId(v.detConsumoId); setSelectedValConsumoId(v.id); }
+                                    return;
+                                  }
+                                  setExpandedValidacionKeys(prev => {
+                                    const next = new Set(prev);
+                                    if (next.has(item.key)) next.delete(item.key); else next.add(item.key);
+                                    return next;
+                                  });
+                                }}
+                                onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f9fafb'; }}
+                                onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                              >
+                                <span style={styles.consumosCardRowRef}>{item.referenciaValidada || '-'}</span>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                  {algunoCambiado && (
+                                    <span
+                                      className="app-tooltip"
+                                      data-tooltip="Se validó con un producto distinto al remisionado"
+                                      style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '1.1rem', height: '1.1rem', borderRadius: '50%', backgroundColor: '#e0e7ff', color: '#4338ca', flexShrink: 0 }}
+                                    >
+                                      <MaterialIcon name="swap_horiz" size={11} />
+                                    </span>
+                                  )}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
+                                  <span style={styles.consumosCardRowNombre} title={item.nombreValidado ?? undefined}>{item.nombreValidado || '-'}</span>
+                                  {esGrupo && (
+                                    <span style={{ ...styles.consumosCardBadge, gap: '0.1rem' }}>
+                                      ×{item.items.length}
+                                      <MaterialIcon name="expand_more" size={12} style={{ transform: expandido ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s ease' }} />
+                                    </span>
+                                  )}
+                                </div>
+                                <span>{item.cantRealValidada}</span>
+                                <span style={{ textAlign: 'right' as const }}>{formatMoney(item.costoUnitario)}</span>
+                                <span style={{ textAlign: 'right' as const, fontWeight: 700 }}>{formatMoney(item.costoReal)}</span>
+                              </div>
+                              {esGrupo && expandido && item.items.map((sub, si) => (
+                                <div
+                                  key={sub.id}
+                                  style={{ ...styles.consumosCardRowCompact, gridTemplateColumns: '0.8fr 1.1rem 1.3fr 0.5fr 0.8fr 0.8fr', backgroundColor: '#f9fafb', borderTop: '1px solid #f3f4f6' }}
+                                  onClick={e => { e.stopPropagation(); if (sub.detConsumoId) { setSelectedConsumoId(sub.detConsumoId); setSelectedValConsumoId(sub.id); } }}
+                                  onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f3f4f6'; }}
+                                  onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#f9fafb'; }}
+                                >
+                                  <span />
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    {sub.productoCambiado && (
+                                      <span
+                                        className="app-tooltip"
+                                        data-tooltip="Se validó con un producto distinto al remisionado"
+                                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '1.1rem', height: '1.1rem', borderRadius: '50%', backgroundColor: '#e0e7ff', color: '#4338ca', flexShrink: 0 }}
+                                      >
+                                        <MaterialIcon name="swap_horiz" size={11} />
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0, paddingLeft: '1.5rem' }}>
+                                    <span style={{ ...styles.consumosCardRowNombre, color: '#9ca3af', fontWeight: 500 }}>
+                                      {sub.marcaTiempo ? formatDateTime(sub.marcaTiempo) : `Validación ${si + 1}`}{sub.usuario ? ` · ${sub.usuario}` : ''}
+                                    </span>
+                                  </div>
+                                  <span style={{ color: '#9ca3af' }}>{sub.cantRealValidada}</span>
+                                  <span style={{ textAlign: 'right' as const, color: '#9ca3af' }}>{formatMoney(sub.costoUnitario)}</span>
+                                  <span style={{ textAlign: 'right' as const, color: '#9ca3af' }}>{formatMoney(sub.costoReal)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={styles.consumosCardBody}>
+                        <span style={{ ...styles.consumosCardDashedCircle, borderColor: '#4d7a13' }} />
+                        <span style={styles.consumosCardBodyTitle}>Consumo real pendiente</span>
+                        <span style={styles.consumosCardBodySub}>Al realizar las validaciones de los consumos, los registros se agregarán aquí.</span>
+                      </div>
+                    )}
+                    <div style={{ ...styles.consumosCardFooter, ...styles.consumosCardFooterGreenRow }}>
+                      <span style={styles.consumosCardFooterLabel}>Costo real utilizado</span>
+                      {hayValidacion
+                        ? <span style={styles.consumosCardFooterValue}>{formatMoney(costoRealTotal)}</span>
+                        : <span style={styles.consumosCardFooterPending}>Pendiente de validaciones</span>}
+                    </div>
                   </div>
                 </div>
-              )}
-            </div>
+              </div>
+            );
+          })()}
 
-            <div>
-              <div style={styles.sectionTitleRow}>
-                <h2 style={styles.sectionTitle}>Bonos y Comisiones</h2>
-                <span style={styles.badge}>{bonosComisionesFlat.length}</span>
-              </div>
-              {bonosComisionesFlat.length === 0 ? (
-                <div style={styles.emptyState}>No hay datos relacionados</div>
-              ) : (
-                <div style={styles.remList}>
-                  <div style={{ ...styles.bonoRow, ...styles.colHeader }}>
-                    <span style={styles.colHeaderText}>Categoría</span>
-                    <span style={styles.colHeaderText}>Técnico</span>
-                    <span style={{ ...styles.colHeaderText, textAlign: 'right' }}>Monto</span>
-                  </div>
-                  <div ref={bonosScrollRef} style={styles.scrollBody}>
-                    {bonosComisionesFlat.map((item, i) => {
-                      const hoverStyle = hoveredBonoId === item.id ? styles.rowHover : {};
-                      return (
-                        <div
-                          key={item.id}
-                          style={{ ...styles.bonoRow, ...(i > 0 ? styles.rowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
-                          onMouseEnter={() => setHoveredBonoId(item.id)}
-                          onMouseLeave={() => setHoveredBonoId(null)}
-                          onClick={() => setSelectedComisionId(item.id)}
-                        >
-                          <span style={styles.cellText}>{item.categoria}</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
-                            {item.tecnico && <span style={styles.tecnicoAvatar}>{getTecnicoInitials(item.tecnico)}</span>}
-                            <span style={styles.cellText}>{item.tecnico ?? '-'}</span>
-                          </div>
-                          <span style={{ ...styles.cellText, textAlign: 'right', fontWeight: 600, color: '#333' }}>{formatMoney(item.monto)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div style={styles.tableTotalRow}>
-                    <span>Total</span>
-                    <span>{formatMoney(totalBonosComisiones)}</span>
-                  </div>
-                </div>
-              )}
-              <div style={{ position: 'relative' as const }}>
-                <button
-                  style={{ ...styles.addComisionBtnBelow, ...(!remision.programacion || remision.programacion.consumoNoValidado ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
-                  onClick={() => { if (remision.programacion && !remision.programacion.consumoNoValidado) openComisionModal(); }}
-                  onMouseEnter={e => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    setComisionTooltipPos({ top: rect.top, left: rect.left + rect.width / 2 });
-                  }}
-                  onMouseLeave={() => setComisionTooltipPos(null)}
-                >
-                  <Plus size={16} /> Agregar Comisión
-                </button>
-                {comisionTooltipPos && (!remision.programacion || remision.programacion.consumoNoValidado) && (
-                  <div style={{ ...styles.tooltipBubble, top: comisionTooltipPos.top - 8, left: comisionTooltipPos.left }}>
-                    {!remision.programacion
-                      ? 'Esta remisión no tiene una programación asociada.'
-                      : 'La programación debe tener todos sus consumos validados para poder agregar comisiones.'}
-                  </div>
-                )}
-              </div>
+        {isNarrow ? (
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.6fr 1fr', gap: '1.5rem', marginBottom: '2rem', alignItems: 'start' }}>
+            {informacionGeneralCard}
+            <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '1.5rem', minWidth: 0 }}>
+              {tecnicosAsociadosCard}
+              {bonosComisionesCard}
+              {actividadCard}
             </div>
           </div>
-        </div>
+        ) : (
+          <div style={{ marginBottom: '2rem' }}>
+            {informacionGeneralCard}
+          </div>
+        )}
+        </>
         )}
 
         {mainTab === 'consumos' && (
@@ -1569,6 +1946,17 @@ export default function RemisionDetailPage() {
         </div>
         )}
 
+        </div>
+
+        {!isNarrow && (
+        <aside style={styles.sidebarColumn}>
+          {tecnicosAsociadosCard}
+          {bonosComisionesCard}
+          {actividadCard}
+        </aside>
+        )}
+        </div>
+
       </div>
 
       {selectedTecnico && (
@@ -1601,377 +1989,39 @@ export default function RemisionDetailPage() {
         </div>
       )}
 
-      {showComisionModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay}>
-          <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
-            <div style={styles.editModalHeader}>
-              <button style={styles.closeBtn} onClick={() => setShowComisionModal(false)}>
-                <X size={18} />
-              </button>
-              <h2 style={styles.modalTitle}>Agregar Comisión</h2>
-            </div>
-
-            <div style={styles.editModalBody}>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>N° Programación *</label>
-                <span style={styles.readOnlyPill}>{remision.programacion?.numProgram ?? remision.programacion?.id ?? '-'}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>No Remisión *</label>
-                <span style={styles.readOnlyPill}>{remision.numRemision || remision.id}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Paciente</label>
-                <span style={styles.readOnlyField}>{remision.paciente || '-'}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Fecha QX *</label>
-                <span style={styles.readOnlyField}>{formatDate(remision.programacion?.fechaQx ?? null)}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Doctor *</label>
-                <div style={styles.medicoTagsWrap}>
-                  {remision.programacion?.medicos.length ? remision.programacion.medicos.map((m, i) => (
-                    <span key={i} style={styles.medicoTag}>{m.medico.nombreCompleto}</span>
-                  )) : <span style={styles.readOnlyField}>-</span>}
-                </div>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Hospital *</label>
-                <span style={styles.medicoTag}>{remision.programacion?.hospital?.nombre ?? '-'}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Consumo *</label>
-                <span style={{ ...styles.readOnlyField, whiteSpace: 'pre-wrap' as const, minHeight: '44px', display: 'block' }}>
-                  {remision.programacion?.consumo || '-'}
-                </span>
-              </div>
-
-              <div style={styles.formGroup} id="comision-field-tipo">
-                <label style={styles.label}>Tipo</label>
-                <div style={styles.horaGrid}>
-                  {TIPOS_COMISION.map(t => (
-                    <button
-                      key={t}
-                      type="button"
-                      style={{ ...styles.sedeBtn, ...(comisionForm.tipo === t ? styles.sedeBtnActive : {}), ...(comisionError?.field === 'tipo' ? styles.inputError : {}) }}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={e => { setComisionForm({ ...comisionForm, tipo: t }); setComisionError(null); e.currentTarget.blur(); }}
-                    >
-                      {comisionForm.tipo === t ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
-                      {t}
-                    </button>
-                  ))}
-                </div>
-                {comisionError?.field === 'tipo' && <span style={styles.errorText}>{comisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="comision-field-categoria">
-                <label style={styles.label}>Categoría *</label>
-                <div style={styles.sedeGrid}>
-                  {CATEGORIAS_COMISION.map(c => (
-                    <button
-                      key={c}
-                      type="button"
-                      style={{ ...styles.sedeBtn, ...(comisionForm.categoria === c ? styles.sedeBtnActive : {}), ...(comisionError?.field === 'categoria' ? styles.inputError : {}) }}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={e => { setComisionForm({ ...comisionForm, categoria: c }); setComisionError(null); e.currentTarget.blur(); }}
-                    >
-                      {comisionForm.categoria === c ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
-                      {c}
-                    </button>
-                  ))}
-                </div>
-                {comisionError?.field === 'categoria' && <span style={styles.errorText}>{comisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="comision-field-tecnico">
-                <label style={styles.label}>Nombre Contacto</label>
-                {comisionTecnico && (
-                  <div style={styles.medicoTagsWrap}>
-                    <span style={styles.medicoTag}>
-                      {comisionTecnico.nombreCompleto}
-                      <X size={12} style={{ cursor: 'pointer' }} onClick={() => setComisionTecnico(null)} />
-                    </span>
-                  </div>
-                )}
-                {!comisionTecnico && (
-                  <div style={{ position: 'relative' as const }}>
-                    <input
-                      style={{ ...styles.input, ...(comisionError?.field === 'tecnico' ? styles.inputError : {}) }}
-                      placeholder="Buscar técnico o contacto..."
-                      value={tecnicoSearch}
-                      onChange={e => { setTecnicoSearch(e.target.value); setComisionError(null); }}
-                    />
-                    {tecnicoSearch.trim() && (
-                      <div style={styles.medicoDropdown}>
-                        {tecnicoResults.length === 0 ? (
-                          <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
-                        ) : (
-                          tecnicoResults.map(t => (
-                            <div
-                              key={t.id}
-                              style={styles.medicoDropdownItem}
-                              onClick={() => { setComisionTecnico(t); setTecnicoSearch(''); setComisionError(null); }}
-                            >
-                              <Plus size={14} /> {t.nombreCompleto}
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {comisionError?.field === 'tecnico' && <span style={styles.errorText}>{comisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="comision-field-vrComision">
-                <label style={styles.label}>Valor Asignación *</label>
-                <div style={styles.stepperWrap}>
-                  <input
-                    type="number"
-                    step="0.01"
-                    style={{ ...styles.input, paddingRight: '5rem', ...(comisionError?.field === 'vrComision' ? styles.inputError : {}) }}
-                    placeholder="$ 0.00"
-                    value={comisionForm.vrComision}
-                    onChange={e => { setComisionForm({ ...comisionForm, vrComision: e.target.value }); setComisionError(null); }}
-                  />
-                  <div style={styles.stepperBtns}>
-                    <button type="button" style={styles.stepperBtn} onClick={() => { setComisionForm({ ...comisionForm, vrComision: String((Number(comisionForm.vrComision) || 0) - 100) }); setComisionError(null); }}>−</button>
-                    <button type="button" style={styles.stepperBtn} onClick={() => { setComisionForm({ ...comisionForm, vrComision: String((Number(comisionForm.vrComision) || 0) + 100) }); setComisionError(null); }}>+</button>
-                  </div>
-                </div>
-                {comisionError?.field === 'vrComision' && <span style={styles.errorText}>{comisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Observaciones</label>
-                <textarea
-                  ref={autoResizeTextarea}
-                  style={{ ...styles.input, minHeight: '44px', resize: 'none' as const, overflow: 'hidden' as const }}
-                  value={comisionForm.observaciones}
-                  onChange={e => { setComisionForm({ ...comisionForm, observaciones: e.target.value }); autoResizeTextarea(e.target); }}
-                />
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>¿Agregar IVA?</label>
-                <div style={styles.horaGrid}>
-                  <button
-                    type="button"
-                    style={{ ...styles.sedeBtn, ...(!comisionForm.agregarIva ? styles.sedeBtnActive : {}) }}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => { setComisionForm({ ...comisionForm, agregarIva: false }); e.currentTarget.blur(); }}
-                  >
-                    No
-                  </button>
-                  <button
-                    type="button"
-                    style={{ ...styles.sedeBtn, ...(comisionForm.agregarIva ? styles.sedeBtnActive : {}) }}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => { setComisionForm({ ...comisionForm, agregarIva: true }); e.currentTarget.blur(); }}
-                  >
-                    Sí
-                  </button>
-                </div>
-              </div>
-
-              {comisionForm.agregarIva && (
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Porcentaje de IVA a Cargar</label>
-                  <div style={{ position: 'relative' as const }}>
-                    <input
-                      type="number"
-                      step="0.01"
-                      style={{ ...styles.input, paddingRight: '2.5rem' }}
-                      placeholder="16.00"
-                      value={comisionForm.cargarPorcentaje}
-                      onChange={e => setComisionForm({ ...comisionForm, cargarPorcentaje: e.target.value })}
-                    />
-                    <span style={styles.percentSuffix}>%</span>
-                  </div>
-                </div>
-              )}
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>¿Quieres Desglosar?</label>
-                <div style={styles.horaGrid}>
-                  <button
-                    type="button"
-                    style={{ ...styles.sedeBtn, ...(!comisionForm.quieresDesglosar ? styles.sedeBtnActive : {}) }}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => { setComisionForm({ ...comisionForm, quieresDesglosar: false }); e.currentTarget.blur(); }}
-                  >
-                    No
-                  </button>
-                  <button
-                    type="button"
-                    style={{ ...styles.sedeBtn, ...(comisionForm.quieresDesglosar ? styles.sedeBtnActive : {}) }}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => { setComisionForm({ ...comisionForm, quieresDesglosar: true }); e.currentTarget.blur(); }}
-                  >
-                    Sí
-                  </button>
-                </div>
-              </div>
-
-              <div style={styles.formGroup} id="comision-field-seleccioneTipo">
-                <label style={styles.label}>Seleccione Tipo *</label>
-                <div style={styles.horaGrid}>
-                  {SELECCIONE_TIPO_COMISION.map(t => (
-                    <button
-                      key={t}
-                      type="button"
-                      style={{ ...styles.sedeBtn, ...(comisionForm.seleccioneTipo === t ? styles.sedeBtnActive : {}), ...(comisionError?.field === 'seleccioneTipo' ? styles.inputError : {}) }}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={e => { setComisionForm({ ...comisionForm, seleccioneTipo: comisionForm.seleccioneTipo === t ? '' : t }); setComisionError(null); e.currentTarget.blur(); }}
-                    >
-                      {comisionForm.seleccioneTipo === t ? <CheckCircle size={14} style={{ flexShrink: 0 }} /> : <Circle size={14} style={{ flexShrink: 0 }} />}
-                      {t}
-                    </button>
-                  ))}
-                </div>
-                {comisionError?.field === 'seleccioneTipo' && <span style={styles.errorText}>{comisionError.message}</span>}
-              </div>
-
-              {comisionForm.quieresDesglosar && (
-                <>
-                  <div style={styles.formGroup}>
-                    <label style={styles.label}>Sub Total</label>
-                    <span style={styles.readOnlyField}>{formatMoney(comisionSubTotal)}</span>
-                  </div>
-
-                  <div style={styles.formGroup}>
-                    <label style={styles.label}>IVA</label>
-                    <span style={styles.readOnlyField}>{formatMoney(comisionIva)}</span>
-                  </div>
-
-                  <div style={styles.formGroup}>
-                    <label style={styles.label}>Retención IVA</label>
-                    <span style={styles.readOnlyField}>{formatMoney(comisionRetIva)}</span>
-                  </div>
-
-                  <div style={styles.formGroup}>
-                    <label style={styles.label}>Retención ISR</label>
-                    <span style={styles.readOnlyField}>{formatMoney(comisionRetIsr)}</span>
-                  </div>
-                </>
-              )}
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Total Factura</label>
-                <span style={styles.readOnlyField}>{formatMoney(comisionTotalFactura)}</span>
-              </div>
-            </div>
-
-            <div style={styles.editModalFooter}>
-              <button style={styles.cancelBtn} onClick={() => setShowComisionModal(false)}>Cancelar</button>
-              <button
-                style={styles.saveBtn}
-                onClick={handleGuardarComision}
-                disabled={createComisionMutation.isPending}
-              >
-                {createComisionMutation.isPending ? 'Guardando...' : 'Guardar'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showConfirmComision && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay}>
-          <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
-            <div style={styles.editModalHeader}>
-              <button style={styles.closeBtn} onClick={() => setShowConfirmComision(false)}><X size={18} /></button>
-              <h2 style={styles.modalTitle}>Confirmar Comisión</h2>
-            </div>
-            <div style={styles.confirmBody}>
-              <p style={styles.confirmIntro}>¿Deseas agregar esta comisión con los siguientes datos?</p>
-
-              <div style={styles.confirmRow}>
-                <span style={styles.confirmLabel}>Remisión</span>
-                <span style={styles.confirmValue}>{remision.numRemision || remision.id}</span>
-              </div>
-              <div style={styles.confirmRow}>
-                <span style={styles.confirmLabel}>Tipo</span>
-                <span style={styles.confirmValue}>{comisionForm.tipo}</span>
-              </div>
-              <div style={styles.confirmRow}>
-                <span style={styles.confirmLabel}>Categoría</span>
-                <span style={styles.confirmValue}>{comisionForm.categoria}</span>
-              </div>
-              <div style={styles.confirmRow}>
-                <span style={styles.confirmLabel}>Contacto</span>
-                <span style={styles.confirmValue}>{comisionTecnico?.nombreCompleto}</span>
-              </div>
-              <div style={styles.confirmRow}>
-                <span style={styles.confirmLabel}>Valor Asignación</span>
-                <span style={styles.confirmValue}>{formatMoney(comisionVrComision)}</span>
-              </div>
-
-              {comisionForm.quieresDesglosar && (
-                <>
-                  <div style={styles.confirmRow}>
-                    <span style={styles.confirmLabel}>Sub Total</span>
-                    <span style={styles.confirmValue}>{formatMoney(comisionSubTotal)}</span>
-                  </div>
-                  <div style={styles.confirmRow}>
-                    <span style={styles.confirmLabel}>IVA</span>
-                    <span style={styles.confirmValue}>{formatMoney(comisionIva)}</span>
-                  </div>
-                  <div style={styles.confirmRow}>
-                    <span style={styles.confirmLabel}>Retención IVA</span>
-                    <span style={styles.confirmValue}>{formatMoney(comisionRetIva)}</span>
-                  </div>
-                  <div style={styles.confirmRow}>
-                    <span style={styles.confirmLabel}>Retención ISR</span>
-                    <span style={styles.confirmValue}>{formatMoney(comisionRetIsr)}</span>
-                  </div>
-                </>
-              )}
-
-              <div style={styles.confirmRowTotal}>
-                <span style={styles.confirmLabel}>Total Factura</span>
-                <span style={styles.confirmValueTotal}>{formatMoney(comisionTotalFactura)}</span>
-              </div>
-            </div>
-
-            <div style={styles.editModalFooter}>
-              <button style={styles.cancelBtn} onClick={() => setShowConfirmComision(false)}>Cancelar</button>
-              <button
-                style={styles.saveBtn}
-                onClick={() => createComisionMutation.mutate()}
-                disabled={createComisionMutation.isPending}
-              >
-                {createComisionMutation.isPending ? 'Guardando...' : 'Sí, agregar'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {showComisionModal && remision.programacion && (
+        <AgregarComisionModal
+          programacionId={remision.programacion.id}
+          remisionId={remision.id}
+          onClose={() => setShowComisionModal(false)}
+          onCreated={() => {
+            setShowComisionModal(false);
+            queryClient.invalidateQueries({ queryKey: ['remision', id] });
+            setShowComisionSuccess(true);
+          }}
+        />
       )}
 
       {showEditModal && remision && (
         <EditarRemisionModal
           remision={remision}
           remisionId={id!}
-          onClose={() => setShowEditModal(false)}
+          openAddConsumo={showEditModalAddConsumo}
+          onClose={() => { setShowEditModal(false); setShowEditModalAddConsumo(false); }}
           onUpdated={() => {
             setShowEditModal(false);
+            setShowEditModalAddConsumo(false);
             setShowEditSuccess(true);
           }}
+          onConsumoAdded={() => setShowAddConsumoSuccess(true)}
         />
       )}
 
       {selectedConsumoId && (
         <ConsumoDetalleModal
           id={selectedConsumoId}
-          onClose={() => setSelectedConsumoId(null)}
+          valConsumoId={selectedValConsumoId ?? undefined}
+          onClose={() => { setSelectedConsumoId(null); setSelectedValConsumoId(null); }}
         />
       )}
 
@@ -2032,21 +2082,27 @@ export default function RemisionDetailPage() {
       )}
 
       <SuccessToast show={showEditSuccess} message="Remisión editada" onClose={() => setShowEditSuccess(false)} />
+      <SuccessToast show={showAddConsumoSuccess} message="Consumo agregado" onClose={() => setShowAddConsumoSuccess(false)} />
+      <SuccessToast show={showDeleteSuccess} message="Remisión eliminada" onClose={() => navigate('/operacion/remision')} />
       <SuccessToast show={showFacturaSuccess} message="Factura generada" onClose={() => setShowFacturaSuccess(false)} />
+      <SuccessToast show={showComisionSuccess} message="Comisión agregada" onClose={() => setShowComisionSuccess(false)} />
 
     </>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: { padding:'0.05rem 1.5rem 1.5rem', maxWidth: '1400px', margin: '0 auto', overflowX: 'hidden' as const },
+  container: { padding:'0.05rem 1.5rem 1.5rem', maxWidth: '1720px', margin: '0 auto', overflowX: 'hidden' as const },
+  pageSplitRow: { display: 'flex', gap: '1.5rem', alignItems: 'flex-start' as const },
+  mainColumn: { flex: 1, minWidth: 0 },
+  sidebarColumn: { width: '320px', flexShrink: 0, display: 'flex', flexDirection: 'column' as const, gap: '1rem' },
   headerCard: { backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', padding: '1.25rem 1.5rem 0', marginBottom: '2rem', overflow: 'hidden' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1.5rem' },
-  titleGroup: { flex: 1, display: 'flex', flexDirection: 'column' as const, justifyContent: 'space-between', height: '58px', overflow: 'hidden' },
+  titleGroup: { flex: 1, display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', overflow: 'hidden' },
   titleRow: { display: 'flex', alignItems: 'center', gap: '0.75rem', overflow: 'hidden' },
   titleLabel: { fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
-  breadcrumbRow: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', color: '#9a9a90' },
-  breadcrumbId: { fontWeight: 500, color: '#4d7a13' },
+  breadcrumbRow: { display: 'flex', alignItems: 'center', flexWrap: 'wrap' as const, gap: '0.2rem 1rem', fontSize: '0.8rem', color: '#6b7280', marginTop: '0.4rem' },
+  breadcrumbItem: { display: 'flex', alignItems: 'center', gap: '0.35rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   headerActions: { display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 },
   btnPill: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.1rem', border: '1px solid #e5e7eb', borderRadius: '12px', color: '#33342a', fontWeight: 600, fontSize: '0.84375rem', cursor: 'pointer', whiteSpace: 'nowrap' as const, flexShrink: 0 },
   btnPillPrimary: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.1rem', border: '1px solid #dbe8c2', borderRadius: '12px', color: '#3f6510', fontWeight: 600, fontSize: '0.84375rem', cursor: 'pointer', whiteSpace: 'nowrap' as const, flexShrink: 0 },
@@ -2058,11 +2114,76 @@ const styles: Record<string, React.CSSProperties> = {
   dropdownItemDanger: { color: '#a8503c' },
   dropdownDivider: { height: '1px', backgroundColor: '#eeeee6', margin: '0.3rem 0' },
   deleteConfirmBtn: { padding: '0.5rem 1.5rem', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.875rem' },
-  infoBar: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1.25rem', backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '11px', padding: '1rem 1.25rem', marginBottom: '1.5rem' },
+  // Ancho completo del headerCard (que lo contiene con padding '1.25rem 1.5rem 0'): los márgenes
+  // negativos cancelan ese padding lateral y boxSizing:border-box evita que el padding propio de
+  // abajo vuelva a ensanchar el width calculado.
+  infoBar: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.25rem', backgroundColor: '#fff', borderTop: '1px solid #e5e7eb', borderBottom: '1px solid #e5e7eb', padding: '1rem 1.5rem', marginLeft: '-1.5rem', marginRight: '-1.5rem', width: 'calc(100% + 3rem)', boxSizing: 'border-box' as const, marginBottom: 0 },
   infoBarItem: { position: 'relative' as const, display: 'flex', flexDirection: 'column' as const, gap: '0.3rem', minWidth: 0 },
   infoBarDividerLine: { position: 'absolute' as const, right: '-0.65rem', top: '15%', bottom: '15%', width: '1px', backgroundColor: '#e5e7eb' },
   infoBarLabel: { fontSize: '0.68rem', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em', flexShrink: 0 },
   infoBarValue: { fontSize: '0.9375rem', fontWeight: 700, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  infoBarHelp: { fontSize: '0.68rem', color: '#9ca3af', lineHeight: 1.35, marginTop: '0.15rem' },
+  // Barra de trazabilidad Cotización → Programación → Remisión → Facturación — mismo lenguaje
+  // visual que infoBar (franja gris de ancho completo con líneas divisorias, no tarjetas sueltas)
+  // y pegada directamente debajo (infoBar ya no tiene marginBottom). "Remisión" lleva un resaltado
+  // suave (chip de tinte verde claro), no un relleno sólido — las demás son neutras, o con folio
+  // en gris cuando no hay dato (sin cotización vinculada, sin factura todavía).
+  trazabilidadBar: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.25rem', backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb', padding: '1rem 1.5rem', marginLeft: '-1.5rem', marginRight: '-1.5rem', width: 'calc(100% + 3rem)', boxSizing: 'border-box' as const, marginBottom: '1.5rem' },
+  trazabilidadItem: { position: 'relative' as const, display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: 0 },
+  // Respaldo del chip "actual" — posicionado aparte (no margin/padding en trazabilidadItem) para
+  // no mover la caja real del item, de la que depende el ancla de trazabilidadDividerLine.
+  trazabilidadCurrentBackdrop: { position: 'absolute' as const, inset: '-0.4rem -0.6rem', backgroundColor: '#e9f2d8', borderRadius: '8px', zIndex: 0 },
+  trazabilidadDividerLine: { position: 'absolute' as const, right: '-0.65rem', top: '15%', bottom: '15%', width: '1px', backgroundColor: '#e5e7eb' },
+  trazabilidadIconBadge: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '30px', height: '30px', borderRadius: '8px', backgroundColor: '#eeeee6', flexShrink: 0 },
+  trazabilidadIconBadgePending: { backgroundColor: '#f3f4f6' },
+  trazabilidadLabel: { fontSize: '0.68rem', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
+  trazabilidadLabelCurrent: { color: '#4d7a13' },
+  trazabilidadFolio: { fontSize: '0.84375rem', fontWeight: 700, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  trazabilidadFolioCurrent: { color: '#3f6510' },
+  trazabilidadFolioPending: { color: '#9ca3af', fontWeight: 600 },
+  trazabilidadSub: { fontSize: '0.72rem', color: '#6b7280', marginTop: '0.1rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  trazabilidadSubCurrent: { color: '#5c8a1f' },
+  // "Consumos de la remisión" — resumen colapsado (cuenta + total) de lo remisionado vs. lo
+  // realmente validado, arriba de Información General. El detalle fila por fila sigue viviendo en
+  // el tab Consumos (remisionado) y en Validar Consumo de la programación (real); aquí solo se
+  // resume para no duplicar esas tablas completas.
+  consumosResumenSection: { marginBottom: '1.5rem' },
+  consumosResumenGrid: { display: 'grid', gap: '1.25rem' },
+  // display:flex column + body con flex:1 — el grid de las 2 tarjetas las estira a la misma
+  // altura; sin esto, la tarjeta más corta (footer con menos texto) queda con espacio vacío sin
+  // pintar después de su footer en vez de que el cuerpo absorba esa diferencia.
+  consumosCard: { display: 'flex', flexDirection: 'column' as const, backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #eeeee6', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden', minWidth: 0 },
+  consumosCardHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', padding: '0.85rem 1.1rem' },
+  consumosCardHeaderLeft: { display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: 0 },
+  consumosCardIconBadge: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '8px', backgroundColor: '#e9f2d8', flexShrink: 0 },
+  consumosCardTitle: { fontSize: '0.88rem', fontWeight: 700, color: '#16170f' },
+  consumosCardSubtitle: { fontSize: '0.7rem', color: '#9a9a90', marginTop: '0.1rem' },
+  consumosCardBadge: { backgroundColor: '#f3f4f6', color: '#33342a', fontSize: '0.7rem', fontWeight: 700, minWidth: '1.35rem', height: '1.35rem', padding: '0 0.35rem', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  consumosCardAction: { display: 'inline-flex', alignItems: 'center', gap: '0.25rem', background: 'none', border: 'none', padding: 0, color: '#4d7a13', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer', flexShrink: 0 },
+  consumosCardActionMuted: { color: '#9ca3af', cursor: 'default' as const },
+  consumosCardTableHead: { display: 'grid', gridTemplateColumns: '1.6fr 0.6fr 0.8fr 0.9fr 0.9fr', gap: '0.5rem', padding: '0.5rem 1.1rem', backgroundColor: '#f9fafb', borderTop: '1px solid #f3f4f6', borderBottom: '1px solid #f3f4f6', fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
+  // Consumos remisionados sí tiene filas reales (a diferencia de utilizados, que sigue colapsado).
+  // Producto y Descripción van en columnas separadas (no apiladas en una celda de 2 líneas) para
+  // que cada fila ocupe una sola línea de alto.
+  consumosCardTableHeadCompact: { display: 'grid', gridTemplateColumns: '0.8fr 1.3fr 0.5fr 0.8fr 0.8fr', gap: '0.5rem', padding: '0.5rem 1.1rem', fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
+  consumosCardScrollBody: { flex: 1, minHeight: '70px', maxHeight: '210px', overflowY: 'auto' as const },
+  consumosCardRowCompact: { display: 'grid', gridTemplateColumns: '0.8fr 1.3fr 0.5fr 0.8fr 0.8fr', gap: '0.5rem', alignItems: 'center', padding: '0.45rem 1.1rem', fontSize: '0.78rem', color: '#374151', cursor: 'pointer' },
+  consumosCardRowBorder: { borderTop: '1px solid #f3f4f6' },
+  consumosCardRowHover: { backgroundColor: '#f9fafb' },
+  consumosCardRowRef: { fontWeight: 700, color: '#3f6510', fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  consumosCardRowNombre: { fontSize: '0.78rem', color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  consumosCardBody: { flex: 1, display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', gap: '0.4rem', padding: '1.5rem 1.1rem', textAlign: 'center' as const },
+  consumosCardDashedCircle: { width: '26px', height: '26px', borderRadius: '50%', border: '2px dashed #d1d5db' },
+  consumosCardBodyTitle: { fontSize: '0.82rem', fontWeight: 700, color: '#374151' },
+  consumosCardBodySub: { fontSize: '0.74rem', color: '#9ca3af', maxWidth: '320px' },
+  consumosCardFooter: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', padding: '0.75rem 1.1rem', borderTop: '1px solid #f3f4f6', backgroundColor: '#f9fafb' },
+  consumosCardFooterGreenRow: { backgroundColor: '#eef6e3', borderTop: 'none' },
+  consumosCardFooterAmberRow: { backgroundColor: '#fef9ec', borderTop: 'none' },
+  consumosCardTableHeadGreenRow: { backgroundColor: '#eef6e3', borderTop: 'none', borderBottom: 'none' },
+  consumosCardTableHeadAmberRow: { backgroundColor: '#fef9ec', borderTop: 'none', borderBottom: 'none' },
+  consumosCardFooterLabel: { fontSize: '0.78rem', fontWeight: 600, color: '#6b7280' },
+  consumosCardFooterValue: { fontSize: '0.95rem', fontWeight: 800, color: '#4d7a13' },
+  consumosCardFooterPending: { fontSize: '0.78rem', fontWeight: 700, color: '#9ca3af' },
   title: { fontSize: '1.7rem', fontWeight: 800, color: '#16170f', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   mainTabBar: { display: 'flex', gap: '0.25rem', borderBottom: '1px solid #eeeee6', overflowX: 'auto' as const, overflowY: 'hidden' as const },
   mainTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.75rem 1rem', border: 'none', background: 'transparent', fontSize: '0.84375rem', fontWeight: 600, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, flexShrink: 0, whiteSpace: 'nowrap' as const },
@@ -2109,9 +2230,7 @@ const styles: Record<string, React.CSSProperties> = {
   infoRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', padding: '0.75rem 0', marginBottom: '0.75rem', borderBottom: '1px solid #f3f4f6' },
   label: { fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em', flexShrink: 0 },
   value: { fontSize: '0.875rem', fontWeight: 600, color: '#333', textAlign: 'right' as const },
-  bonoRow: { display: 'grid', gridTemplateColumns: '1fr 1fr 120px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff', minWidth: '480px' },
   facturaRow: { display: 'grid', gridTemplateColumns: '90px 100px 1fr 1fr 110px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff', minWidth: '680px' },
-  tableTotalRow: { display: 'flex', justifyContent: 'space-between', padding: '0.75rem 1.25rem', borderTop: '2px solid #e5e7eb', backgroundColor: '#f9fafb', fontSize: '0.85rem', fontWeight: 700, color: '#333' },
   sectionTitleRow: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' },
   sectionTitle: { fontSize: '1.1rem', fontWeight: 700, color: '#333', margin: 0 },
   badge: { backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '0.75rem', fontWeight: 700, minWidth: '1.5rem', height: '1.5rem', padding: '0 0.4rem', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
@@ -2134,6 +2253,17 @@ const styles: Record<string, React.CSSProperties> = {
   consumosTotalItem: { display: 'flex', flexDirection: 'column' as const, alignItems: 'flex-end' as const, gap: '0.3rem', minWidth: 0 },
   consumosTotalValue: { fontSize: '0.95rem', fontWeight: 700 },
   tecnicoAvatar: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', borderRadius: '50%', backgroundColor: '#e9f2d8', color: '#4d7a13', fontSize: '0.62rem', fontWeight: 700, flexShrink: 0 },
+  // Mismos estilos que el miniCard de "Técnicos asociados" en ProgramacionDetailPage.
+  miniCard: { backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #f3f4f6', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden' as const },
+  miniCardHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', padding: '0.75rem 1rem' },
+  miniCardHeaderLeft: { display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: 0 },
+  miniCardIconBadge: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '8px', backgroundColor: '#fff', flexShrink: 0 },
+  miniCardTitle: { fontSize: '0.9rem', fontWeight: 700, color: '#33342a', margin: 0 },
+  miniCardBadge: { backgroundColor: '#fff', color: '#33342a', fontSize: '0.7rem', fontWeight: 700, minWidth: '1.35rem', height: '1.35rem', padding: '0 0.35rem', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  miniCardBody: { padding: '0.85rem 1rem' },
+  miniCardEmpty: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', gap: '0.5rem', padding: '0.75rem 0', color: '#9ca3af', fontSize: '0.8rem' },
+  tecnicoListRow: { display: 'flex', alignItems: 'center', gap: '0.65rem', padding: '0.45rem 1.25rem' },
+  tecnicoNombre: { fontSize: '0.85rem', fontWeight: 600, color: '#374151' },
   modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 },
   modalContent: { backgroundColor: '#fff', borderRadius: '12px', width: '90%', maxWidth: '480px', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' },
   modalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.5rem', backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb', borderTopLeftRadius: '12px', borderTopRightRadius: '12px' },
@@ -2166,7 +2296,6 @@ const styles: Record<string, React.CSSProperties> = {
   medicoTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#f3f4f6', color: '#333', fontSize: '0.8rem', fontWeight: 600 },
   medicoDropdown: { position: 'absolute' as const, top: 'calc(100% + 0.35rem)', left: 0, right: 0, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', maxHeight: '220px', overflowY: 'auto' as const, zIndex: 20 },
   medicoDropdownItem: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#333', cursor: 'pointer' },
-  addComisionBtnBelow: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', width: '100%', marginTop: '0.75rem', padding: '0.6rem', border: '1px dashed #c9dba3', borderRadius: '10px', backgroundColor: '#f9fbf6', color: '#4f6b17', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' },
   tooltipBubble: { position: 'fixed' as const, transform: 'translate(-50%, -100%)', width: '220px', padding: '0.5rem 0.75rem', backgroundColor: '#1f2937', color: '#fff', fontSize: '0.75rem', fontWeight: 500, lineHeight: 1.4, borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', zIndex: 9999, textAlign: 'center' as const, pointerEvents: 'none' as const },
   readOnlyPill: { display: 'inline-flex', alignSelf: 'flex-start' as const, alignItems: 'center', gap: '0.4rem', padding: '0.4rem 0.85rem', borderRadius: '999px', border: '1px solid #d9e8c2', backgroundColor: '#f3faec', fontSize: '0.85rem', fontWeight: 700, color: '#4f6b17' },
   readOnlyField: { padding: '0.75rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', fontSize: '0.875rem', color: '#6b7280' },

@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, memo } from 'react';
+import { useState, useEffect, useRef, memo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
@@ -17,11 +17,13 @@ import DateRangeFilter from '../../../components/filters/DateRangeFilter';
 import DatePicker from '../../../components/DatePicker';
 import SuccessToast from '../../../components/SuccessToast';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
+import { ActividadTimeline } from '../../../components/ActividadTimeline';
 import HeaderBackReveal from '../../../components/HeaderBackReveal';
 import { toLocalDateString } from '../../../lib/date.utils';
 import { focusNextInEnterNavRoot } from '../../../lib/keyboardNav.utils';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 import { authService } from '../../../services/auth.service';
 import { api } from '../../../lib/axios';
 import FirmaModal from '../../../components/layout/FirmaModal';
@@ -144,6 +146,16 @@ const sanitizeNumeric = (value: string): string => {
 /** Solo dígitos, sin punto decimal — para N° de Proveedor (es un identificador, no un valor). */
 const sanitizeDigitsOnly = (value: string): string => value.replace(/[^0-9]/g, '');
 
+/** Iniciales para el avatar del médico en el detalle de cotización (primera letra del primer y
+ *  penúltimo nombre, igual criterio que getTecnicoInitials en ProgramacionDetailPage). */
+const getNombreInitials = (nombreCompleto: string): string => {
+  const words = nombreCompleto.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '-';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[words.length - 2][0]).toUpperCase();
+};
+
+
 const formatDate = (dateString: string | null): string => {
   if (!dateString) return '-';
   try {
@@ -182,6 +194,32 @@ const formatMoney = (value: number | null): string => {
   return `${sign}$${Math.abs(value).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
+/** Anima el Subtotal de "Consumos" al cambiar de filtro (Todos/Material/Renta) en vez de saltar
+ *  de golpe al nuevo monto — interpola del valor mostrado actual al nuevo. */
+function AnimatedAmount({ value }: { value: number }) {
+  const [display, setDisplay] = useState(value);
+  const displayRef = useRef(value);
+  useEffect(() => {
+    const from = displayRef.current;
+    const to = value;
+    if (Math.abs(from - to) < 0.005) return;
+    const duration = 350;
+    const startTime = performance.now();
+    let raf: number;
+    const tick = (now: number) => {
+      const progress = Math.min((now - startTime) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const next = from + (to - from) * eased;
+      displayRef.current = next;
+      setDisplay(next);
+      if (progress < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+  return <>{formatMoney(display)}</>;
+}
+
 // El descuento por porcentaje y por valor fijo se calculan ambos sobre el subtotal original (no
 // uno sobre el resultado del otro) y se suman — si el usuario carga los dos, se descuentan ambos.
 function computeTotalesFromSubtotal(subtotal: number, tieneDcto: boolean, porcentajeDcto: unknown, vrDctoPesos: unknown, impuestos: string | null) {
@@ -193,7 +231,7 @@ function computeTotalesFromSubtotal(subtotal: number, tieneDcto: boolean, porcen
   return { subtotal, vrDcto, totalAntesImpuestos, iva, retencion, total };
 }
 
-function computeTotales(items: CotizacionItem[], tieneDcto: boolean, porcentajeDcto: unknown, vrDctoPesos: unknown, impuestos: string | null) {
+function computeTotales(items: { valor: unknown }[], tieneDcto: boolean, porcentajeDcto: unknown, vrDctoPesos: unknown, impuestos: string | null) {
   const subtotal = items.reduce((sum, it) => sum + (Number(it.valor) || 0), 0);
   return computeTotalesFromSubtotal(subtotal, tieneDcto, porcentajeDcto, vrDctoPesos, impuestos);
 }
@@ -831,10 +869,15 @@ async function generarPdfCotizacion(data: CotizacionDetail, isMobile: boolean) {
 
 // 'compartido': el usuario de verdad completó el share sheet nativo con el PDF adjunto — ahí sí
 // se puede avisar "enviado". 'respaldo': el navegador no soporta compartir archivos (típico en
-// escritorio) y solo se descargó el PDF + se abrió WhatsApp con el texto — falta que el usuario
-// adjunte el archivo a mano, así que NO se debe avisar como si ya se hubiera enviado.
-// 'cancelado': el usuario cerró el cuadro nativo de compartir sin elegir nada.
-type ResultadoEnvioWhatsapp = 'compartido' | 'respaldo' | 'cancelado';
+// escritorio) — se descarga el PDF y se copia el mensaje, pero NO se abre nada automáticamente;
+// el modal de DetalleModal (showWhatsappLink) deja que el usuario abra WhatsApp con un clic real
+// sobre un link a web.whatsapp.com (mismo mecanismo que Programaciones) en vez de adivinar con
+// whatsapp:// + redirección automática a wa.me. 'cancelado': el usuario cerró el cuadro nativo de
+// compartir sin elegir nada.
+type ResultadoEnvioWhatsapp =
+  | { tipo: 'compartido' }
+  | { tipo: 'respaldo'; fileName: string }
+  | { tipo: 'cancelado' };
 
 async function enviarCotizacionPorWhatsapp(data: CotizacionDetail, isMobile: boolean): Promise<ResultadoEnvioWhatsapp> {
   const doc = await buildCotizacionPdf(data);
@@ -859,42 +902,25 @@ async function enviarCotizacionPorWhatsapp(data: CotizacionDetail, isMobile: boo
         // aparezca como opción en la hoja nativa de compartir (queda solo AirDrop/Mail) — su
         // extensión de compartir no se registra para shares mixtos, solo para archivos "puros".
         await nav.share({ files: [file] });
-        return 'compartido';
+        return { tipo: 'compartido' };
       } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') return 'cancelado';
+        if (err instanceof Error && err.name === 'AbortError') return { tipo: 'cancelado' };
         // Si falla por otro motivo, se sigue con el flujo de respaldo abajo.
       }
     }
   }
 
-  // Respaldo: el navegador no soporta adjuntar archivos vía "compartir".
-  // Se descarga el PDF y se abre WhatsApp con el mensaje, para que el usuario adjunte el PDF manualmente.
+  // Respaldo: el navegador no soporta adjuntar archivos vía "compartir". Se descarga el PDF y se
+  // copia el mensaje — nunca se navega sola a wa.me ni se intenta el esquema whatsapp://, que en
+  // Chrome de escritorio no entrega el link a la app de forma confiable si no viene de un clic
+  // real del usuario (ver el <a> real en el modal de DetalleModal).
   doc.save(fileName);
-  const webFallbackUrl = `https://wa.me/?text=${encodeURIComponent(mensaje)}`;
-  if (esMacEscritorio) {
-    // "whatsapp://" abre la app de escritorio si está instalada (a diferencia de "wa.me", que
-    // siempre abre la versión web). No hay forma de saber de antemano si alguien tiene registrado
-    // ese esquema, así que se abre una pestaña en blanco propia y se intenta navegarla ahí: si el
-    // sistema sí lanza la app, el navegador pierde el foco y esa pestaña queda oculta; si nadie lo
-    // interceptó, sigue siendo la pestaña visible — solo en ese caso se cae a la versión web.
-    const win = window.open('about:blank', '_blank');
-    if (win) {
-      win.location.href = `whatsapp://send?text=${encodeURIComponent(mensaje)}`;
-      setTimeout(() => {
-        try {
-          if (!win.closed && win.document.visibilityState !== 'hidden') win.location.href = webFallbackUrl;
-        } catch {
-          // Si por lo que sea no se puede leer la visibilidad de esa pestaña, se prefiere no
-          // tocarla — mejor dejarla como esté que arriesgarse a interrumpir un envío que sí funcionó.
-        }
-      }, 600);
-    } else {
-      window.open(webFallbackUrl, '_blank');
-    }
-  } else {
-    window.open(webFallbackUrl, '_blank');
+  try {
+    await navigator.clipboard.writeText(mensaje);
+  } catch {
+    // Sin permiso de portapapeles — el modal de DetalleModal igual deja abrir WhatsApp.
   }
-  return 'respaldo';
+  return { tipo: 'respaldo', fileName };
 }
 
 interface DirectorioUsuario {
@@ -986,20 +1012,24 @@ const CotizacionCard = memo(({ item, onSelect }: { item: CotizacionListItem; onS
   </div>
 ));
 
-function DetalleItem({ label, children, bold, labelBold = true, tag }: { label: string; children: React.ReactNode; bold?: boolean; labelBold?: boolean; tag?: boolean }) {
+function DetalleItem({ label, children, bold, labelBold = true, tag, small }: { label: string; children: React.ReactNode; bold?: boolean; labelBold?: boolean; tag?: boolean; small?: boolean }) {
   return (
     <div style={styles.detalleItem}>
-      <span style={{ ...styles.detalleLabel, ...(labelBold ? {} : { fontWeight: 500 }) }}>{label}</span>
+      <span style={{ ...styles.detalleLabel, ...(labelBold ? {} : { fontWeight: 500 }), ...(small ? { fontSize: '0.78rem', textTransform: 'none' as const } : {}) }}>{label}</span>
       {tag ? (
         <span style={styles.medicoTag}>{children}</span>
       ) : (
-        <span style={{ ...styles.detalleValue, ...(bold ? { fontWeight: 600 } : {}) }}>{children}</span>
+        <span style={{ ...styles.detalleValue, ...(bold ? { fontWeight: 600 } : {}), ...(small ? { fontSize: '0.8rem' } : {}) }}>{children}</span>
       )}
     </div>
   );
 }
 
 const emptyItemForm = { productoId: '', productoLabel: '', cantidad: '', valorUnitario: '', valor: '', observaciones: '' };
+
+/** minúsculas y sin acentos, para que el buscador de productos de Consumos no distinga mayúsculas/acentos. */
+const normalizeSearch = (text: string): string =>
+  text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 /** cantidad × valor unitario, redondeado a 2 decimales; '' si algún operando falta. */
 const recalcValor = (cantidad: string, valorUnitario: string): string => {
@@ -1009,264 +1039,18 @@ const recalcValor = (cantidad: string, valorUnitario: string): string => {
   return (Math.round(c * vu * 100) / 100).toString();
 };
 
-function AddItemForm({ cotizacionId, tarifaId, tarifaLabel, hospitalId, items, onSelectItem, onDone, onSaved }: { cotizacionId: string; tarifaId?: string | null; tarifaLabel?: string | null; hospitalId?: string; items: CotizacionItem[]; onSelectItem: (item: CotizacionItem) => void; onDone: () => void; onSaved: () => void }) {
-  const queryClient = useQueryClient();
-  const [form, setForm] = useState(emptyItemForm);
-  const [productoSearch, setProductoSearch] = useState('');
-  const [productoFocused, setProductoFocused] = useState(false);
-  const [productoHighlighted, setProductoHighlighted] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const addedListRef = useRef<HTMLDivElement>(null);
-  const cantidadRef = useRef<HTMLInputElement>(null);
-  const productoOptionRefs = useRef<(HTMLDivElement | null)[]>([]);
-  // El último consumo agregado siempre debe quedar visible al final de la lista.
-  useEffect(() => {
-    if (addedListRef.current) addedListRef.current.scrollTop = addedListRef.current.scrollHeight;
-  }, [items.length]);
-
-  const { data: productoResults = [] } = useQuery<ProductoOption[]>({
-    queryKey: ['cotizaciones-productos', productoSearch, cotizacionId, tarifaId, hospitalId],
-    queryFn: () => cotizacionesService.searchProductos(productoSearch, cotizacionId, tarifaId ?? undefined, hospitalId),
-    enabled: productoFocused,
-  });
-  // Cada vez que cambia la lista visible (nueva búsqueda) se reinicia el resaltado a la primera
-  // opción, para no dejarlo apuntando a un índice que ya no corresponde a nada.
-  useEffect(() => { setProductoHighlighted(0); }, [productoResults]);
-  // La opción resaltada debe quedar visible aunque esté fuera del recuadro visible del scroll —
-  // sin esto, navegar con las flechas movía el resaltado pero la barra de scroll se quedaba fija.
-  useEffect(() => {
-    productoOptionRefs.current[productoHighlighted]?.scrollIntoView({ block: 'nearest' });
-  }, [productoHighlighted]);
-
-  const selectProducto = (p: ProductoOption) => {
-    const nuevoValorUnitario = p.precioSugerido !== null ? String(p.precioSugerido) : form.valorUnitario;
-    const nuevaCantidad = form.cantidad || '1';
-    setForm({
-      ...form,
-      productoId: p.id,
-      productoLabel: `${p.referencia ?? ''} / ${p.nombre ?? ''}`.replace(/^ \/ /, ''),
-      cantidad: nuevaCantidad,
-      valorUnitario: nuevoValorUnitario,
-      valor: recalcValor(nuevaCantidad, nuevoValorUnitario),
-    });
-    setProductoSearch('');
-    setTimeout(() => cantidadRef.current?.focus(), 0);
-  };
-
-  const createMutation = useMutation({
-    mutationFn: () => cotizacionesService.createItem(cotizacionId, {
-      productoId: form.productoId,
-      cantidad: Number(form.cantidad),
-      valorUnitario: Number(form.valorUnitario),
-      observaciones: form.observaciones || undefined,
-      hospitalId,
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacionId] });
-      onSaved();
-      // No se cierra el modal — se limpia el formulario para poder seguir agregando consumos
-      // seguidos, viendo en la lista de abajo los que ya se guardaron.
-      setForm(emptyItemForm);
-      setProductoSearch('');
-    },
-  });
-
-  // Si el producto elegido ya tiene una fila en la lista, no se crea una segunda — se suma la
-  // cantidad a la fila existente (mismo valor unitario que ya tenía esa fila, no el que se
-  // hubiera sugerido en este segundo intento) y la observación nueva sustituye a la anterior.
-  const updateExistenteMutation = useMutation({
-    mutationFn: (existente: CotizacionItem) => cotizacionesService.updateItem(existente.id, {
-      productoId: form.productoId,
-      cantidad: (existente.cantidad ?? 0) + Number(form.cantidad),
-      valorUnitario: existente.valorUnitario ?? Number(form.valorUnitario),
-      // Siempre se manda (aunque venga vacío) porque acá sí se quiere sustituir la observación
-      // anterior, a diferencia de otros callers de updateItem que no la tocan si no vino en el
-      // body.
-      observaciones: form.observaciones,
-      hospitalId,
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacionId] });
-      onSaved();
-      setForm(emptyItemForm);
-      setProductoSearch('');
-    },
-  });
-
-  const handleGuardar = () => {
-    if (!form.productoId) { setError('Selecciona una descripción (producto).'); return; }
-    if (!form.cantidad || Number(form.cantidad) <= 0) { setError('La cantidad debe ser mayor a cero.'); return; }
-    if (!form.valorUnitario || Number(form.valorUnitario) <= 0) { setError('El valor unitario debe ser mayor a cero.'); return; }
-    if (!form.valor || Number(form.valor) <= 0) { setError('El valor debe ser mayor a cero.'); return; }
-    setError(null);
-    const existente = items.find(it => it.productoId === form.productoId);
-    if (existente) {
-      updateExistenteMutation.mutate(existente);
-    } else {
-      createMutation.mutate();
-    }
-  };
-
-  return (
-    <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10001 }}>
-      <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
-        <div style={styles.modalHeader}>
-          <h2 style={styles.modalTitle}>Agregar consumo</h2>
-          <button style={styles.closeBtn} onClick={onDone}>
-            <X size={18} />
-          </button>
-        </div>
-        <div style={styles.modalBody}>
-          <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.9rem' }}>
-            <div style={styles.tarifaHint}>
-              {tarifaLabel
-                ? <>El precio sugerido de cada producto se calcula según la tarifa <strong style={{ color: '#3f6510' }}>{tarifaLabel}</strong>.</>
-                : 'No hay una tarifa seleccionada — ingresa el valor unitario manualmente.'}
-            </div>
-
-            {items.length > 0 && (
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Consumos agregados ({items.length})</label>
-                <div ref={addedListRef} style={styles.addedItemsList}>
-                  {items.map(it => (
-                    <div
-                      key={it.id}
-                      className="dropdown-item-hover"
-                      style={{ ...styles.addedItemRow, cursor: 'pointer' }}
-                      onClick={() => onSelectItem(it)}
-                    >
-                      <span style={styles.addedItemQty}>{it.cantidad}×</span>
-                      <span style={styles.addedItemLabel} title={it.descripcion ?? undefined}>{it.descripcion ?? '-'}</span>
-                      {it.esEspecial && <span style={styles.especialTag} title="Nombre/referencia especial de este hospital">Especial</span>}
-                      <span style={styles.addedItemValue}>{formatMoney(Number(it.valor) || 0)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div style={styles.formGroup}>
-              <label style={styles.formLabel}>Producto *</label>
-              {form.productoId ? (
-                <span style={styles.medicoTag}>
-                  {form.productoLabel}
-                  <X size={12} style={{ cursor: 'pointer' }} onClick={() => setForm({ ...form, productoId: '', productoLabel: '' })} />
-                </span>
-              ) : (
-                <div style={{ position: 'relative' as const }}>
-                  <SanitizedInput
-                    autoFocus
-                    style={styles.formInput}
-                    placeholder="Buscar por clave, nombre o sistema..."
-                    value={productoSearch}
-                    sanitize={sanitizeCirugiaDirigido}
-                    onChange={setProductoSearch}
-                    onFocus={() => setProductoFocused(true)}
-                    onBlur={() => setTimeout(() => setProductoFocused(false), 150)}
-                    onKeyDown={e => {
-                      if (!productoFocused || productoResults.length === 0) return;
-                      if (e.key === 'ArrowDown') {
-                        e.preventDefault();
-                        setProductoHighlighted(i => Math.min(i + 1, productoResults.length - 1));
-                      } else if (e.key === 'ArrowUp') {
-                        e.preventDefault();
-                        setProductoHighlighted(i => Math.max(i - 1, 0));
-                      } else if (e.key === 'Enter') {
-                        e.preventDefault();
-                        const p = productoResults[productoHighlighted];
-                        if (p) selectProducto(p);
-                      }
-                    }}
-                  />
-                  {productoFocused && (
-                    <div style={styles.medicoDropdown}>
-                      {productoResults.length === 0 ? (
-                        <div style={{ padding: '0.6rem 0.75rem', color: '#9ca3af', fontSize: '0.85rem' }}>Sin resultados</div>
-                      ) : (
-                        productoResults.map((p, i) => (
-                          <div
-                            key={p.id}
-                            ref={el => { productoOptionRefs.current[i] = el; }}
-                            className="dropdown-item-hover"
-                            style={{ ...styles.medicoDropdownItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', ...(i === productoHighlighted ? styles.medicoDropdownItemHighlighted : {}) }}
-                            onMouseDown={e => e.preventDefault()}
-                            onMouseEnter={() => setProductoHighlighted(i)}
-                            onClick={() => selectProducto(p)}
-                          >
-                            <span>
-                              {p.referencia && <span style={styles.productoClaveTag}>{p.referencia}</span>}
-                              {p.referencia ? ' / ' : ''}{p.nombre}
-                            </span>
-                            <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
-                              {(p.nombreEspecial || p.referenciaEspecial) && (
-                                <span style={styles.especialTag} title={`Este hospital lo conoce como: ${p.referenciaEspecial ?? ''}${p.referenciaEspecial && p.nombreEspecial ? ' / ' : ''}${p.nombreEspecial ?? ''}`}>Especial</span>
-                              )}
-                              {p.sistema && <span style={styles.productoSistemaTag}>{p.sistema}</span>}
-                            </span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div style={styles.formRow3}>
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Cantidad *</label>
-                <input
-                  ref={cantidadRef}
-                  type="text"
-                  inputMode="decimal"
-                  style={styles.formInput}
-                  value={form.cantidad}
-                  onChange={e => { const cantidad = sanitizeNumeric(e.target.value); setForm({ ...form, cantidad, valor: recalcValor(cantidad, form.valorUnitario) }); }}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); document.getElementById('cotizacion-add-item-observaciones')?.focus(); } }}
-                />
-              </div>
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Valor Un*</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  style={styles.formInput}
-                  value={form.valorUnitario}
-                  onChange={e => { const valorUnitario = sanitizeNumeric(e.target.value); setForm({ ...form, valorUnitario, valor: recalcValor(form.cantidad, valorUnitario) }); }}
-                />
-              </div>
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Valor</label>
-                <input style={{ ...styles.formInput, color: '#6b6b60', backgroundColor: '#f4f4ee', cursor: 'not-allowed' }} value={form.valor ? formatMoney(Number(form.valor)) : ''} disabled />
-              </div>
-            </div>
-
-            <div style={styles.formGroup}>
-              <label style={styles.formLabel}>Observaciones</label>
-              <SanitizedTextarea
-                id="cotizacion-add-item-observaciones"
-                style={styles.formInput}
-                value={form.observaciones}
-                sanitize={sanitizeObservaciones}
-                onChange={observaciones => setForm({ ...form, observaciones })}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleGuardar(); } }}
-              />
-            </div>
-
-            {error && <span style={styles.errorText}>{error}</span>}
-
-            <div style={styles.formActions}>
-              <button style={styles.cancelBtn} onClick={onDone}>{items.length > 0 ? 'Listo' : 'Cancelar'}</button>
-              <button style={styles.saveBtn} onClick={handleGuardar} disabled={createMutation.isPending || updateExistenteMutation.isPending}>
-                {(createMutation.isPending || updateExistenteMutation.isPending) ? 'Guardando...' : 'Guardar'}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+/** Convierte un ítem ya guardado (CotizacionItem) a la forma que usan AddStagedItemForm/
+ *  StagedItemDetailModal — localId = el id real, para poder diferenciar al guardar entre ítems
+ *  que ya existían y los que se agregaron/editaron/quitaron en esta sesión de edición. */
+const toStagedItem = (it: CotizacionItem): StagedItem => ({
+  localId: it.id,
+  productoId: it.productoId ?? '',
+  productoLabel: `${it.referencia ?? ''} / ${it.descripcion ?? ''}`.replace(/^ \/ /, ''),
+  cantidad: it.cantidad !== null ? String(it.cantidad) : '',
+  valorUnitario: it.valorUnitario !== null ? String(it.valorUnitario) : '',
+  valor: it.valor !== null ? String(it.valor) : '',
+  observaciones: it.observaciones ?? '',
+});
 
 export interface StagedItem {
   localId: string;
@@ -1328,10 +1112,15 @@ export function AddStagedItemForm({ tarifaId, tarifaLabel, hospitalId, items, on
   const selectProducto = (p: StagedItemProductoOption) => {
     const nuevoValorUnitario = p.precioSugerido !== null ? String(p.precioSugerido) : form.valorUnitario;
     const nuevaCantidad = form.cantidad || '1';
+    // Si el producto tiene nombre/referencia especial para este hospital, se usa esa — no la
+    // genérica — para que el nombre que se ve mientras se arma el consumo (antes de guardar) ya
+    // coincida con el que va a quedar guardado (el backend resuelve lo mismo al crear el ítem).
+    const referencia = p.referenciaEspecial ?? p.referencia;
+    const nombre = p.nombreEspecial ?? p.nombre;
     setForm({
       ...form,
       productoId: p.id,
-      productoLabel: `${p.referencia ?? ''} / ${p.nombre ?? ''}`.replace(/^ \/ /, ''),
+      productoLabel: `${referencia ?? ''} / ${nombre ?? ''}`.replace(/^ \/ /, ''),
       cantidad: nuevaCantidad,
       valorUnitario: nuevoValorUnitario,
       valor: recalcValor(nuevaCantidad, nuevoValorUnitario),
@@ -1763,10 +1552,12 @@ export function StagedItemDetailModal({ item, tarifaId, hospitalId, onClose, onS
                               onMouseDown={e => e.preventDefault()}
                               onClick={() => {
                                 const nuevoValorUnitario = p.precioSugerido !== null ? String(p.precioSugerido) : form.valorUnitario;
+                                const referencia = p.referenciaEspecial ?? p.referencia;
+                                const nombre = p.nombreEspecial ?? p.nombre;
                                 setForm({
                                   ...form,
                                   productoId: p.id,
-                                  productoLabel: `${p.referencia ?? ''} / ${p.nombre ?? ''}`.replace(/^ \/ /, ''),
+                                  productoLabel: `${referencia ?? ''} / ${nombre ?? ''}`.replace(/^ \/ /, ''),
                                   valorUnitario: nuevoValorUnitario,
                                 });
                                 setProductoSearch('');
@@ -2404,13 +2195,13 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 }) {
   const queryClient = useQueryClient();
   const [showAddItem, setShowAddItem] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<CotizacionItem | null>(null);
+  // Los consumos viven en memoria hasta Guardar (igual que en NuevaCotizacionModal) — localId es
+  // el id real para los que ya existían (se usa para diferenciar altas/bajas/ediciones al
+  // guardar) o un randomUUID para los que se agregaron en esta sesión de edición.
+  const [localItems, setLocalItems] = useState<StagedItem[]>(() => cotizacion.items.map(toStagedItem));
+  const [selectedStagedItem, setSelectedStagedItem] = useState<StagedItem | null>(null);
   const [confirmDeleteItemId, setConfirmDeleteItemId] = useState<string | null>(null);
   const [confirmAddConsumoConPaquete, setConfirmAddConsumoConPaquete] = useState(false);
-  // hasFormChanges (más abajo) solo compara los campos del formulario — agregar/editar/eliminar
-  // consumos no toca esos campos, así que sin esto Guardar no detectaba el cambio y salía del modo
-  // edición sin llamar a la API ni mostrar el mensaje de éxito.
-  const [itemsChanged, setItemsChanged] = useState(false);
   const [form, setForm] = useState({
     fecha: toDateInputValue(cotizacion.fecha),
     dirigidoA: cotizacion.dirigidoA ?? '',
@@ -2437,7 +2228,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
   });
   const [error, setError] = useState<{ field: string; message: string } | null>(null);
 
-  const { subtotal, vrDcto, totalAntesImpuestos, iva, retencion, total } = computeTotales(cotizacion.items, form.tieneDcto, form.porcentajeDcto, form.vrDctoPesos, form.impuestos);
+  const { subtotal, vrDcto, totalAntesImpuestos, iva, retencion, total } = computeTotales(localItems, form.tieneDcto, form.porcentajeDcto, form.vrDctoPesos, form.impuestos);
 
   const { data: paquetes = [] } = useQuery<PaqueteOption[]>({
     queryKey: ['cotizaciones-paquetes'],
@@ -2469,29 +2260,75 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     : (terceroTarifa?.tarifaId || form.cubrimientoId);
   const tarifaLabel = terceroTarifa?.tarifaNombre || CUBRIMIENTO_OPTIONS.find(o => o.id === form.cubrimientoId)?.label || '';
 
+  // Diff entre lo que ya existía (cotizacion.items) y lo que hay ahora en memoria (localItems) —
+  // se usa tanto para decidir qué mandar al guardar como para que hasFormChanges detecte cambios
+  // de consumos igual que detecta cambios de cualquier otro campo.
+  const itemsOriginalesIds = new Set(cotizacion.items.map(i => i.id));
+  const itemsOriginalesById = new Map(cotizacion.items.map(i => [i.id, i]));
+  const localIds = new Set(localItems.map(i => i.localId));
+  const itemsAAgregar = localItems.filter(it => !itemsOriginalesIds.has(it.localId));
+  const itemsAEliminar = cotizacion.items.filter(it => !localIds.has(it.id));
+  const itemsAActualizar = localItems.filter(it => {
+    const original = itemsOriginalesById.get(it.localId);
+    if (!original) return false;
+    return (
+      it.productoId !== (original.productoId ?? '') ||
+      Number(it.cantidad) !== (original.cantidad ?? 0) ||
+      Number(it.valorUnitario) !== (original.valorUnitario ?? 0) ||
+      it.observaciones !== (original.observaciones ?? '')
+    );
+  });
+  const itemsChanged = itemsAAgregar.length > 0 || itemsAEliminar.length > 0 || itemsAActualizar.length > 0;
+
   const updateMutation = useMutation({
-    mutationFn: () => cotizacionesService.updateCotizacion(cotizacion.id, {
-      fecha: form.fecha || undefined,
-      dirigidoA: form.dirigidoA,
-      medico: form.medicos.join(', '),
-      hospitalId: form.hospitalId,
-      cirugia: form.cirugia,
-      cubrimientoId: form.cubrimientoId,
-      empresaId: form.empresaId,
-      responsableEconomicoId: form.responsableEconomicoId,
-      sedeId: form.sedeId,
-      numProveedor: form.numProveedor,
-      tarifaId,
-      tiempoEntrega: form.tiempoEntrega,
-      observaciones: form.observaciones,
-      paqueteId: form.paqueteId,
-      nivel: form.nivel,
-      tieneDcto: form.tieneDcto,
-      porcentajeDcto: form.porcentajeDcto ? Number(form.porcentajeDcto) : 0,
-      vrDctoPesos: form.vrDctoPesos ? Number(form.vrDctoPesos) : 0,
-      vrDcto,
-      impuestos: form.impuestos,
-    }),
+    mutationFn: async () => {
+      await Promise.all([
+        cotizacionesService.updateCotizacion(cotizacion.id, {
+          fecha: form.fecha || undefined,
+          dirigidoA: form.dirigidoA,
+          medico: form.medicos.join(', '),
+          hospitalId: form.hospitalId,
+          cirugia: form.cirugia,
+          cubrimientoId: form.cubrimientoId,
+          empresaId: form.empresaId,
+          responsableEconomicoId: form.responsableEconomicoId,
+          sedeId: form.sedeId,
+          numProveedor: form.numProveedor,
+          tarifaId,
+          tiempoEntrega: form.tiempoEntrega,
+          observaciones: form.observaciones,
+          paqueteId: form.paqueteId,
+          nivel: form.nivel,
+          tieneDcto: form.tieneDcto,
+          porcentajeDcto: form.porcentajeDcto ? Number(form.porcentajeDcto) : 0,
+          vrDctoPesos: form.vrDctoPesos ? Number(form.vrDctoPesos) : 0,
+          vrDcto,
+          impuestos: form.impuestos,
+        }),
+        ...itemsAEliminar.map(it => cotizacionesService.deleteItem(it.id)),
+        ...itemsAActualizar.map(it => cotizacionesService.updateItem(it.localId, {
+          productoId: it.productoId,
+          cantidad: Number(it.cantidad),
+          valorUnitario: Number(it.valorUnitario),
+          observaciones: it.observaciones || undefined,
+          hospitalId: form.hospitalId,
+        })),
+        ...(itemsAAgregar.length > 0 ? [cotizacionesService.createItemsBulk(cotizacion.id, itemsAAgregar.map(it => ({
+          productoId: it.productoId,
+          cantidad: Number(it.cantidad),
+          valorUnitario: Number(it.valorUnitario),
+          observaciones: it.observaciones || undefined,
+          hospitalId: form.hospitalId,
+        })))] : []),
+      ]);
+      // Los consumos que no se tocaron en esta sesión (ni se agregaron ni se editaron) se quedan
+      // con el nombre/referencia especial resuelto contra el hospital viejo — si el hospital
+      // cambió, hace falta resolverlo de nuevo contra el nuevo. Redundante para los que sí se
+      // tocaron (esos ya se crean/actualizan con el hospital actual), pero inofensivo.
+      if (form.hospitalId && form.hospitalId !== (cotizacion.hospitalId ?? '')) {
+        await cotizacionesService.recalcularNombresEspeciales(cotizacion.id, form.hospitalId);
+      }
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacion.id] });
       queryClient.invalidateQueries({ queryKey: ['cotizaciones'] });
@@ -2499,24 +2336,41 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     },
   });
 
-  const deleteItemMutation = useMutation({
-    mutationFn: (itemId: string) => cotizacionesService.deleteItem(itemId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacion.id] });
-      setConfirmDeleteItemId(null);
-      setItemsChanged(true);
-      onNotify('Consumo eliminado');
-      // Tocar los consumos (agregar o eliminar) de una cotización con paquete la desvincula del
-      // paquete: ya no refleja fielmente lo que el paquete define. Se limpia en el formulario local;
-      // se persiste como null/'' recién cuando se guarde la edición (igual que cualquier otro campo).
-      setForm(prev => (prev.paqueteId ? { ...prev, paqueteId: '', paqueteLabel: '', nivel: '' } : prev));
-    },
-  });
+  // Si el producto elegido ya tiene una fila en la lista, no se crea una segunda — se suma la
+  // cantidad a la fila existente (mismo valor unitario que ya tenía) y la observación nueva
+  // sustituye a la anterior. Mismo criterio que ya usaba AddItemForm (ahora reemplazado por
+  // AddStagedItemForm, que no trae esta regla incluida — queda a cargo de quien la use).
+  const agregarConsumoLocal = (nuevo: StagedItem) => {
+    setLocalItems(prev => {
+      const existente = prev.find(it => it.productoId === nuevo.productoId);
+      if (!existente) return [...prev, nuevo];
+      const cantidad = String((Number(existente.cantidad) || 0) + (Number(nuevo.cantidad) || 0));
+      return prev.map(it => it.localId === existente.localId
+        ? { ...it, cantidad, valor: recalcValor(cantidad, it.valorUnitario), observaciones: nuevo.observaciones }
+        : it);
+    });
+    onNotify('Consumo agregado');
+    // Tocar los consumos (agregar/editar/eliminar) de una cotización con paquete la desvincula
+    // del paquete: ya no refleja fielmente lo que el paquete define.
+    setForm(prev => (prev.paqueteId ? { ...prev, paqueteId: '', paqueteLabel: '', nivel: '' } : prev));
+  };
+
+  const editarConsumoLocal = (actualizado: StagedItem) => {
+    setLocalItems(prev => prev.map(it => (it.localId === actualizado.localId ? actualizado : it)));
+    onNotify('Consumo actualizado');
+  };
+
+  const quitarConsumoLocal = (localId: string) => {
+    setLocalItems(prev => prev.filter(it => it.localId !== localId));
+    setConfirmDeleteItemId(null);
+    onNotify('Consumo eliminado');
+    setForm(prev => (prev.paqueteId ? { ...prev, paqueteId: '', paqueteLabel: '', nivel: '' } : prev));
+  };
 
   // Si cambia el Cubrimiento o el Responsable Económico y eso cambia la tarifa resuelta, los
-  // consumos ya agregados se recalculan y guardan de inmediato contra la lista de precios de la
-  // nueva tarifa (mismo comportamiento de "guardado inmediato" que agregar/editar/eliminar un
-  // consumo, sin esperar al botón Guardar del formulario). recalculatedTarifaRef evita recalcular
+  // consumos en memoria se recalculan contra la lista de precios de la nueva tarifa — ya no se
+  // guarda nada en el servidor hasta Guardar, solo se actualiza localItems (mismo patrón que
+  // recalcStagedPreciosMutation en NuevaCotizacionModal). recalculatedTarifaRef evita recalcular
   // dos veces para la misma tarifa (ej. por re-renders). Antes arrancaba en cotizacion.tarifaId (la
   // tarifa guardada en el registro), pero esa no siempre coincide con cómo se resuelve `tarifaId`
   // en vivo (ej. el responsable económico ya tiene tarifa propia pero la cotización se guardó antes
@@ -2527,108 +2381,46 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
   const recalculatedTarifaRef = useRef<string | null>(null);
   const tarifaBaselineEstablecidaRef = useRef(false);
 
-  const recalcPreciosMutation = useMutation({
-    mutationFn: (nuevoTarifaId: string) => cotizacionesService.recalcularPrecios(cotizacion.id, nuevoTarifaId),
-    onSuccess: result => {
-      queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacion.id] });
-      if (result.actualizados > 0 && result.omitidos > 0) {
-        onNotify(`Se actualizaron los precios de ${result.actualizados} consumo(s) según la nueva tarifa. ${result.omitidos} no tienen precio en la nueva tarifa y conservan su valor anterior.`, 'info');
-      } else if (result.actualizados > 0) {
-        onNotify(`Se actualizaron los precios de ${result.actualizados} consumo(s) según la nueva tarifa.`, 'info');
-      } else if (result.omitidos > 0) {
+  const recalcLocalPrecios = (nuevoTarifaId: string) => {
+    cotizacionesService.getPreciosPorProductos(localItems.map(it => it.productoId), nuevoTarifaId).then(precios => {
+      const precioPorProducto = new Map(precios.map(p => [p.productoId, p.precio]));
+      const actualizados = precios.filter(p => p.precio !== null).length;
+      const omitidos = precios.filter(p => p.precio === null).length;
+      setLocalItems(prev => prev.map(it => {
+        const nuevoPrecio = precioPorProducto.get(it.productoId);
+        if (nuevoPrecio === undefined || nuevoPrecio === null) return it;
+        const valorUnitario = String(nuevoPrecio);
+        return { ...it, valorUnitario, valor: recalcValor(it.cantidad, valorUnitario) };
+      }));
+      if (actualizados > 0 && omitidos > 0) {
+        onNotify(`Se actualizaron los precios de ${actualizados} consumo(s) según la nueva tarifa. ${omitidos} no tienen precio en la nueva tarifa y conservan su valor anterior.`, 'info');
+      } else if (actualizados > 0) {
+        onNotify(`Se actualizaron los precios de ${actualizados} consumo(s) según la nueva tarifa.`, 'info');
+      } else if (omitidos > 0) {
         onNotify(`Ningún consumo tiene precio en la nueva tarifa; conservan su valor anterior.`, 'info');
       }
-    },
-  });
+    });
+  };
 
-  // Igual que en Nueva Cotización: en vez de avisar con un toast pasajero, se muestra como nota
-  // fija debajo del aviso de tarifa mientras siga aplicando.
-  const [paqueteNota, setPaqueteNota] = useState<string | null>(null);
-
-  // Si la cotización sigue vinculada a un paquete (form.paqueteId) y cambia la tarifa resuelta,
-  // puede haber productos del paquete que se excluyeron al crearla (denegados para la tarifa de
-  // ese momento — ver getPaqueteConsumos) y que ya NO estén denegados para la tarifa nueva. Se
-  // vuelven a agregar solos. Es aditivo nada más: nunca quita nada, porque no hay forma de
-  // distinguir un producto que falta por haber sido denegado de uno que el usuario borró a mano
-  // por otra razón — quitarlo solo también sería sorprendente.
-  const paqueteSyncMutation = useMutation({
-    mutationFn: async (nuevoTarifaId: string) => {
-      const { items: paqueteItems, denegadosIds } = await cotizacionesService.getPaqueteConsumos(form.paqueteId, form.nivel, nuevoTarifaId);
-      const idsExistentes = new Set(cotizacion.items.map(i => i.productoId).filter(Boolean));
-      const faltantes = paqueteItems.filter(p => !idsExistentes.has(p.id));
-      // Ítems ya agregados (vienen del paquete, siguen en la cotización) cuyo producto ahora queda
-      // denegado para la tarifa nueva — el simétrico de "faltantes": se quitan solos.
-      const denegadosSet = new Set(denegadosIds);
-      const aEliminar = cotizacion.items.filter(i => i.productoId && denegadosSet.has(i.productoId));
-
-      if (aEliminar.length > 0) {
-        await Promise.all(aEliminar.map(i => cotizacionesService.deleteItem(i.id)));
-      }
-      if (faltantes.length > 0) {
-        await cotizacionesService.createItemsBulk(cotizacion.id, faltantes.map(p => ({
-          productoId: p.id,
-          cantidad: p.cantidad,
-          valorUnitario: p.precioSugerido ?? 0,
-          hospitalId: form.hospitalId,
-        })));
-      }
-      return { agregados: faltantes.length, eliminados: aEliminar.length };
-    },
-    onSuccess: ({ agregados, eliminados }) => {
-      if (agregados === 0 && eliminados === 0) { setPaqueteNota(null); return; }
-      queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacion.id] });
-      setItemsChanged(true);
-      const partes: string[] = [];
-      if (agregados > 0) partes.push(`se volvió a agregar ${agregados === 1 ? '1 producto' : `${agregados} productos`} del paquete que ya no está${agregados === 1 ? '' : 'n'} denegado${agregados === 1 ? '' : 's'} para la tarifa actual`);
-      if (eliminados > 0) partes.push(`se eliminó ${eliminados === 1 ? '1 producto' : `${eliminados} productos`} del paquete que ahora está${eliminados === 1 ? '' : 'n'} denegado${eliminados === 1 ? '' : 's'} para la tarifa actual`);
-      setPaqueteNota(`${partes.join('; ')}.`.replace(/^./, c => c.toUpperCase()));
-    },
-  });
-
-  useEffect(() => {
-    if (terceroTarifaLoading || !tarifaId) return;
-    if (!tarifaBaselineEstablecidaRef.current) {
-      tarifaBaselineEstablecidaRef.current = true;
-      recalculatedTarifaRef.current = tarifaId;
-      return;
-    }
-    if (tarifaId === recalculatedTarifaRef.current) return;
-    recalculatedTarifaRef.current = tarifaId;
-    if (cotizacion.items.length > 0) {
-      recalcPreciosMutation.mutate(tarifaId);
-    }
-    if (form.paqueteId && form.nivel) {
-      paqueteSyncMutation.mutate(tarifaId);
-    }
-  }, [tarifaId, terceroTarifaLoading]);
-
-  // Igual que el recálculo de precios de arriba, pero para la referencia/nombre especial de cada
-  // consumo — si el hospital cambia, el grupo del nuevo hospital puede tener (o dejar de tener) un
-  // especial cargado para alguno de los productos ya agregados.
+  // Si cambia el Hospital, la etiqueta (referencia/nombre) de los consumos ya agregados debe
+  // reflejar el especial del grupo del nuevo hospital (o el estándar del producto si no tiene) —
+  // igual que recalcLocalPrecios con la tarifa, solo se actualiza localItems en memoria; lo que
+  // de verdad queda guardado en el servidor para los ítems que no se tocan en esta sesión se
+  // resuelve después de Guardar (ver recalcularNombresEspeciales en updateMutation), así que esto
+  // es solo la vista previa antes de guardar.
   const recalculatedHospitalRef = useRef<string | null>(null);
   const hospitalBaselineEstablecidaRef = useRef(false);
 
-  const recalcNombresEspecialesMutation = useMutation({
-    mutationFn: (nuevoHospitalId: string) => cotizacionesService.recalcularNombresEspeciales(cotizacion.id, nuevoHospitalId),
-    onSuccess: result => {
-      queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacion.id] });
-      if (result.actualizados > 0) {
-        onNotify(`Se actualizó la referencia/nombre de ${result.actualizados} consumo(s) según el especial del nuevo hospital.`, 'info');
-      }
-    },
-  });
-
-  // El recálculo de arriba (y agregar un consumo nuevo, que ya resuelve su especial contra
-  // form.hospitalId aunque todavía no se haya guardado la cotización) dejaban un hueco: si el
-  // usuario cambiaba de hospital, agregaba un consumo y cerraba SIN darle a "Guardar cotización",
-  // el hospital guardado de la cotización se quedaba siendo el viejo mientras el consumo nuevo (o
-  // el recalculado) ya reflejaba el especial del hospital nuevo — quedaban desincronizados. Por
-  // eso el hospital ahora se guarda solo, de inmediato, apenas cambia — igual que ya se comporta
-  // el recálculo de nombres especiales, en vez de esperar al guardado general del formulario.
-  const updateHospitalMutation = useMutation({
-    mutationFn: (nuevoHospitalId: string) => cotizacionesService.updateCotizacion(cotizacion.id, { hospitalId: nuevoHospitalId }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['cotizacion', cotizacion.id] }); },
-  });
+  const recalcLocalNombres = (nuevoHospitalId: string) => {
+    cotizacionesService.getNombresPorProductos(localItems.map(it => it.productoId), nuevoHospitalId).then(nombres => {
+      const nombrePorProducto = new Map(nombres.map(n => [n.productoId, n]));
+      setLocalItems(prev => prev.map(it => {
+        const nuevo = nombrePorProducto.get(it.productoId);
+        if (!nuevo) return it;
+        return { ...it, productoLabel: `${nuevo.referencia ?? ''} / ${nuevo.descripcion ?? ''}`.replace(/^ \/ /, '') };
+      }));
+    });
+  };
 
   useEffect(() => {
     if (!form.hospitalId) return;
@@ -2639,11 +2431,69 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     }
     if (form.hospitalId === recalculatedHospitalRef.current) return;
     recalculatedHospitalRef.current = form.hospitalId;
-    updateHospitalMutation.mutate(form.hospitalId);
-    if (cotizacion.items.length > 0) {
-      recalcNombresEspecialesMutation.mutate(form.hospitalId);
+    if (localItems.length > 0) {
+      recalcLocalNombres(form.hospitalId);
     }
   }, [form.hospitalId]);
+
+  // Igual que en Nueva Cotización: en vez de avisar con un toast pasajero, se muestra como nota
+  // fija debajo del aviso de tarifa mientras siga aplicando.
+  const [paqueteNota, setPaqueteNota] = useState<string | null>(null);
+
+  // Si la cotización sigue vinculada a un paquete (form.paqueteId) y cambia la tarifa resuelta,
+  // puede haber productos del paquete que se excluyeron al crearla (denegados para la tarifa de
+  // ese momento — ver getPaqueteConsumos) y que ya NO estén denegados para la tarifa nueva, o al
+  // revés. Ya no toca el servidor — solo actualiza localItems, igual que el resto de esta sesión
+  // de edición.
+  const syncPaqueteLocal = async (nuevoTarifaId: string) => {
+    const { items: paqueteItems, denegadosIds } = await cotizacionesService.getPaqueteConsumos(form.paqueteId, form.nivel, nuevoTarifaId);
+    const idsExistentes = new Set(localItems.map(i => i.productoId).filter(Boolean));
+    const faltantes = paqueteItems.filter(p => !idsExistentes.has(p.id));
+    const denegadosSet = new Set(denegadosIds);
+    const aQuitar = localItems.filter(i => i.productoId && denegadosSet.has(i.productoId));
+
+    if (faltantes.length === 0 && aQuitar.length === 0) { setPaqueteNota(null); return; }
+
+    setLocalItems(prev => {
+      const sinDenegados = prev.filter(it => !aQuitar.some(q => q.localId === it.localId));
+      const nuevos = faltantes.map(p => {
+        const cantidad = String(p.cantidad);
+        const valorUnitario = p.precioSugerido !== null ? String(p.precioSugerido) : '0';
+        return {
+          localId: crypto.randomUUID(),
+          productoId: p.id,
+          productoLabel: `${p.referencia ?? ''} / ${p.nombre ?? ''}`.replace(/^ \/ /, ''),
+          cantidad,
+          valorUnitario,
+          valor: recalcValor(cantidad, valorUnitario),
+          observaciones: '',
+        };
+      });
+      return [...sinDenegados, ...nuevos];
+    });
+
+    const partes: string[] = [];
+    if (faltantes.length > 0) partes.push(`se volvió a agregar ${faltantes.length === 1 ? '1 producto' : `${faltantes.length} productos`} del paquete que ya no está${faltantes.length === 1 ? '' : 'n'} denegado${faltantes.length === 1 ? '' : 's'} para la tarifa actual`);
+    if (aQuitar.length > 0) partes.push(`se quitó ${aQuitar.length === 1 ? '1 producto' : `${aQuitar.length} productos`} del paquete que ahora está${aQuitar.length === 1 ? '' : 'n'} denegado${aQuitar.length === 1 ? '' : 's'} para la tarifa actual`);
+    setPaqueteNota(`${partes.join('; ')}.`.replace(/^./, c => c.toUpperCase()));
+  };
+
+  useEffect(() => {
+    if (terceroTarifaLoading || !tarifaId) return;
+    if (!tarifaBaselineEstablecidaRef.current) {
+      tarifaBaselineEstablecidaRef.current = true;
+      recalculatedTarifaRef.current = tarifaId;
+      return;
+    }
+    if (tarifaId === recalculatedTarifaRef.current) return;
+    recalculatedTarifaRef.current = tarifaId;
+    if (localItems.length > 0) {
+      recalcLocalPrecios(tarifaId);
+    }
+    if (form.paqueteId && form.nivel) {
+      syncPaqueteLocal(tarifaId);
+    }
+  }, [tarifaId, terceroTarifaLoading]);
 
   const validateForm = (): { field: string; message: string } | null => {
     if (!form.fecha) return { field: 'fecha', message: 'Selecciona la fecha.' };
@@ -2654,6 +2504,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     if (!form.empresaId) return { field: 'empresa', message: 'Selecciona la empresa.' };
     if (!form.responsableEconomicoId) return { field: 'responsable', message: 'Selecciona el responsable económico.' };
     if (!form.sedeId) return { field: 'sede', message: 'Selecciona la sede.' };
+    if (localItems.length === 0) return { field: 'consumos', message: 'Agrega al menos un consumo.' };
     if (form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID && !form.numProveedor.trim()) return { field: 'numProveedor', message: 'Ingresa el N° de proveedor.' };
     if (form.cubrimientoId === CUBRIMIENTO_HOSPITALES_ID && !form.tiempoEntrega.trim()) return { field: 'tiempoEntrega', message: 'Ingresa el tiempo de entrega.' };
     if (form.tieneDcto && !form.porcentajeDcto.trim() && !form.vrDctoPesos.trim()) return { field: 'porcentajeDcto', message: 'Ingresa el porcentaje y/o el valor del descuento.' };
@@ -2691,17 +2542,12 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
     form.tieneDcto !== cotizacion.tieneDcto ||
     form.porcentajeDcto !== (cotizacion.porcentajeDcto !== null ? String(cotizacion.porcentajeDcto) : '') ||
     form.vrDctoPesos !== (cotizacion.vrDctoPesos !== null ? String(cotizacion.vrDctoPesos) : '') ||
-    form.impuestos !== (cotizacion.impuestos ?? '');
+    form.impuestos !== (cotizacion.impuestos ?? '') ||
+    itemsChanged;
 
   const handleGuardar = () => {
     if (formError) { setError(formError); return; }
-    if (!hasFormChanges) {
-      // Los consumos (agregar/editar/eliminar) ya se guardan solos apenas ocurren, no con este
-      // botón — pero si eso fue lo único que cambió, Guardar debe avisar igual, no salir en
-      // silencio como si no hubiera pasado nada.
-      if (itemsChanged) onSaved('Cotización editada'); else onCancel();
-      return;
-    }
+    if (!hasFormChanges) { onCancel(); return; }
     setError(null);
     updateMutation.mutate();
   };
@@ -2872,7 +2718,7 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
         valueId={form.paqueteId}
         valueLabel={form.paqueteLabel}
         onSelect={(id, label) => setForm({ ...form, paqueteId: id, paqueteLabel: label, nivel: id ? (form.nivel || NIVEL_OPTIONS[0]) : '' })}
-        disabled={!tarifaId || (!form.paqueteId && cotizacion.items.length > 0)}
+        disabled={!tarifaId || (!form.paqueteId && localItems.length > 0)}
         disabledHint={!tarifaId ? 'Selecciona primero una tarifa' : 'No puedes agregar un paquete mientras haya consumos agregados'}
       />
 
@@ -2893,13 +2739,13 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
 
       <div style={styles.sectionDivider} />
 
-      <div style={styles.formGroup}>
+      <div style={styles.formGroup} id="cotizacion-edit-field-consumos">
         <div style={styles.sectionHeader}>
           <span style={{ ...styles.sectionTitle, color: '#374151' }}>Consumos</span>
-          <span style={styles.countBadge}>{cotizacion.items.length}</span>
+          <span style={styles.countBadge}>{localItems.length}</span>
         </div>
 
-        {cotizacion.items.length > 0 && tarifaLabel && (
+        {localItems.length > 0 && tarifaLabel && (
           <div style={styles.tarifaHint}>
             El valor unitario de los consumos es referente a la tarifa <strong style={{ color: '#3f6510' }}>{tarifaLabel}</strong>.
           </div>
@@ -2908,8 +2754,9 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
         {form.paqueteId && paqueteNota && (
           <ImportNotaBanner message={paqueteNota} onClose={() => setPaqueteNota(null)} />
         )}
+        {error?.field === 'consumos' && <span style={styles.errorText}>{error.message}</span>}
 
-        {cotizacion.items.length === 0 ? (
+        {localItems.length === 0 ? (
           <div style={styles.emptySection}>No hay consumos</div>
         ) : (
           <div style={styles.consumosTableWrap}>
@@ -2922,60 +2769,53 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
                 </tr>
               </thead>
               <tbody>
-                {cotizacion.items.map(it => {
-                  const producto = `${it.referencia ? `${it.referencia} / ` : ''}${it.descripcion ?? '-'}${it.sistema ? ` (${it.sistema})` : ''}`;
-                  return (
-                    <tr
-                      key={it.id}
-                      style={{ cursor: 'pointer' }}
-                      onClick={() => setSelectedItem(it)}
-                      onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f9fafb'; }}
-                      onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-                    >
-                      <td style={styles.consumosTd}>{it.cantidad ?? '-'}</td>
-                      <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={producto}>
-                        {producto}
-                        {it.esEspecial && <span style={{ ...styles.especialTag, marginLeft: '0.4rem' }} title="Nombre/referencia especial de este hospital">Especial</span>}
-                      </td>
-                      <td style={styles.consumosTd}>{formatMoney(it.valorUnitario)}</td>
-                      <td style={{ ...styles.consumosTd, fontWeight: 700, color: '#3f6510' }}>{formatMoney(it.valor)}</td>
-                      <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={it.observaciones ?? undefined}>{it.observaciones ?? '-'}</td>
-                      <td style={styles.consumosTd} onClick={e => e.stopPropagation()}>
-                        {confirmDeleteItemId === it.id ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                            <button
-                              type="button"
-                              style={styles.rowDeleteBtn}
-                              title="Confirmar eliminar"
-                              disabled={deleteItemMutation.isPending}
-                              onClick={() => deleteItemMutation.mutate(it.id)}
-                            >
-                              <Check size={14} />
-                            </button>
-                            <button
-                              type="button"
-                              style={{ ...styles.rowDeleteBtn, color: '#6b6b60' }}
-                              title="Cancelar"
-                              onClick={() => setConfirmDeleteItemId(null)}
-                            >
-                              <X size={14} />
-                            </button>
-                          </div>
-                        ) : (
+                {localItems.map(it => (
+                  <tr
+                    key={it.localId}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => setSelectedStagedItem(it)}
+                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f9fafb'; }}
+                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                  >
+                    <td style={styles.consumosTd}>{it.cantidad || '-'}</td>
+                    <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={it.productoLabel}>{it.productoLabel}</td>
+                    <td style={styles.consumosTd}>{formatMoney(Number(it.valorUnitario))}</td>
+                    <td style={{ ...styles.consumosTd, fontWeight: 700, color: '#3f6510' }}>{formatMoney(Number(it.valor))}</td>
+                    <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={it.observaciones || undefined}>{it.observaciones || '-'}</td>
+                    <td style={styles.consumosTd} onClick={e => e.stopPropagation()}>
+                      {confirmDeleteItemId === it.localId ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                           <button
                             type="button"
-                            style={{ ...styles.rowDeleteBtn, ...(cotizacion.items.length <= 1 ? { opacity: 0.35, cursor: 'not-allowed' } : {}) }}
-                            title={cotizacion.items.length <= 1 ? 'La cotización debe tener al menos un consumo' : 'Eliminar'}
-                            disabled={cotizacion.items.length <= 1}
-                            onClick={() => setConfirmDeleteItemId(it.id)}
+                            style={styles.rowDeleteBtn}
+                            title="Confirmar eliminar"
+                            onClick={() => quitarConsumoLocal(it.localId)}
                           >
-                            <Trash2 size={14} />
+                            <Check size={14} />
                           </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                          <button
+                            type="button"
+                            style={{ ...styles.rowDeleteBtn, color: '#6b6b60' }}
+                            title="Cancelar"
+                            onClick={() => setConfirmDeleteItemId(null)}
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          style={{ ...styles.rowDeleteBtn, ...(localItems.length <= 1 ? { opacity: 0.35, cursor: 'not-allowed' } : {}) }}
+                          title={localItems.length <= 1 ? 'La cotización debe tener al menos un consumo' : 'Eliminar'}
+                          disabled={localItems.length <= 1}
+                          onClick={() => setConfirmDeleteItemId(it.localId)}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -3014,36 +2854,27 @@ function EditCotizacionForm({ cotizacion, onCancel, onSaved, onNotify }: {
         )}
 
         {showAddItem && (
-          <AddItemForm
-            cotizacionId={cotizacion.id}
+          <AddStagedItemForm
             tarifaId={tarifaId}
             tarifaLabel={tarifaLabel}
             hospitalId={form.hospitalId}
-            items={cotizacion.items}
-            onSelectItem={setSelectedItem}
+            items={localItems}
+            searchProductos={(search, tId, hId) => cotizacionesService.searchProductos(search, undefined, tId, hId)}
+            onSelectItem={setSelectedStagedItem}
+            onAdd={agregarConsumoLocal}
             onDone={() => setShowAddItem(false)}
-            onSaved={() => {
-              setItemsChanged(true);
-              onNotify('Consumo agregado');
-              setForm(prev => (prev.paqueteId ? { ...prev, paqueteId: '', paqueteLabel: '', nivel: '' } : prev));
-            }}
           />
         )}
 
-        {selectedItem && (
-          <ItemDetailModal
-            item={selectedItem}
-            cotizacionId={cotizacion.id}
-            totalItems={cotizacion.items.length}
-            onClose={() => setSelectedItem(null)}
-            onSaved={() => { setItemsChanged(true); onNotify('Consumo actualizado'); }}
-            onDeleted={() => {
-              setItemsChanged(true);
-              onNotify('Consumo eliminado');
-              // Igual que al eliminar desde la fila de la tabla: tocar los consumos de una
-              // cotización con paquete la desvincula del paquete.
-              setForm(prev => (prev.paqueteId ? { ...prev, paqueteId: '', paqueteLabel: '', nivel: '' } : prev));
-            }}
+        {selectedStagedItem && (
+          <StagedItemDetailModal
+            item={selectedStagedItem}
+            tarifaId={tarifaId}
+            hospitalId={form.hospitalId}
+            searchProductos={(search, tId, hId) => cotizacionesService.searchProductos(search, undefined, tId, hId)}
+            onClose={() => setSelectedStagedItem(null)}
+            onSave={updated => { editarConsumoLocal(updated); setSelectedStagedItem(null); }}
+            onDelete={() => { quitarConsumoLocal(selectedStagedItem.localId); setSelectedStagedItem(null); }}
           />
         )}
       </div>
@@ -3302,7 +3133,7 @@ function NuevaCotizacionModal({ onClose, onNotify }: {
 
   // Si cambia el Cubrimiento o el Responsable Económico (y con eso la tarifa resuelta) y ya hay
   // consumos agregados a mano, se recalculan sus precios contra la nueva tarifa — mismo
-  // comportamiento que en edición (recalcPreciosMutation), pero acá los consumos todavía viven en
+  // comportamiento que en edición (recalcLocalPrecios), pero acá los consumos todavía viven en
   // memoria (no hay cotizacionId), así que se resuelve por productoId en vez de por cotización.
   // Si los consumos vienen de un paquete, ya se recalculan solos vía paqueteConsumosQuery arriba.
   const recalculatedTarifaRef = useRef<string | null>(null);
@@ -4096,11 +3927,16 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
   const navigate = useNavigateWithLoading();
   const queryClient = useQueryClient();
   const [selectedItem, setSelectedItem] = useState<CotizacionItem | null>(null);
-  const [mainTab, setMainTab] = useState<'general' | 'comercial' | 'consumos' | 'totales'>('general');
+  const [consumosSearch, setConsumosSearch] = useState('');
+  const [consumosFiltro, setConsumosFiltro] = useState<'todos' | 'material' | 'renta'>('todos');
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [sendingWhatsapp, setSendingWhatsapp] = useState(false);
+  // Respaldo de "Enviar por WhatsApp" cuando el navegador no soporta compartir archivos (ver
+  // enviarCotizacionPorWhatsapp) — mismo patrón que ProgramacionDetailPage: un modal con un link
+  // real a web.whatsapp.com, nunca una apertura automática.
+  const [whatsappLinkFileName, setWhatsappLinkFileName] = useState<string | null>(null);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showSignaturePad, setShowSignaturePad] = useState(false);
   const [showFirmaSetup, setShowFirmaSetup] = useState(false);
@@ -4131,15 +3967,6 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
     },
   });
 
-  // El modal saltaba de tamaño de golpe al cambiar de pestaña (cada una tiene un alto distinto).
-  // Se mide el contenido de la pestaña activa y se anima ese alto con CSS en vez de dejar que el
-  // navegador haga el reflow instantáneo — el fade del contenido (page-fade-in, ver className más
-  // abajo) hace que el cambio de pestaña también se sienta fluido, no solo el cambio de tamaño.
-  const tabContentRef = useRef<HTMLDivElement>(null);
-  const [tabContentHeight, setTabContentHeight] = useState<number | undefined>(undefined);
-  useLayoutEffect(() => {
-    if (tabContentRef.current) setTabContentHeight(tabContentRef.current.scrollHeight);
-  }, [mainTab, data]);
   // El formulario de edición suele ser más alto que la vista normal y necesita scroll propio
   // (modalContent tiene overflow:auto) — si quedabas scrolleado hacia abajo mientras editabas y
   // le dabas a la X, ese scroll NO se reseteaba solo al volver a la vista (más corta), así que el
@@ -4197,7 +4024,13 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
       // En escritorio no se avisa nunca: incluso cuando el navegador sí soporta compartir
       // archivos (algunas versiones de Windows lo hacen), ahí se abre la app de WhatsApp
       // Desktop y el usuario todavía tiene que confirmar el envío ahí — no es un hecho consumado.
-      if (resultado === 'compartido' && isMobile) onNotify('Cotización enviada por WhatsApp');
+      if (resultado.tipo === 'compartido' && isMobile) onNotify('Cotización enviada por WhatsApp');
+      // 'respaldo': el navegador no soporta adjuntar archivos vía compartir (típico en
+      // escritorio) — se muestra el modal de abajo (showWhatsappLink) con la explicación de que
+      // es una limitación del navegador (no un fallo) y el link real para abrir WhatsApp.
+      if (resultado.tipo === 'respaldo') {
+        setWhatsappLinkFileName(resultado.fileName);
+      }
     } catch (err) {
       alert('No se pudo enviar por WhatsApp. Intenta de nuevo.');
       console.error(err);
@@ -4339,36 +4172,48 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
 
   return (
     <div className="modal-overlay-anim" style={styles.modalOverlay}>
-      <div ref={modalContentRef} className="modal-content-anim" style={{ ...styles.modalContent, overflowX: 'hidden' as const }} onClick={e => e.stopPropagation()}>
-        {editing && (
-          <div style={{ ...styles.modalHeader, justifyContent: 'flex-start' as const, gap: '0.75rem' }}>
-            <button style={styles.closeBtn} onClick={() => setEditing(false)}>
+      <div ref={modalContentRef} className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '1320px', overflowX: 'hidden' as const }} onClick={e => e.stopPropagation()}>
+        <div style={{ ...styles.modalHeader, backgroundColor: '#fff', zIndex: 2 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={styles.modalTitleIconBadge}>
+              <MaterialIcon name="request_quote" size={24} color="#4d7a13" />
+            </span>
+            <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.1rem' }}>
+              <span style={styles.modalTitleLabel}>Cotización</span>
+              <h2 style={styles.modalTitle}>{data?.numCotizacion || data?.id || ''}</h2>
+              {(data?.sede || data?.usuario || data?.responsableEconomico) && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.78rem', color: '#6b6b60', flexWrap: 'wrap' as const }}>
+                  {data?.sede && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <MaterialIcon name="location_on" size={13} color="#9ca3af" />
+                      {data.sede}
+                    </span>
+                  )}
+                  {data?.usuario && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <MaterialIcon name="person" size={13} color="#9ca3af" />
+                      {data.usuario}
+                    </span>
+                  )}
+                  {data?.responsableEconomico && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <MaterialIcon name="payments" size={13} color="#9ca3af" />
+                      {data.responsableEconomico}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' as const, justifyContent: 'flex-end' as const }}>
+            {!isMobile && actionButtons}
+            <button style={styles.closeBtn} onClick={onClose}>
               <X size={18} />
             </button>
-            <h2 style={styles.modalTitle}>Editar cotización</h2>
           </div>
-        )}
-        <div style={{ ...styles.modalBody, paddingTop: editing ? '0.75rem' : '1.5rem' }}>
-          {!editing && (
+        </div>
+        <div style={styles.modalBody}>
           <div style={{ ...styles.detailHeaderCard, paddingBottom: '1.25rem', borderBottom: '1px solid #eeeee6', marginBottom: '1.5rem' }}>
-            <div style={{ ...styles.detailHeaderTopRow, justifyContent: 'space-between' as const, marginBottom: isMobile ? '0.85rem' : '1.25rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <span style={styles.modalTitleIconBadge}>
-                  <MaterialIcon name="request_quote" size={20} color="#4d7a13" />
-                </span>
-                <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.1rem' }}>
-                  <span style={styles.modalTitleLabel}>Cotización</span>
-                  <h2 style={styles.modalTitle}>{data?.numCotizacion || data?.id || ''}</h2>
-                </div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' as const, justifyContent: 'flex-end' as const }}>
-                {!isMobile && actionButtons}
-                <button style={styles.closeBtn} onClick={onClose}>
-                  <X size={18} />
-                </button>
-              </div>
-            </div>
-
             {isMobile && actionButtons && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.25rem' }}>
                 {actionButtons}
@@ -4377,56 +4222,40 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
 
             {data && totales && !isLoading && !confirmDelete && (
               <>
-                <div style={styles.summaryBar}>
-                  <div style={styles.summaryBarItem}>
-                    <span style={{ ...styles.detalleLabel, fontWeight: 500 }}>Total</span>
-                    <span style={{ ...styles.detalleValue, fontWeight: 600, color: '#3f6510' }}>{formatMoney(totales.total)}</span>
-                  </div>
-                  <div style={styles.summaryBarItem}>
-                    <span style={{ ...styles.detalleLabel, fontWeight: 500 }}>Hospital</span>
-                    <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{data.hospital ?? '-'}</span>
-                  </div>
-                  <div style={styles.summaryBarItem}>
-                    <span style={{ ...styles.detalleLabel, fontWeight: 500 }}>Usuario</span>
-                    <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{data.usuario ?? '-'}</span>
-                  </div>
-                  <div style={styles.summaryBarItem}>
-                    <span style={{ ...styles.detalleLabel, fontWeight: 500 }}>Fecha</span>
-                    <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{formatDate(data.fecha)}</span>
-                  </div>
-                </div>
 
-                <div style={{ ...styles.infoTabBar, marginBottom: 0, borderBottom: 'none', overflowX: 'auto' as const, overflowY: 'hidden' as const, flexWrap: 'nowrap' as const, WebkitOverflowScrolling: 'touch' as const, touchAction: 'pan-x' as const }}>
-                  <button
-                    style={{ ...styles.infoTabBtn, ...(mainTab === 'general' ? styles.infoTabBtnActive : styles.infoTabBtnInactive) }}
-                    onClick={e => { setMainTab('general'); e.currentTarget.blur(); }}
-                  >
-                    Información General
-                  </button>
-                  <button
-                    style={{ ...styles.infoTabBtn, ...(mainTab === 'comercial' ? styles.infoTabBtnActive : styles.infoTabBtnInactive) }}
-                    onClick={e => { setMainTab('comercial'); e.currentTarget.blur(); }}
-                  >
-                    Datos comerciales
-                  </button>
-                  <button
-                    style={{ ...styles.infoTabBtn, ...(mainTab === 'consumos' ? styles.infoTabBtnActive : styles.infoTabBtnInactive) }}
-                    onClick={e => { setMainTab('consumos'); e.currentTarget.blur(); }}
-                  >
-                    Consumos
-                    <span style={styles.countBadge}>{data.items.length}</span>
-                  </button>
-                  <button
-                    style={{ ...styles.infoTabBtn, ...(mainTab === 'totales' ? styles.infoTabBtnActive : styles.infoTabBtnInactive) }}
-                    onClick={e => { setMainTab('totales'); e.currentTarget.blur(); }}
-                  >
-                    Totales
-                  </button>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(4, minmax(0, 1fr))', gap: '0.85rem' }}>
+                  <div style={styles.cotizInfoCard}>
+                    <span style={styles.cotizInfoIconBadge}><MaterialIcon name="person" size={16} /></span>
+                    <div style={{ minWidth: 0 }}>
+                      <span style={styles.cotizInfoLabel}>Dirigido a</span>
+                      <span style={{ ...styles.cotizInfoValue, whiteSpace: 'normal' as const, overflow: 'visible', textOverflow: 'clip' }}>{data.dirigidoA ?? '-'}</span>
+                    </div>
+                  </div>
+                  <div style={styles.cotizInfoCard}>
+                    <span style={styles.cotizInfoIconBadge}><MaterialIcon name="local_hospital" size={16} /></span>
+                    <div style={{ minWidth: 0 }}>
+                      <span style={styles.cotizInfoLabel}>Hospital</span>
+                      <span style={{ ...styles.cotizInfoValue, whiteSpace: 'normal' as const, overflow: 'visible', textOverflow: 'clip' }}>{data.hospital ?? '-'}</span>
+                    </div>
+                  </div>
+                  <div style={styles.cotizInfoCard}>
+                    <span style={{ ...styles.cotizInfoIconBadge, borderRadius: '50%', backgroundColor: '#dbeafe', color: '#1d4ed8' }}>{data.medico ? getNombreInitials(data.medico) : <MaterialIcon name="stethoscope" size={16} />}</span>
+                    <div style={{ minWidth: 0 }}>
+                      <span style={styles.cotizInfoLabel}>Médico</span>
+                      <span style={{ ...styles.cotizInfoValue, whiteSpace: 'normal' as const, overflow: 'visible', textOverflow: 'clip' }}>{data.medico ?? '-'}</span>
+                    </div>
+                  </div>
+                  <div style={styles.cotizInfoCard}>
+                    <span style={styles.cotizInfoIconBadge}><MaterialIcon name="health_and_safety" size={16} /></span>
+                    <div style={{ minWidth: 0 }}>
+                      <span style={styles.cotizInfoLabel}>Cirugía</span>
+                      <span style={{ ...styles.cotizInfoValue, whiteSpace: 'normal' as const, overflow: 'visible', textOverflow: 'clip' }}>{data.cirugia ?? '-'}</span>
+                    </div>
+                  </div>
                 </div>
               </>
             )}
           </div>
-          )}
 
           {isLoading || !data ? (
             <div key="loading" className="page-fade-in" style={{ ...styles.detailBodyCard, textAlign: 'center' as const, color: '#9ca3af' }}>Cargando...</div>
@@ -4440,219 +4269,235 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
                 </button>
               </div>
             </div>
-          ) : editing ? (
-            <div key="editing" className="page-fade-in" style={styles.detailBodyCard}>
-              <EditCotizacionForm
-                cotizacion={data}
-                onCancel={() => setEditing(false)}
-                onSaved={msg => { setEditing(false); onNotify(msg); }}
-                onNotify={onNotify}
-              />
-            </div>
           ) : totales && (() => {
-            const { subtotal, totalAntesImpuestos, iva, retencion, total } = totales;
+            const { subtotal, vrDcto, totalAntesImpuestos, iva, retencion, total } = totales;
+            const pctDescuento = subtotal > 0 ? (vrDcto / subtotal) * 100 : 0;
+            const pctCobrar = 100 - pctDescuento;
+            const term = normalizeSearch(consumosSearch.trim());
+            const itemsFiltrados = data.items.filter(it => {
+              if (consumosFiltro === 'material' && it.esRenta) return false;
+              if (consumosFiltro === 'renta' && !it.esRenta) return false;
+              if (!term) return true;
+              return normalizeSearch(it.referencia ?? '').includes(term) || normalizeSearch(it.descripcion ?? '').includes(term);
+            });
             return (
-            <div style={{ height: tabContentHeight, overflow: 'hidden', transition: 'height 0.3s ease' }}>
-            <div ref={tabContentRef} key={mainTab} className="page-fade-in" style={styles.detailBodyCard}>
-              {mainTab === 'general' && (
-                <div style={styles.infoSectionBox}>
-                  <div style={styles.detalleGrid}>
-                    <DetalleItem label="N° Cotización" bold labelBold={false}>{data.numCotizacion || data.id}</DetalleItem>
-                    <DetalleItem label="Registrado Por" tag>{data.usuario ?? '-'}</DetalleItem>
-                    <DetalleItem label="Marca de Tiempo" bold labelBold={false}>{formatDateTime(data.marcaDeTiempo)}</DetalleItem>
-                    <DetalleItem label="Fecha" bold labelBold={false}>{formatDate(data.fecha)}</DetalleItem>
-                    <DetalleItem label="Dirigido a" bold labelBold={false}>{data.dirigidoA ?? '-'}</DetalleItem>
-                    <DetalleItem label="Médico" tag>{data.medico ?? '-'}</DetalleItem>
-                    <DetalleItem label="Hospital" tag>{data.hospital ?? '-'}</DetalleItem>
-                    <DetalleItem label="Cirugía" bold labelBold={false}>{data.cirugia ?? '-'}</DetalleItem>
-                    <DetalleItem label="Sede" bold labelBold={false}>{data.sede ?? '-'}</DetalleItem>
-                  </div>
-                </div>
-              )}
-
-              {mainTab === 'comercial' && (
-                <div style={styles.infoSectionBox}>
-                  <div style={styles.detalleGrid}>
-                    <DetalleItem label="Cubrimiento" bold labelBold={false}>{data.cubrimiento ?? '-'}</DetalleItem>
-                    <DetalleItem label="Responsable Económico" bold labelBold={false}>{data.responsableEconomico ?? '-'}</DetalleItem>
-                    <DetalleItem label="N° Proveedor" bold labelBold={false}>{data.numProveedor ?? '-'}</DetalleItem>
-                    <DetalleItem label="Tarifa" bold labelBold={false}>{data.tarifa ?? '-'}</DetalleItem>
-                    <DetalleItem label="Tiempo de Entrega" bold labelBold={false}>{data.tiempoEntrega ?? '-'}</DetalleItem>
-                    <DetalleItem label="Empresa" bold labelBold={false}>{data.empresa ?? '-'}</DetalleItem>
-                    <DetalleItem label="¿Tiene Descuento?" bold labelBold={false}>{data.tieneDcto ? 'Sí' : 'No'}</DetalleItem>
-                    {data.tieneDcto && (
-                      <>
-                        <DetalleItem label="Porcentaje de descuento" bold labelBold={false}>{data.porcentajeDcto !== null ? `${data.porcentajeDcto}%` : '-'}</DetalleItem>
-                        <DetalleItem label="Valor de descuento fijo ($)" bold labelBold={false}>{formatMoney(data.vrDctoPesos)}</DetalleItem>
-                        <DetalleItem label="Total descuento" bold labelBold={false}>{formatMoney(data.vrDcto)}</DetalleItem>
-                      </>
-                    )}
-                    <DetalleItem label="Impuestos" bold labelBold={false}>{data.impuestos ?? '-'}</DetalleItem>
-                    <DetalleItem label="Paquete" bold labelBold={false}>{data.paquete ?? '-'}</DetalleItem>
-                    <DetalleItem label="Observaciones" bold labelBold={false}>{data.observaciones ?? '-'}</DetalleItem>
-                    <DetalleItem label="Nota" labelBold={false}>{data.nota ?? '-'}</DetalleItem>
-                    <DetalleItem label="Firma" labelBold={false}>
-                      {data.firma ? (
-                        <img src={data.firma} alt="Firma" style={{ width: '160px', height: '70px', objectFit: 'contain' as const, border: '1px solid #e5e7eb', borderRadius: '6px', backgroundColor: '#fff', display: 'block' }} />
-                      ) : '-'}
-                    </DetalleItem>
-                  </div>
-                </div>
-              )}
-
-              {mainTab === 'consumos' && (
-              <>
-              {data.items.length > 0 && data.tarifa && (
-                <div style={styles.tarifaHint}>
-                  El valor unitario de los consumos es referente a la tarifa <strong style={{ color: '#3f6510' }}>{data.tarifa}</strong>.
-                </div>
-              )}
-
-              {data.items.length === 0 ? (
-                <div style={styles.emptySection}>No hay consumos</div>
-              ) : (
-                <div style={styles.consumosTableWrap}>
-                  <table style={styles.consumosTable}>
-                    <thead>
-                      <tr>
-                        {['Cant.', 'Producto', 'Valor Unit.', 'Valor', 'OBSERV.'].map((h, i) => (
-                          <th key={i} style={styles.consumosTh}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.items.map(it => {
-                        const producto = `${it.referencia ? `${it.referencia} / ` : ''}${it.descripcion ?? '-'}${it.sistema ? ` (${it.sistema})` : ''}`;
-                        return (
-                          <tr
-                            key={it.id}
-                            style={{ cursor: 'pointer' }}
-                            onClick={() => setSelectedItem(it)}
-                            onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f9fafb'; }}
-                            onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-                          >
-                            <td style={styles.consumosTd}>{it.cantidad ?? '-'}</td>
-                            <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={producto}>
-                              {producto}
-                              {it.esEspecial && <span style={{ ...styles.especialTag, marginLeft: '0.4rem' }} title="Nombre/referencia especial de este hospital">Especial</span>}
-                            </td>
-                            <td style={styles.consumosTd}>{formatMoney(it.valorUnitario)}</td>
-                            <td style={{ ...styles.consumosTd, fontWeight: 700, color: '#3f6510' }}>{formatMoney(it.valor)}</td>
-                            <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={it.observaciones ?? undefined}>{it.observaciones ?? '-'}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              </>
-              )}
-
-              {mainTab === 'totales' && (
-              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, gap: '2rem', alignItems: 'flex-start' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={styles.sectionHeader}>
-                    <span style={{ ...styles.sectionTitle, fontWeight: 500 }}>Remisión Asociada</span>
-                    <span style={styles.countBadge}>{data.remisionesAsociadas.length}</span>
-                  </div>
-
-                  {data.remisionesAsociadas.length === 0 ? (
-                    <div style={styles.emptySection}>Sin remisiones asociadas</div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.5rem' }}>
-                      {data.remisionesAsociadas.map(r => (
-                        <div
-                          key={r.id}
-                          style={styles.remisionRow}
-                          onClick={() => navigate(`/operacion/remisiones/${r.id}`, '/operacion/remisiones/:id')}
-                        >
-                          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: '0.8rem', fontWeight: 700, color: '#6b8c1f' }}>
-                            {r.numRemision || r.id}
-                          </span>
-                          <span style={{ color: '#6b6b60', fontSize: '0.85rem' }}>{r.estado ?? '-'}</span>
+            <div className="page-fade-in" style={styles.detailBodyCard}>
+              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, gap: '1.5rem', alignItems: 'flex-start' }}>
+                <div style={{ flex: 1, minWidth: 0, width: '100%' }}>
+                  <div style={styles.infoSectionBox}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap' as const, gap: '0.75rem', marginBottom: '0.9rem' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span style={styles.sectionTitle}>Consumos</span>
+                          <span style={styles.countBadge}>{data.items.length}</span>
                         </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div style={{ marginTop: '1.5rem' }}>
-                    <div style={styles.sectionHeader}>
-                      <span style={{ ...styles.sectionTitle, fontWeight: 500 }}>Programación asociada</span>
-                    </div>
-
-                    {!data.programacionAsociada ? (
-                      <div style={styles.emptySection}>Sin programación asociada</div>
-                    ) : (
-                      <div
-                        style={styles.remisionRow}
-                        onClick={() => navigate(`/operacion/programaciones/${data.programacionAsociada!.id}`, '/operacion/programaciones/:id')}
-                      >
-                        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', minWidth: 0 }}>
-                          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#4d7a13' }}>
-                            {data.programacionAsociada.numProgram || data.programacionAsociada.id}
-                          </span>
-                          {data.programacionAsociada.medicos.length > 0 && (
-                            <span style={{ color: '#6b6b60', fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
-                              {data.programacionAsociada.medicos.join(', ')}
+                        {data.tarifa && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.78rem', color: '#6b6b60' }}>
+                            Precios unitarios según tarifa
+                            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '0.15rem 0.6rem', borderRadius: '999px', backgroundColor: '#e9f2d8', color: '#6b8c1f', fontSize: '0.75rem', fontWeight: 700 }}>
+                              {data.tarifa}
                             </span>
-                          )}
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', alignItems: 'flex-end', flexShrink: 0 }}>
-                          <span style={{ color: '#33342a', fontSize: '0.85rem', fontWeight: 600 }}>
-                            {formatDate(data.programacionAsociada.fechaQx)}{data.programacionAsociada.horaQx ? ` · ${data.programacionAsociada.horaQx}` : ''}
                           </span>
-                          {data.programacionAsociada.sede && (
-                            <span style={{ color: '#6b6b60', fontSize: '0.78rem' }}>{data.programacionAsociada.sede}</span>
-                          )}
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' as const, flex: isMobile ? '1 1 100%' : undefined }}>
+                        <div style={{ ...styles.searchWrap, minWidth: '220px', flex: isMobile ? '1 1 100%' : undefined }}>
+                          <Search size={14} color="#9ca3af" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+                          <input
+                            style={{ ...styles.searchInput, backgroundColor: '#fff', border: '1px solid #eeeee6', padding: '0.5rem 0.75rem 0.5rem 2.1rem', fontSize: '0.8rem' }}
+                            placeholder="Buscar código o producto"
+                            value={consumosSearch}
+                            onChange={e => setConsumosSearch(e.target.value)}
+                          />
+                        </div>
+                        <div style={{ position: 'relative' as const, display: 'flex', backgroundColor: '#f3f4f6', borderRadius: '10px', padding: '0.2rem' }}>
+                          <div
+                            style={{
+                              position: 'absolute' as const, top: '0.2rem', bottom: '0.2rem', left: '0.2rem',
+                              width: 'calc((100% - 0.4rem) / 3)',
+                              transform: `translateX(${['todos', 'material', 'renta'].indexOf(consumosFiltro) * 100}%)`,
+                              transition: 'transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                              backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                            }}
+                          />
+                          {([['todos', 'Todos'], ['material', 'Material'], ['renta', 'Renta']] as const).map(([key, label]) => (
+                            <button
+                              key={key}
+                              type="button"
+                              style={{ ...styles.consumosFiltroBtn, position: 'relative' as const, flex: 1, ...(consumosFiltro === key ? styles.consumosFiltroBtnActive : {}) }}
+                              onClick={() => setConsumosFiltro(key)}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {itemsFiltrados.length === 0 ? (
+                      <div key={consumosFiltro} className="page-fade-in" style={styles.emptySection}>{data.items.length === 0 ? 'No hay consumos' : 'Sin resultados para este filtro/búsqueda'}</div>
+                    ) : (
+                      <div key={consumosFiltro} className="page-fade-in">
+                        <div style={{ ...styles.consumosTableWrap, backgroundColor: '#fff' }}>
+                          <table style={styles.consumosTable}>
+                            <thead>
+                              <tr>
+                                {['Código', 'Producto', 'Cant.', 'P. Unitario', 'Importe'].map((h, i) => (
+                                  <th key={i} style={{ ...styles.consumosTh, ...(i >= 2 ? { textAlign: 'right' as const } : {}) }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {itemsFiltrados.map(it => {
+                                const producto = `${it.descripcion ?? '-'}${it.sistema ? ` (${it.sistema})` : ''}`;
+                                return (
+                                  <tr
+                                    key={it.id}
+                                    style={{ cursor: 'pointer' }}
+                                    onClick={() => setSelectedItem(it)}
+                                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f9fafb'; }}
+                                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                                  >
+                                    <td style={styles.consumosTd}>{it.referencia ?? '-'}</td>
+                                    <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate, maxWidth: '220px' }} title={producto}>
+                                      {producto}
+                                    </td>
+                                    <td style={{ ...styles.consumosTd, textAlign: 'right' as const }}>{it.cantidad ?? '-'}</td>
+                                    <td style={{ ...styles.consumosTd, textAlign: 'right' as const }}>{formatMoney(it.valorUnitario)}</td>
+                                    <td style={{ ...styles.consumosTd, textAlign: 'right' as const, fontWeight: 700, color: '#3f6510' }}>{formatMoney(it.valor)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
                         </div>
                       </div>
                     )}
+                    {itemsFiltrados.length > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.75rem', fontSize: '0.85rem' }}>
+                        <span style={{ color: '#6b6b60', fontWeight: 600 }}>Subtotal</span>
+                        <span style={{ fontWeight: 700, color: '#3f6510' }}><AnimatedAmount value={itemsFiltrados.reduce((sum, it) => sum + (Number(it.valor) || 0), 0)} /></span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ marginTop: '1.25rem' }}>
+                    <div style={{ ...styles.sectionTitle, marginBottom: '0.9rem' }}>Condiciones comerciales</div>
+                    <div style={styles.infoSectionBox}>
+                      <div style={{ ...styles.detalleGrid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(4, minmax(0, 1fr))' }}>
+                        <DetalleItem small label="Cubrimiento" bold labelBold={false}>{data.cubrimiento ?? '-'}</DetalleItem>
+                        <DetalleItem small label="Responsable económico" bold labelBold={false}>{data.responsableEconomico ?? '-'}</DetalleItem>
+                        <DetalleItem small label="Tarifa" bold labelBold={false}>{data.tarifa ?? '-'}</DetalleItem>
+                        <DetalleItem small label="Tiempo de entrega" bold labelBold={false}>{data.tiempoEntrega ?? '-'}</DetalleItem>
+                        <DetalleItem small label="Empresa" bold labelBold={false}>{data.empresa ?? '-'}</DetalleItem>
+                        <DetalleItem small label="N° proveedor" bold labelBold={false}>{data.numProveedor ?? '-'}</DetalleItem>
+                        <DetalleItem small label="Paquete" bold labelBold={false}>{data.paquete ?? 'No asignado'}</DetalleItem>
+                        <DetalleItem small label="Firma" labelBold={false}>
+                          {data.firma ? (
+                            <img src={data.firma} alt="Firma" style={{ width: '160px', height: '70px', objectFit: 'contain' as const, border: '1px solid #e5e7eb', borderRadius: '6px', backgroundColor: '#fff', display: 'block' }} />
+                          ) : 'Pendiente'}
+                        </DetalleItem>
+                      </div>
+                      {(data.observaciones || data.nota) && (
+                        <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column' as const, gap: '0.75rem' }}>
+                          {data.observaciones && (
+                            <div style={{ backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '8px', padding: '0.75rem 0.9rem' }}>
+                              <DetalleItem small label="Observaciones" bold labelBold={false}>{data.observaciones}</DetalleItem>
+                            </div>
+                          )}
+                          {data.nota && (
+                            <div style={{ backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '8px', padding: '0.75rem 0.9rem' }}>
+                              <DetalleItem small label="Nota" labelBold={false}>{data.nota}</DetalleItem>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={styles.sectionHeader}>
-                    <span style={{ ...styles.sectionTitle, color: '#374151', fontWeight: 500 }}>Totales</span>
+                <div style={{ width: isMobile ? '100%' : '360px', flexShrink: 0, display: 'flex', flexDirection: 'column' as const, gap: '1.25rem' }}>
+                  <div style={styles.infoSectionBox}>
+                    <div style={{ ...styles.sectionTitle, marginBottom: '0.75rem' }}>Resumen financiero</div>
+                    <div style={{ display: 'flex', height: '6px', borderRadius: '999px', overflow: 'hidden', backgroundColor: '#e5e7eb', marginBottom: '0.5rem' }}>
+                      <div style={{ width: `${pctCobrar}%`, backgroundColor: '#6b8c1f' }} />
+                      <div style={{ width: `${pctDescuento}%`, backgroundColor: '#d1d5db' }} />
+                    </div>
+                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' as const, fontSize: '0.7rem', color: '#6b6b60', marginBottom: '1rem' }}>
+                      <span><span style={{ display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#6b8c1f', marginRight: '0.3rem' }} />A cobrar {Math.round(pctCobrar)}%</span>
+                      {vrDcto > 0 && <span><span style={{ display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#d1d5db', marginRight: '0.3rem' }} />Descuento {Math.round(pctDescuento)}%</span>}
+                    </div>
+                    <div style={styles.totalsSummaryBox}>
+                      <div style={styles.totalsSummaryRow}>
+                        <span style={{ ...styles.detalleLabel, fontWeight: 600, textTransform: 'none' as const, fontSize: '0.85rem' }}>Subtotal</span>
+                        <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{formatMoney(subtotal)}</span>
+                      </div>
+                      {data.tieneDcto && !!data.porcentajeDcto && (
+                        <div style={styles.totalsSummaryRow}>
+                          <span style={{ ...styles.detalleLabel, fontWeight: 600, textTransform: 'none' as const, fontSize: '0.85rem' }}>Descuento ({data.porcentajeDcto}%)</span>
+                          <span style={{ ...styles.detalleValue, fontWeight: 600 }}>-{formatMoney(subtotal * (Number(data.porcentajeDcto) || 0) / 100)}</span>
+                        </div>
+                      )}
+                      {data.tieneDcto && !!data.vrDctoPesos && (
+                        <div style={styles.totalsSummaryRow}>
+                          <span style={{ ...styles.detalleLabel, fontWeight: 600, textTransform: 'none' as const, fontSize: '0.85rem' }}>Descuento (valor)</span>
+                          <span style={{ ...styles.detalleValue, fontWeight: 600 }}>-{formatMoney(Number(data.vrDctoPesos) || 0)}</span>
+                        </div>
+                      )}
+                      <div style={styles.totalsSummaryRow}>
+                        <span style={{ ...styles.detalleLabel, fontWeight: 600, textTransform: 'none' as const, fontSize: '0.85rem' }}>Base antes de impuestos</span>
+                        <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{formatMoney(totalAntesImpuestos)}</span>
+                      </div>
+                      <div style={styles.totalsSummaryRow}>
+                        <span style={{ ...styles.detalleLabel, fontWeight: 600, fontSize: '0.85rem' }}>IVA</span>
+                        <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{formatMoney(iva)}</span>
+                      </div>
+                      <div style={styles.totalsSummaryRow}>
+                        <span style={{ ...styles.detalleLabel, fontWeight: 600, textTransform: 'none' as const, fontSize: '0.85rem' }}>Retención</span>
+                        <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{retencion > 0 ? `-${formatMoney(retencion)}` : formatMoney(retencion)}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' as const, alignItems: 'center', backgroundColor: '#16170f', color: '#fff', borderBottomLeftRadius: '10px', borderBottomRightRadius: '10px', padding: '0.75rem 1.25rem', marginTop: '0.2rem', marginLeft: '-1.25rem', marginRight: '-1.25rem', marginBottom: '-1rem' }}>
+                        <span style={{ fontSize: '0.8rem', color: '#fff', fontWeight: 600 }}>Total</span>
+                        <span style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff' }}>{formatMoney(total)}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div style={styles.totalsSummaryBox}>
-                    <div style={styles.totalsSummaryRow}>
-                      <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Subtotal</span>
-                      <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{formatMoney(subtotal)}</span>
-                    </div>
-                    {data.tieneDcto && !!data.porcentajeDcto && (
-                      <div style={styles.totalsSummaryRow}>
-                        <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Descuento ({data.porcentajeDcto}%)</span>
-                        <span style={{ ...styles.detalleValue, fontWeight: 600 }}>-{formatMoney(subtotal * (Number(data.porcentajeDcto) || 0) / 100)}</span>
+
+                  <div style={styles.infoSectionBox}>
+                    <div style={{ ...styles.sectionTitle, marginBottom: '0.75rem' }}>Vinculaciones</div>
+                    <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.75rem' }}>
+                      <div style={styles.vinculacionRow}>
+                        <span style={styles.cotizInfoIconBadge}><MaterialIcon name="calendar_month" size={15} /></span>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <span style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#16170f' }}>Programación</span>
+                          {data.programacionAsociada ? (
+                            <div style={{ cursor: 'pointer' }} onClick={() => navigate(`/operacion/programaciones/${data.programacionAsociada!.id}`, '/operacion/programaciones/:id')}>
+                              <span style={{ display: 'block', fontSize: '0.8rem', color: '#4d7a13', fontWeight: 600 }}>{data.programacionAsociada.numProgram || data.programacionAsociada.id}</span>
+                              <span style={{ display: 'block', fontSize: '0.75rem', color: '#9ca3af' }}>
+                                {formatDate(data.programacionAsociada.fechaQx)}{data.programacionAsociada.horaQx ? ` · ${data.programacionAsociada.horaQx}` : ''}
+                              </span>
+                            </div>
+                          ) : (
+                            <span style={{ display: 'block', fontSize: '0.78rem', color: '#9ca3af' }}>Aún no se vincula a una programación</span>
+                          )}
+                        </div>
                       </div>
-                    )}
-                    {data.tieneDcto && !!data.vrDctoPesos && (
-                      <div style={styles.totalsSummaryRow}>
-                        <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Descuento (valor)</span>
-                        <span style={{ ...styles.detalleValue, fontWeight: 600 }}>-{formatMoney(Number(data.vrDctoPesos) || 0)}</span>
-                      </div>
-                    )}
-                    <div style={styles.totalsSummaryRow}>
-                      <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Total antes de Impuestos</span>
-                      <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{formatMoney(totalAntesImpuestos)}</span>
                     </div>
-                    <div style={styles.totalsSummaryRow}>
-                      <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>IVA</span>
-                      <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{formatMoney(iva)}</span>
-                    </div>
-                    <div style={styles.totalsSummaryRow}>
-                      <span style={{ ...styles.detalleLabel, fontWeight: 600 }}>Retención</span>
-                      <span style={{ ...styles.detalleValue, fontWeight: 600 }}>{retencion > 0 ? `-${formatMoney(retencion)}` : formatMoney(retencion)}</span>
-                    </div>
-                    <div style={styles.totalsSummaryTotalRow}>
-                      <span>Total</span>
-                      <span>{formatMoney(total)}</span>
-                    </div>
+                  </div>
+
+                  <div style={styles.infoSectionBox}>
+                    <div style={{ ...styles.sectionTitle, marginBottom: '0.75rem' }}>Actividad</div>
+                    <ActividadTimeline eventos={[
+                      { key: 'creada', label: 'Cotización creada', sub: `${data.usuario ?? '-'} · ${formatDateTime(data.marcaDeTiempo)}`, fecha: data.marcaDeTiempo },
+                      ...data.ediciones.map((e, i) => ({ key: `editada-${i}`, label: 'Cotización editada', sub: `${e.editadoPor ?? '-'} · ${formatDateTime(e.editadoEn)}`, fecha: e.editadoEn })),
+                      // Fecha desconocida (ej. "firmada" antes de que se empezara a registrar
+                      // firmadoEn) se manda al final en vez de tratarla como la más antigua — no
+                      // sabemos cuándo pasó, pero sí que no es anterior a los eventos con fecha.
+                      ...(data.firma ? [{ key: 'firmada', label: 'Cotización firmada', sub: `${data.firmadoPor ?? '-'} · ${formatDateTime(data.firmadoEn)}`, fecha: data.firmadoEn }] : []),
+                    ]} />
                   </div>
                 </div>
               </div>
-              )}
-            </div>
             </div>
             );
           })()}
@@ -4669,6 +4514,62 @@ export function DetalleModal({ id, onClose, onNotify, onDeleted }: { id: string;
           onDeleted={() => onNotify('Consumo eliminado')}
           readOnly={!editing}
         />
+      )}
+
+      {editing && data && (
+        <div className="modal-overlay-anim" style={{ ...styles.modalOverlay, zIndex: 10010 }}>
+          <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
+            <div style={{ ...styles.modalHeader, justifyContent: 'flex-start' as const, gap: '0.75rem' }}>
+              <button style={styles.closeBtn} onClick={() => setEditing(false)}>
+                <X size={18} />
+              </button>
+              <h2 style={styles.modalTitle}>Editar cotización</h2>
+            </div>
+            <div style={{ ...styles.modalBody, paddingTop: '0.75rem' }}>
+              <EditCotizacionForm
+                cotizacion={data}
+                onCancel={() => setEditing(false)}
+                onSaved={msg => { setEditing(false); onNotify(msg); }}
+                onNotify={onNotify}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {whatsappLinkFileName && (
+        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setWhatsappLinkFileName(null)}>
+          <div className="modal-content-anim" style={{ ...styles.modalContent, maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>Completa el envío manualmente</h2>
+              <button style={styles.closeBtn} onClick={() => setWhatsappLinkFileName(null)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div style={styles.modalBody}>
+              <p style={{ fontSize: '0.85rem', color: '#6b6b60', marginTop: 0 }}>
+                Tu navegador no permite compartir archivos directamente, así que el mensaje ya se copió al portapapeles y el PDF se descargó a tu equipo como "{whatsappLinkFileName}". Al abrir WhatsApp, pégalo en el chat y adjunta ese archivo manualmente.
+              </p>
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+                <button type="button" style={styles.cancelBtn} onClick={() => setWhatsappLinkFileName(null)}>
+                  Cancelar
+                </button>
+                <a
+                  href="https://web.whatsapp.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  // target="_blank" + noopener normal (no un nombre fijo): es la combinación que
+                  // Chrome respeta para mandar el link a WhatsApp instalado como app de escritorio
+                  // en vez de abrir una pestaña — mismo mecanismo que ProgramacionDetailPage.
+                  style={{ ...styles.saveBtn, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+                  onClick={() => setWhatsappLinkFileName(null)}
+                >
+                  Abrir WhatsApp
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {showSignaturePad && (
@@ -4794,31 +4695,8 @@ export default function CotizacionesPage() {
   // mecanismo que ya se usa acá abajo para los modales, sin el truco de iOS (no hace falta
   // "congelar" una posición de scroll previa: esta página nunca debe scrollear, ni antes ni
   // después de este efecto).
-  useEffect(() => {
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = ''; };
-  }, []);
-
-  useEffect(() => {
-    if (!(showCreateModal || selectedId)) return;
-    // overflow:hidden solo en el body no basta en iOS Safari — el fondo se sigue pudiendo
-    // deslizar con el dedo. Fijar la posición del body en el scroll actual sí lo bloquea ahí, y
-    // se restaura la posición exacta al cerrar el modal.
-    const scrollY = window.scrollY;
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.left = '0';
-    document.body.style.right = '0';
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.position = '';
-      document.body.style.top = '';
-      document.body.style.left = '';
-      document.body.style.right = '';
-      document.body.style.overflow = '';
-      window.scrollTo(0, scrollY);
-    };
-  }, [showCreateModal, selectedId]);
+  useBodyScrollLock(true);
+  useBodyScrollLock(!!(showCreateModal || selectedId));
 
   // Deep-link desde el buscador global (/operacion/cotizaciones?id=...): abre el modal de
   // detalle directo al llegar, sin depender de que esa cotización esté en la página cargada.
@@ -5065,7 +4943,7 @@ const styles: Record<string, React.CSSProperties> = {
   modalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.25rem 1.5rem', backgroundColor: '#f9fafb', borderBottom: '1px solid #eeeee6', borderTopLeftRadius: '16px', borderTopRightRadius: '16px', position: 'sticky' as const, top: 0, zIndex: 1 },
   modalTitle: { fontSize: '1.1rem', fontWeight: 700, color: '#16170f', margin: 0 },
   modalTitleLabel: { fontSize: '0.7rem', fontWeight: 550, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
-  modalTitleIconBadge: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '40px', height: '40px', borderRadius: '12px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#4d7a13', flexShrink: 0 },
+  modalTitleIconBadge: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '48px', height: '48px', borderRadius: '14px', backgroundColor: '#e9f2d8', border: '1px solid #dbe8c2', color: '#4d7a13', flexShrink: 0 },
   closeBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '34px', height: '34px', border: 'none', backgroundColor: '#f4f4ee', borderRadius: '8px', cursor: 'pointer', color: '#6b6b60' },
   iconMenuBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '34px', height: '34px', border: '1px solid #e5e7eb', borderRadius: '999px', cursor: 'pointer', color: '#33342a', flexShrink: 0, backgroundColor: 'transparent' },
   moreMenu: { position: 'absolute' as const, top: 'calc(100% + 8px)', right: 0, backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: '180px', overflow: 'hidden', zIndex: 200, padding: '0.35rem' },
@@ -5086,14 +4964,13 @@ const styles: Record<string, React.CSSProperties> = {
   // Sin tarjeta/fondo propio (el modal ya es blanco) — solo una línea divisoria abajo para separar
   // la identidad+resumen+pestañas del contenido de la pestaña activa.
   detailHeaderCard: { borderBottom: '1px solid #eeeee6', paddingBottom: '1.25rem', marginBottom: '1.5rem' },
-  detailHeaderTopRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' as const, gap: '1rem', flexWrap: 'wrap' as const, marginBottom: '1.25rem' },
   detailBodyCard: {},
   // Formato tipo "recibo": filas etiqueta/valor a los extremos, el Total resaltado al final —
   // en vez de la cuadrícula de mayúsculas pequeñas que usan las demás secciones, para que se lea
   // como un resumen financiero en vez de una ficha de datos más.
   // Sin maxWidth: se estira hasta el borde derecho de su columna, para que quede alineado con el
   // botón "Generar PDF" (que también llega hasta ese mismo borde, vía justifyContent:'flex-end').
-  totalsSummaryBox: { backgroundColor: '#f9fafb', border: '1px solid #eeeee6', borderRadius: '10px', padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column' as const, gap: '0.65rem' },
+  totalsSummaryBox: { backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '10px', padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column' as const, gap: '0.65rem' },
   totalsSummaryRow: { display: 'flex', justifyContent: 'space-between' as const, fontSize: '0.875rem', color: '#4b4b40' },
   // Mismo estilo que la columna Total de la lista de cotizaciones: texto oliva en negrita, sin
   // relleno de color — en vez de una barra verde llena.
@@ -5114,6 +4991,14 @@ const styles: Record<string, React.CSSProperties> = {
   productoSistemaTag: { fontSize: '0.7rem', fontWeight: 600, color: '#9ca3af', whiteSpace: 'nowrap' as const, flexShrink: 0 },
   productoClaveTag: { color: '#3f6510' },
   especialTag: { fontSize: '0.65rem', fontWeight: 700, color: '#92400e', backgroundColor: '#fef3c7', border: '1px solid #fde68a', borderRadius: '999px', padding: '0.1rem 0.5rem', whiteSpace: 'nowrap' as const, flexShrink: 0 },
+  rentaTag: { fontSize: '0.65rem', fontWeight: 700, color: '#1d4ed8', backgroundColor: '#dbeafe', border: '1px solid #bfdbfe', borderRadius: '999px', padding: '0.1rem 0.5rem', whiteSpace: 'nowrap' as const, flexShrink: 0 },
+  cotizInfoCard: { display: 'flex', alignItems: 'flex-start', gap: '0.65rem', backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '10px', padding: '0.85rem 1rem', minWidth: 0 },
+  cotizInfoIconBadge: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px', borderRadius: '9px', backgroundColor: '#e9f2d8', color: '#4d7a13', fontSize: '0.7rem', fontWeight: 700, flexShrink: 0 },
+  cotizInfoLabel: { display: 'block', fontSize: '0.7rem', fontWeight: 400, color: '#9ca3af' },
+  cotizInfoValue: { display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  consumosFiltroBtn: { padding: '0.35rem 0.9rem', borderRadius: '8px', border: 'none', backgroundColor: 'transparent', color: '#6b6b60', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', transition: 'color 0.2s ease' },
+  consumosFiltroBtnActive: { color: '#16170f', fontWeight: 700 },
+  vinculacionRow: { display: 'flex', alignItems: 'flex-start', gap: '0.65rem', backgroundColor: '#fff', border: '1px solid #eeeee6', borderRadius: '8px', padding: '0.75rem' },
   // overscrollBehavior:'contain' evita que el gesto de scroll "se escape" hacia el modal que la
   // contiene cuando llegas al límite de la tabla — sin esto, en móvil arrastrar dentro de la tabla
   // podía terminar moviendo el modal completo, dando la sensación de que la tabla "se mueve a

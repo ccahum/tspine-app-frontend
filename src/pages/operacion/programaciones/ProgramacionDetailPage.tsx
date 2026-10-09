@@ -1,11 +1,13 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader, FileText, CheckCircle, Circle, X, Plus, Lock, AlertCircle, CircleX, DollarSign, Trash2, ChevronDown } from 'lucide-react';
+import { Loader, FileText, CheckCircle, Circle, X, Plus, Lock, AlertCircle, CircleX, DollarSign, Trash2, ChevronDown, Send } from 'lucide-react';
 import { SiGmail } from 'react-icons/si';
 import { MaterialIcon } from '../../../components/icons/MaterialIcon';
 import HeaderBackReveal from '../../../components/HeaderBackReveal';
+import { ActividadTimeline } from '../../../components/ActividadTimeline';
 import DatePicker from '../../../components/DatePicker';
 import OptionDropdown from '../../../components/OptionDropdown';
 import SuccessToast from '../../../components/SuccessToast';
@@ -16,12 +18,14 @@ import { api } from '../../../lib/axios';
 import { toLocalDateString } from '../../../lib/date.utils';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
-import { remisionesService, CATEGORIAS_COMISION, TIPOS_COMISION, SELECCIONE_TIPO_COMISION, type RemisionItem, type RemTecnicoItem, type ConsumoGrupo, type ValidacionConsumoGrupo, type ComisionGrupo, type RequisicionItem, type NotaCreditoItem, type GastoRelacionadoItem, type FuenteRelacionadaItem, type DocumentoProgramacionItem, type TecnicoSugeridoItem, type TecnicoOption, type CubrimientoOption, type TarifaOption, type LoteOption, type ProductoOption } from '../../../services/remisiones.service';
+import { remisionesService, type RemisionItem, type RemTecnicoItem, type ConsumoGrupo, type ValidacionConsumoGrupo, type ValidacionConsumoItem, type ComisionGrupo, type RequisicionItem, type NotaCreditoItem, type GastoRelacionadoItem, type FuenteRelacionadaItem, type DocumentoProgramacionItem, type TecnicoSugeridoItem, type TecnicoOption, type CubrimientoOption, type TarifaOption, type ProductoOption } from '../../../services/remisiones.service';
 import AgregarRemisionModal from './AgregarRemisionModal';
 import ValidarConsumoModal from './ValidarConsumoModal';
 import ConsumoDetalleModal from '../consumos/ConsumoDetalleModal';
 import ComisionDetalleModal from '../consumos/ComisionDetalleModal';
+import AgregarComisionModal from '../consumos/AgregarComisionModal';
 import RequisicionDetalleModal from '../requisiciones/RequisicionDetalleModal';
+import InsumoFormModal, { type InsumoFormValues } from '../requisiciones/InsumoFormModal';
 
 // El estado y la lógica de "Agregar remisión" viven en su propio componente
 // (AgregarRemisionModal.tsx) para que escribir en ese formulario no re-renderice toda esta página
@@ -37,6 +41,19 @@ const getTecnicoInitials = (nombreCompleto: string): string => {
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   return (words[0][0] + words[words.length - 2][0]).toUpperCase();
 };
+
+// Categorías fijas de comisión (mismas que CATEGORIAS_COMISION en remisiones.service.ts, usadas
+// en el formulario "Agregar Comisión") — se muestran siempre en este orden en la franja de
+// estadísticas de "Asignación de Comisiones", tengan datos o no.
+const COMISION_CATEGORIAS = ['TÉCNICOS', 'INVERSIONISTAS', 'PLUS'] as const;
+const COMISION_CATEGORIA_LABEL: Record<string, string> = { 'TÉCNICOS': 'Técnicos', 'INVERSIONISTAS': 'Inversionistas', 'PLUS': 'Plus' };
+const COMISION_CATEGORIA_LABEL_SINGULAR: Record<string, string> = { 'TÉCNICOS': 'Técnico', 'INVERSIONISTAS': 'Inversionista', 'PLUS': 'Plus' };
+const COMISION_CATEGORIA_COLOR: Record<string, { text: string; bg: string; border: string }> = {
+  'TÉCNICOS': { text: '#2563eb', bg: '#dbeafe', border: '#bfdbfe' },
+  'INVERSIONISTAS': { text: '#c2730c', bg: '#fef3c7', border: '#fde68a' },
+  'PLUS': { text: '#6d28d9', bg: '#ede9fe', border: '#ddd6fe' },
+};
+const comisionCategoriaColor = (categoria: string) => COMISION_CATEGORIA_COLOR[categoria] ?? { text: '#6b7280', bg: '#f3f4f6', border: '#e5e7eb' };
 
 export const formatMoney = (value: any): string => {
   if (value === null || value === undefined) return '-';
@@ -66,7 +83,6 @@ function AnimatedMoney({ value, start, duration = 500 }: { value: unknown; start
   return <>{`$${display.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</>;
 }
 
-const toSentenceCase = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 
 export const formatDate = (dateString: string | null): string => {
   if (!dateString) return '-';
@@ -136,7 +152,7 @@ export default function ProgramacionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigateWithLoading();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { isMobile } = useResponsiveStyles();
+  const { isMobile, isNarrow } = useResponsiveStyles();
   const [mainTab, setMainTab] = useState('resumen');
   const [isScrolled, setIsScrolled] = useState(false);
   const [showCompactHeader, setShowCompactHeader] = useState(false);
@@ -152,15 +168,11 @@ export default function ProgramacionDetailPage() {
   // useSmoothWheelScroll) — cada ref solo existe en el DOM cuando su pestaña/sección está activa
   // (montaje condicional), así que el hook reintenta engancharse cada vez que cambia mainTab.
   const tecnicosAsociadosScrollRef = useRef<HTMLDivElement>(null);
-  useSmoothWheelScroll(tecnicosAsociadosScrollRef, [mainTab]);
+  const cotizacionesScrollRef = useRef<HTMLDivElement>(null);
   const remisionesScrollRef = useRef<HTMLDivElement>(null);
-  useSmoothWheelScroll(remisionesScrollRef, [mainTab]);
   const requisicionesScrollRef = useRef<HTMLDivElement>(null);
-  useSmoothWheelScroll(requisicionesScrollRef, [mainTab]);
   const notasCreditoScrollRef = useRef<HTMLDivElement>(null);
-  useSmoothWheelScroll(notasCreditoScrollRef, [mainTab]);
   const documentosScrollRef = useRef<HTMLDivElement>(null);
-  useSmoothWheelScroll(documentosScrollRef, [mainTab]);
   const tecnicosSugeridosScrollRef = useRef<HTMLDivElement>(null);
   useSmoothWheelScroll(tecnicosSugeridosScrollRef, [mainTab]);
   const consumosScrollRef = useRef<HTMLDivElement>(null);
@@ -190,7 +202,7 @@ export default function ProgramacionDetailPage() {
   }, [isScrolled, showCompactHeader]);
   const [hoveredTecnicoId, setHoveredTecnicoId] = useState<string | null>(null);
   const [hoveredComisionId, setHoveredComisionId] = useState<string | null>(null);
-  const [hoveredRequisicionId, setHoveredRequisicionId] = useState<string | null>(null);
+  const [comisionFiltro, setComisionFiltro] = useState<string>('todas');
   const [hoveredNotaCreditoId, setHoveredNotaCreditoId] = useState<string | null>(null);
   const [hoveredGastoId, setHoveredGastoId] = useState<string | null>(null);
   const [hoveredFuenteId, setHoveredFuenteId] = useState<string | null>(null);
@@ -212,22 +224,32 @@ export default function ProgramacionDetailPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [showAgregarMenu, setShowAgregarMenu] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [showEnviarMenu, setShowEnviarMenu] = useState(false);
   const agregarMenuRef = useRef<HTMLDivElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
-  const whatsappFileInputRef = useRef<HTMLInputElement>(null);
+  const enviarMenuRef = useRef<HTMLDivElement>(null);
   const [showWhatsappConfirm, setShowWhatsappConfirm] = useState(false);
-  // Modal con un link real a WhatsApp Web (nunca window.open programático — el bloqueador de
-  // pop-ups lo descarta de forma inconsistente justo después de cerrarse el diálogo de
-  // selección de archivo). Solo se usa en el respaldo de "con PDF".
+  // Modal con un link real a WhatsApp Web (nunca window.open programático — con WhatsApp Desktop
+  // instalado, un <a target="_blank"> real sí lo entrega a la app en vez de abrir una pestaña;
+  // window.open programático no es confiable para eso). Mismo modal para "con PDF" y "sin PDF" —
+  // whatsappLinkIncluyePdf solo cambia el texto para mencionar o no el PDF descargado.
   const [whatsappLink, setWhatsappLink] = useState<string | null>(null);
-  // Toast simple para el respaldo de "sin PDF" — ahí sí se puede abrir la pestaña de forma
-  // directa (no hay diálogo de archivo de por medio que rompa el permiso del navegador).
-  const [whatsappCopiedMessage, setWhatsappCopiedMessage] = useState<string | null>(null);
+  const [whatsappLinkIncluyePdf, setWhatsappLinkIncluyePdf] = useState(false);
+  const [whatsappDownloadedFileName, setWhatsappDownloadedFileName] = useState<string | null>(null);
+  // Respaldo del caso en que sí se pudo compartir el PDF directo (ver handleConfirmarWhatsappConArchivo):
+  // WhatsApp a veces ignora el texto del mensaje y solo adjunta el archivo.
+  const [whatsappCopiedToast, setWhatsappCopiedToast] = useState(false);
   // Confirmado con el error real del navegador (NotAllowedError: "Must be handling a user
   // gesture to perform a share request"): el diálogo nativo de "elegir archivo" SIEMPRE le quita
   // a Chrome el gesto de usuario que navigator.share() exige — no es opcional evitarlo, así que
   // se pide un clic más, ya sin diálogo nativo de por medio, justo antes de llamar a share().
   const [pendingWhatsappShare, setPendingWhatsappShare] = useState<{ file: File; mensaje: string } | null>(null);
+  // Mismo comportamiento que "Adjuntar cotización" de Gmail (ver showGmailCotizacionPicker más
+  // abajo): en vez de subir un PDF cualquiera desde el dispositivo, se elige una cotización ya
+  // guardada y se genera su PDF al vuelo.
+  const [showWhatsappCotizacionPicker, setShowWhatsappCotizacionPicker] = useState(false);
+  const [whatsappCotizacionSearch, setWhatsappCotizacionSearch] = useState('');
+  const [generandoPdfWhatsapp, setGenerandoPdfWhatsapp] = useState(false);
   const [showGmailConfirm, setShowGmailConfirm] = useState(false);
   const [gmailSending, setGmailSending] = useState(false);
   const [gmailProgress, setGmailProgress] = useState(0);
@@ -343,58 +365,54 @@ export default function ProgramacionDetailPage() {
 
     // Respaldo (típicamente escritorio, sin soporte de compartir nativo): un link wa.me sin
     // número de destinatario no funciona en escritorio — WhatsApp no sabe a qué chat mandarlo y
-    // se queda en una pantalla genérica sin avanzar. Se abre WhatsApp Web directo (llamada
-    // síncrona, sin diálogo de archivo de por medio, así que el navegador no la bloquea) y se
-    // copia el mensaje para pegarlo ahí. "_blank" normal (no un nombre fijo): con WhatsApp
-    // instalado como app de escritorio, un target con nombre le impide a Chrome mandarlo a la
-    // app y el link deja de abrir cualquier cosa — se prioriza que siempre abra sobre evitar
-    // pestañas duplicadas.
-    window.open('https://web.whatsapp.com/', '_blank');
-    navigator.clipboard.writeText(mensaje).catch(() => {});
-    setWhatsappCopiedMessage('Mensaje copiado — pégalo en el chat de WhatsApp Web.');
+    // se queda en una pantalla genérica sin avanzar. Se deja que el usuario abra WhatsApp con un
+    // clic real en el modal de abajo (mismo <a> que ya usa el respaldo "con PDF") en vez de
+    // window.open programático, que no entrega el link a WhatsApp Desktop de forma confiable.
+    try {
+      await navigator.clipboard.writeText(mensaje);
+    } catch {
+      // Sin permiso de portapapeles — el modal de abajo igual deja abrir WhatsApp.
+    }
+    setWhatsappLinkIncluyePdf(false);
+    setWhatsappDownloadedFileName(null);
+    setWhatsappLink('https://web.whatsapp.com/');
   };
 
   const handleWhatsappConPdf = () => {
     setShowWhatsappConfirm(false);
-    whatsappFileInputRef.current?.click();
+    setShowWhatsappCotizacionPicker(true);
   };
 
-  const handleWhatsappFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const picked = e.target.files?.[0];
-    e.target.value = ''; // permite volver a elegir el mismo archivo y que onChange dispare de nuevo
-    if (!picked || !programacion) return;
-
-    const mensaje = buildWhatsappMessage(programacion, true);
-    const file = new File([picked], picked.name, { type: 'application/pdf' });
-
-    // En escritorio, el diálogo nativo de "elegir archivo" que se acaba de cerrar le quita a
-    // Chrome el gesto de usuario que share() exige (confirmado con el error real del navegador:
-    // NotAllowedError, "Must be handling a user gesture") — hace falta pedir un clic más, ya sin
-    // diálogo nativo de por medio. En móvil el selector nativo sí preserva el gesto, así que ahí
-    // se sigue intentando compartir de inmediato, sin ese paso extra.
-    if (!isMobile) {
-      setPendingWhatsappShare({ file, mensaje });
-      return;
-    }
-
-    const nav = navigator as Navigator & { canShare?: (data?: ShareData) => boolean; share?: (data: ShareData) => Promise<void> };
-    if (nav.canShare && nav.share && nav.canShare({ files: [file] })) {
-      try {
-        await nav.share({ files: [file], title: file.name, text: mensaje });
-        return;
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') return;
-        // Si falla por otro motivo, se sigue con el respaldo abajo.
-      }
-    }
-
-    // Respaldo: el navegador no soporta compartir archivos directamente.
+  const handleSeleccionarCotizacionWhatsapp = async (cotizacionId: string) => {
+    setShowWhatsappCotizacionPicker(false);
+    setWhatsappCotizacionSearch('');
+    if (!programacion) return;
+    setGenerandoPdfWhatsapp(true);
     try {
-      await navigator.clipboard.writeText(mensaje);
+      const [{ buildCotizacionPdf, cotizacionPdfFileName }, detalle] = await Promise.all([
+        import('../cotizaciones/CotizacionesPage'),
+        cotizacionesService.getById(cotizacionId),
+      ]);
+      const doc = await buildCotizacionPdf(detalle);
+      const fileName = cotizacionPdfFileName(detalle);
+      const blob: Blob = doc.output('blob');
+      const file = new File([blob], fileName, { type: 'application/pdf' });
+      const mensaje = buildWhatsappMessage(programacion, true);
+
+      // El PDF se genera de forma asíncrona (import dinámico + llamada a la API), así que para
+      // cuando termina ya se perdió el gesto de usuario fresco que navigator.share() exige en
+      // cualquier dispositivo (no solo escritorio, a diferencia del selector de archivo nativo
+      // que sí lo conservaba) — siempre se pide un clic más antes de compartir.
+      setPendingWhatsappShare({ file, mensaje });
     } catch {
-      // Sin permiso de portapapeles — el modal de abajo igual deja abrir WhatsApp Web.
+      // Reutiliza el mismo mecanismo de error visible que ya tiene el envío a Gmail (un toast
+      // genérico, sin nada específico de Gmail en su render) — no hay uno propio para WhatsApp
+      // porque hasta ahora nunca podía fallar la generación del archivo.
+      setGmailError('No se pudo generar el PDF de esa cotización');
+      setTimeout(() => setGmailError(null), 4000);
+    } finally {
+      setGenerandoPdfWhatsapp(false);
     }
-    setWhatsappLink('https://web.whatsapp.com/');
   };
 
   // Clic de confirmación en escritorio (ver pendingWhatsappShare): es el gesto de usuario fresco
@@ -409,6 +427,15 @@ export default function ProgramacionDetailPage() {
     if (nav.canShare && nav.share && nav.canShare({ files: [file] })) {
       try {
         await nav.share({ files: [file], title: file.name, text: mensaje });
+        // WhatsApp (como varias apps que reciben archivos vía Web Share API) a veces ignora el
+        // campo "text" y solo adjunta el PDF, sin el mensaje — se copia igual al portapapeles
+        // como respaldo para que el mensaje quede a un "pegar" de distancia si no llegó solo.
+        try {
+          await navigator.clipboard.writeText(mensaje);
+          setWhatsappCopiedToast(true);
+        } catch {
+          // Sin permiso de portapapeles — no hay nada más que hacer en este caso.
+        }
         return;
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') return;
@@ -416,12 +443,25 @@ export default function ProgramacionDetailPage() {
       }
     }
 
-    // Respaldo: el navegador no soporta compartir archivos directamente.
+    // Respaldo: el navegador no soporta compartir archivos directamente (el caso típico es
+    // escritorio — Web Share API con archivos casi no tiene soporte fuera de Android/ChromeOS).
+    // El PDF ahora se genera al vuelo desde la cotización (ya no se elige un archivo del disco
+    // del usuario), así que sin esta descarga el aviso de "adjunta el PDF manualmente" no tendría
+    // ningún archivo real al cual apuntar.
+    const downloadUrl = URL.createObjectURL(file);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = file.name;
+    link.click();
+    URL.revokeObjectURL(downloadUrl);
+
     try {
       await navigator.clipboard.writeText(mensaje);
     } catch {
-      // Sin permiso de portapapeles — el modal de abajo igual deja abrir WhatsApp Web.
+      // Sin permiso de portapapeles — el modal de abajo igual deja abrir WhatsApp.
     }
+    setWhatsappLinkIncluyePdf(true);
+    setWhatsappDownloadedFileName(file.name);
     setWhatsappLink('https://web.whatsapp.com/');
   };
 
@@ -429,12 +469,12 @@ export default function ProgramacionDetailPage() {
     const handler = (e: MouseEvent) => {
       if (agregarMenuRef.current && !agregarMenuRef.current.contains(e.target as Node)) setShowAgregarMenu(false);
       if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) setShowMoreMenu(false);
+      if (enviarMenuRef.current && !enviarMenuRef.current.contains(e.target as Node)) setShowEnviarMenu(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
   const [comisionTooltipPos, setComisionTooltipPos] = useState<{ top: number; left: number } | null>(null);
-  const [remisionBtnTooltipPos, setRemisionBtnTooltipPos] = useState<{ top: number; left: number } | null>(null);
   const queryClient = useQueryClient();
   const [showEditModal, setShowEditModal] = useState(false);
   const [editForm, setEditForm] = useState({ fechaQx: '', horaQx: '', sedeId: '', hospitalId: '' });
@@ -470,6 +510,10 @@ export default function ProgramacionDetailPage() {
   const [editCotizacionFocused, setEditCotizacionFocused] = useState(false);
   const [editCotizacionFilterText, setEditCotizacionFilterText] = useState('');
   const [importandoEditConsumos, setImportandoEditConsumos] = useState(false);
+  const [showAgregarCotizacionModal, setShowAgregarCotizacionModal] = useState(false);
+  const [nuevasCotizaciones, setNuevasCotizaciones] = useState<CotizacionOption[]>([]);
+  const [nuevaCotizacionSearch, setNuevaCotizacionSearch] = useState('');
+  const [nuevaCotizacionFocused, setNuevaCotizacionFocused] = useState(false);
   const [editTecnicosSugeridos, setEditTecnicosSugeridos] = useState<TecnicoOption[]>([]);
   const [editTecnicoSugeridoSearch, setEditTecnicoSugeridoSearch] = useState('');
   const [editTecnicoSugeridoFocused, setEditTecnicoSugeridoFocused] = useState(false);
@@ -482,49 +526,16 @@ export default function ProgramacionDetailPage() {
   const [savingEdit, setSavingEdit] = useState(false);
   const editSnapshotRef = useRef<string | null>(null);
 
+  // El formulario de "Agregar Comisión" vive en AgregarComisionModal.tsx (componente compartido
+  // con RemisionDetailPage) — aquí solo queda abrirlo/cerrarlo, para no mantener dos copias del
+  // mismo formulario que terminan divergiendo.
   const [showComisionModal, setShowComisionModal] = useState(false);
-  const [comisionForm, setComisionForm] = useState({
-    categoria: '',
-    tipo: '',
-    remisionId: '',
-    vrComision: '',
-    observaciones: '',
-    agregarIva: false,
-    cargarPorcentaje: '',
-    quieresDesglosar: false,
-    seleccioneTipo: '',
-  });
-  const [comisionTecnico, setComisionTecnico] = useState<TecnicoOption | null>(null);
-  const [tecnicoSearch, setTecnicoSearch] = useState('');
-  const [inversionistaDetalles, setInversionistaDetalles] = useState<{ localId: string; remisionId: string; remisionLabel: string; productoId: string; productoLabel: string; valor: string }[]>([]);
-  const [showDetalleInversionista, setShowDetalleInversionista] = useState(false);
-  const [detalleForm, setDetalleForm] = useState({ remisionId: '', productoId: '', valor: '' });
-  const [detalleRemisionFocused, setDetalleRemisionFocused] = useState(false);
-  const [detalleProductoFocused, setDetalleProductoFocused] = useState(false);
-  const [detalleError, setDetalleError] = useState<{ field: string; message: string } | null>(null);
-  const [showDetalleInversionistaSuccess, setShowDetalleInversionistaSuccess] = useState(false);
   const [showComisionSuccess, setShowComisionSuccess] = useState(false);
-  const [hoveredDetalleRemisionId, setHoveredDetalleRemisionId] = useState<string | null>(null);
-  const [hoveredDetalleProductoId, setHoveredDetalleProductoId] = useState<string | null>(null);
   const [expandedComisionKeys, setExpandedComisionKeys] = useState<Set<string>>(new Set());
   const [hoveredComisionLineaKey, setHoveredComisionLineaKey] = useState<string | null>(null);
   const [selectedComisionId, setSelectedComisionId] = useState<string | null>(null);
-  const [detalleRemisionHighlighted, setDetalleRemisionHighlighted] = useState(0);
-  const detalleRemisionBtnRef = useRef<HTMLButtonElement>(null);
-  const comisionModalContentRef = useRef<HTMLDivElement>(null);
-  const detalleProductoBtnRef = useRef<HTMLButtonElement>(null);
-  const detalleValorInputRef = useRef<HTMLInputElement>(null);
-  const [detalleProductoHighlighted, setDetalleProductoHighlighted] = useState(0);
-  const [remisionFocused, setRemisionFocused] = useState(false);
-  const [comisionConsumoExpanded, setComisionConsumoExpanded] = useState(false);
   const [finConsumoExpanded, setFinConsumoExpanded] = useState(false);
-  const tecnicoInputRef = useRef<HTMLInputElement>(null);
-  const cargarPorcentajeRef = useRef<HTMLInputElement>(null);
-  const [tecnicoFocused, setTecnicoFocused] = useState(false);
-  const [hoveredTecnicoOptionId, setHoveredTecnicoOptionId] = useState<string | null>(null);
-  const [hoveredRemisionOptionId, setHoveredRemisionOptionId] = useState<string | null>(null);
-  const [comisionError, setComisionError] = useState<{ field: string; message: string } | null>(null);
-  const [showConfirmComision, setShowConfirmComision] = useState(false);
+  const [finObservacionesExpanded, setFinObservacionesExpanded] = useState(false);
 
   const [showDocumentoModal, setShowDocumentoModal] = useState(false);
   const [documentoNombre, setDocumentoNombre] = useState('');
@@ -567,17 +578,6 @@ export default function ProgramacionDetailPage() {
   }
   const [requisicionInsumos, setRequisicionInsumos] = useState<InsumoDraft[]>([]);
   const [showInsumoSubModal, setShowInsumoSubModal] = useState(false);
-  const [insumoLote, setInsumoLote] = useState<LoteOption | null>(null);
-  const [insumoLoteSearch, setInsumoLoteSearch] = useState('');
-  const [insumoLoteFocused, setInsumoLoteFocused] = useState(false);
-  const [insumoProducto, setInsumoProducto] = useState<ProductoOption | null>(null);
-  const [insumoProductoSearch, setInsumoProductoSearch] = useState('');
-  const [insumoProductoFocused, setInsumoProductoFocused] = useState(false);
-  const [insumoProductoHighlighted, setInsumoProductoHighlighted] = useState(0);
-  const insumoProductoOptionRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const [insumoCantidad, setInsumoCantidad] = useState('');
-  const [insumoPrecio, setInsumoPrecio] = useState('');
-  const [insumoSubError, setInsumoSubError] = useState<{ field: string; message: string } | null>(null);
 
   const [showRemisionModal, setShowRemisionModal] = useState(false);
   const [showRemisionSuccess, setShowRemisionSuccess] = useState(false);
@@ -598,16 +598,20 @@ export default function ProgramacionDetailPage() {
   const [tecnicoSugeridoError, setTecnicoSugeridoError] = useState<{ field: string; message: string } | null>(null);
   const [showTecnicoSugeridoSuccess, setShowTecnicoSugeridoSuccess] = useState(false);
 
-  useEffect(() => {
-    document.body.style.overflow = (selectedTecnico || showEditModal || showComisionModal || showConfirmComision || showDocumentoModal || showRequisicionModal || showInsumoSubModal || showRemisionModal || showTecnicoSugeridoModal || selectedCotizacionId || validarConsumoId) ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [selectedTecnico, showEditModal, showComisionModal, showConfirmComision, showDocumentoModal, showRequisicionModal, showInsumoSubModal, showRemisionModal, showTecnicoSugeridoModal, selectedCotizacionId, validarConsumoId]);
+  useBodyScrollLock(!!(selectedTecnico || showEditModal || showDocumentoModal || showRequisicionModal || showInsumoSubModal || showRemisionModal || showTecnicoSugeridoModal || showAgregarCotizacionModal || selectedCotizacionId || validarConsumoId));
 
   const { data: programacion, isLoading, error } = useQuery<ProgramacionDetail | null>({
     queryKey: ['programacion', id],
     queryFn: () => programacionesService.getById(id!),
     enabled: !!id,
   });
+  useSmoothWheelScroll(cotizacionesScrollRef, [mainTab, programacion?.cotizaciones?.length]);
+  // Cotizaciones/Requisiciones/Remisiones van de la más antigua a la más reciente — al abrir (o
+  // al agregar un registro nuevo) el scroll arranca mostrando el final de la lista, no el inicio.
+  useEffect(() => {
+    const el = cotizacionesScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [mainTab, programacion?.cotizaciones?.length]);
 
   const [finBarMounted, setFinBarMounted] = useState(false);
   useEffect(() => {
@@ -621,6 +625,11 @@ export default function ProgramacionDetailPage() {
     queryFn: () => remisionesService.findByProgramacion(id!),
     enabled: !!id,
   });
+  useSmoothWheelScroll(remisionesScrollRef, [mainTab, remisiones.length]);
+  useEffect(() => {
+    const el = remisionesScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [mainTab, remisiones.length]);
 
   const { data: sedeOptions = [] } = useQuery<SedeOption[]>({
     queryKey: ['programaciones-sedes'],
@@ -648,9 +657,9 @@ export default function ProgramacionDetailPage() {
 
   const editMedicoNombres = editMedicos.map(m => m.nombreCompleto);
   const { data: editCotizacionResults = [] } = useQuery<CotizacionOption[]>({
-    queryKey: ['programaciones-cotizaciones', editMedicoNombres],
-    queryFn: () => programacionesService.searchCotizaciones(undefined, editMedicoNombres),
-    enabled: showEditModal && editCotizacionFocused && editMedicoNombres.length > 0,
+    queryKey: ['programaciones-cotizaciones', editMedicoNombres, editForm.hospitalId],
+    queryFn: () => programacionesService.searchCotizaciones(undefined, editMedicoNombres, editForm.hospitalId || undefined),
+    enabled: showEditModal && editCotizacionFocused && editMedicoNombres.length > 0 && !!editForm.hospitalId,
   });
   // El servidor ya acota a las cotizaciones de los médicos seleccionados — esto solo afina esa
   // lista en el navegador por folio/cirugía/fecha/total, sin volver a pedirle nada al backend.
@@ -669,19 +678,17 @@ export default function ProgramacionDetailPage() {
     : editCotizacionResults;
 
   const { data: editTecnicoComisionistaResults = [] } = useQuery<TecnicoOption[]>({
-    queryKey: ['tecnicos-comisionistas', editTecnicoSugeridoSearch],
-    queryFn: () => remisionesService.searchTecnicosComisionistas(editTecnicoSugeridoSearch),
+    queryKey: ['tecnicos-sugeridos-busqueda', editTecnicoSugeridoSearch],
+    queryFn: () => remisionesService.searchTecnicosSugeridos(editTecnicoSugeridoSearch),
     enabled: showEditModal && editTecnicoSugeridoFocused,
   });
 
-  // Cotizaciones para el picker de "Enviar por Gmail" — acotadas a los médicos YA guardados en
-  // esta programación (no a los del formulario de edición, que pueden estar a medio cambiar).
-  const gmailMedicoNombres = programacion?.medicos.map(m => m.medico.nombreCompleto) ?? [];
-  const { data: gmailCotizacionResults = [] } = useQuery<CotizacionOption[]>({
-    queryKey: ['programaciones-cotizaciones', gmailMedicoNombres],
-    queryFn: () => programacionesService.searchCotizaciones(undefined, gmailMedicoNombres),
-    enabled: showGmailCotizacionPicker && gmailMedicoNombres.length > 0,
-  });
+  // Cotizaciones para los pickers de "Enviar por Gmail"/"Enviar por WhatsApp" — solo las que ya
+  // están asociadas a ESTA programación (programacion.cotizaciones, ya viene cargado con el
+  // detalle, sin pedirle nada más al backend), no una búsqueda abierta por médico: lo que se
+  // adjunta ahí es el PDF de una cotización de esta cirugía en concreto, no cualquiera del mismo
+  // médico.
+  const gmailCotizacionResults = programacion?.cotizaciones ?? [];
   const gmailCotizacionFilterQuery = gmailCotizacionSearch.trim().toLowerCase();
   const gmailCotizacionResultsFiltradas = gmailCotizacionFilterQuery
     ? gmailCotizacionResults.filter(c => {
@@ -695,6 +702,21 @@ export default function ProgramacionDetailPage() {
           || total.includes(gmailCotizacionFilterQuery);
       })
     : gmailCotizacionResults;
+
+  const whatsappCotizacionResults = programacion?.cotizaciones ?? [];
+  const whatsappCotizacionFilterQuery = whatsappCotizacionSearch.trim().toLowerCase();
+  const whatsappCotizacionResultsFiltradas = whatsappCotizacionFilterQuery
+    ? whatsappCotizacionResults.filter(c => {
+        const folio = (c.numCotizacion ?? c.id).toLowerCase();
+        const cirugia = (c.cirugia ?? '').toLowerCase();
+        const fecha = formatDate(c.fecha).toLowerCase();
+        const total = formatMoney(c.total).toLowerCase();
+        return folio.includes(whatsappCotizacionFilterQuery)
+          || cirugia.includes(whatsappCotizacionFilterQuery)
+          || fecha.includes(whatsappCotizacionFilterQuery)
+          || total.includes(whatsappCotizacionFilterQuery);
+      })
+    : whatsappCotizacionResults;
 
   const handleImportarEditConsumosCotizacion = async () => {
     if (editCotizaciones.length === 0 || importandoEditConsumos) return;
@@ -725,6 +747,30 @@ export default function ProgramacionDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['programacion', id] });
     },
   });
+
+  // Modal dedicado para "+ Agregar cotización" en la mini-tarjeta de Resumen — a diferencia del
+  // picker de Cotizaciones dentro de Editar Programación (que reemplaza la lista completa), este
+  // solo agrega: al guardar, envía la lista actual + las nuevas (cotizacionIds hace `set`, por
+  // eso hay que mandar la unión completa, no solo las nuevas).
+  const agregarCotizacionMutation = useMutation({
+    mutationFn: () => programacionesService.update(id!, {
+      cotizacionIds: [...(programacion?.cotizaciones.map(c => c.id) ?? []), ...nuevasCotizaciones.map(c => c.id)],
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['programacion', id] });
+      setShowAgregarCotizacionModal(false);
+      setNuevasCotizaciones([]);
+      setNuevaCotizacionSearch('');
+    },
+  });
+
+  const nuevaCotizacionMedicoNombres = (programacion?.medicos ?? []).map(m => m.medico.nombreCompleto);
+  const { data: nuevaCotizacionResults = [] } = useQuery<CotizacionOption[]>({
+    queryKey: ['programaciones-cotizaciones', nuevaCotizacionMedicoNombres, nuevaCotizacionSearch],
+    queryFn: () => programacionesService.searchCotizaciones(nuevaCotizacionSearch, nuevaCotizacionMedicoNombres),
+    enabled: showAgregarCotizacionModal && nuevaCotizacionFocused && nuevaCotizacionMedicoNombres.length > 0,
+  });
+  const cotizacionesYaVinculadasIds = new Set((programacion?.cotizaciones ?? []).map(c => c.id));
 
   const buildEditSnapshot = (
     form: { fechaQx: string; horaQx: string; sedeId: string; hospitalId: string },
@@ -881,6 +927,10 @@ export default function ProgramacionDetailPage() {
     queryFn: () => remisionesService.findTecnicosByProgramacion(id!),
     enabled: !!id,
   });
+  // tecnicos.length en deps: la tabla con scroll solo existe en el DOM una vez que llegan los
+  // datos (antes se muestra el emptyState) — sin esto el listener de la rueda nunca se engancha
+  // si la consulta resuelve después del primer render.
+  useSmoothWheelScroll(tecnicosAsociadosScrollRef, [mainTab, tecnicos.length]);
 
   const tecnicoGrupos = useMemo(() => {
     const grupos: { programacionId: string | null; numProgram: string | null; items: RemTecnicoItem[] }[] = [];
@@ -911,7 +961,22 @@ export default function ProgramacionDetailPage() {
     queryFn: () => remisionesService.findValidacionConsumosByProgramacion(id!),
     enabled: !!id,
   });
-  const totalValidacion = validacionGrupos.reduce((sum, g) => sum + g.items.length, 0);
+  // Si un producto ya validado recibe más cantidad y se vuelve a validar, no aparecen como filas
+  // separadas — se agrupan en una sola fila con un "×N" que avisa que hubo varias validaciones,
+  // desplegable para ver (y abrir) cada validación individual. Mismo criterio que en RemisionDetailPage.
+  type ValidacionGrupoProducto = { key: string; referenciaRemisionada: string | null; nombreRemisionado: string | null; referenciaValidada: string | null; nombreValidado: string | null; cantRemisionada: number; cantRealValidada: number; items: ValidacionConsumoItem[] };
+  const validacionGruposAgrupados = validacionGrupos.map(grupo => {
+    const porProducto = new Map<string, ValidacionGrupoProducto>();
+    for (const v of grupo.items) {
+      const key = v.detConsumoId ?? v.id;
+      const existente = porProducto.get(key);
+      if (existente) { existente.cantRealValidada += v.cantRealValidada; existente.items.push(v); }
+      else porProducto.set(key, { key, referenciaRemisionada: v.referenciaRemisionada, nombreRemisionado: v.nombreRemisionado, referenciaValidada: v.referenciaValidada, nombreValidado: v.nombreValidado, cantRemisionada: v.cantRemisionada, cantRealValidada: v.cantRealValidada, items: [v] });
+    }
+    return { ...grupo, productos: [...porProducto.values()] };
+  });
+  const [expandedValidacionGroupKeys, setExpandedValidacionGroupKeys] = useState<Set<string>>(new Set());
+  const totalValidacion = validacionGruposAgrupados.reduce((sum, g) => sum + g.productos.length, 0);
 
   const { data: comisionGrupos = [] } = useQuery<ComisionGrupo[]>({
     queryKey: ['remisiones-comisiones', id],
@@ -919,163 +984,32 @@ export default function ProgramacionDetailPage() {
     enabled: !!id,
   });
   const totalComisiones = comisionGrupos.reduce((sum, g) => sum + g.items.length, 0);
-
-  const clasificacionPorCategoria: Record<string, string> = { 'TÉCNICOS': 'COMISIONISTA', 'INVERSIONISTAS': 'INVERSIONISTA' };
-  const comisionClasificacion = clasificacionPorCategoria[comisionForm.categoria];
-
-  const { data: tecnicoResults = [] } = useQuery<TecnicoOption[]>({
-    queryKey: ['comisiones-tecnicos', tecnicoSearch, comisionClasificacion],
-    queryFn: () => remisionesService.searchTecnicos(tecnicoSearch, comisionClasificacion),
-    enabled: showComisionModal,
+  const comisionTotalGeneral = comisionGrupos.reduce((sum, g) => sum + g.items.reduce((s, it) => s + it.monto, 0), 0);
+  const comisionCategoriaStats = COMISION_CATEGORIAS.map(cat => {
+    const grupo = comisionGrupos.find(g => g.categoria === cat);
+    const monto = grupo ? grupo.items.reduce((s, it) => s + it.monto, 0) : 0;
+    const count = grupo ? grupo.items.length : 0;
+    const pct = comisionTotalGeneral > 0 ? (monto / comisionTotalGeneral) * 100 : 0;
+    return { categoria: cat, monto, count, pct };
   });
+  const comisionTodosItems = comisionGrupos.flatMap(g => g.items.map(it => ({ ...it, categoria: g.categoria })));
+  const comisionCategoriasPresentes = comisionGrupos.map(g => g.categoria);
+  const comisionItemsFiltrados = comisionFiltro === 'todas'
+    ? comisionTodosItems
+    : comisionTodosItems.filter(it => it.categoria === comisionFiltro);
 
-  const createComisionMutation = useMutation({
-    mutationFn: () => remisionesService.createComision({
-      programacionId: id!,
-      categoria: comisionForm.categoria,
-      tipo: comisionForm.tipo || undefined,
-      tecnicoId: comisionTecnico?.id,
-      remisionId: comisionForm.remisionId || undefined,
-      vrComision: esCategoriaInversionistas ? undefined : Number(comisionForm.vrComision),
-      detalles: esCategoriaInversionistas
-        ? inversionistaDetalles.map(d => ({ remisionId: d.remisionId, productoId: d.productoId, valor: Number(d.valor) }))
-        : undefined,
-      observaciones: comisionForm.observaciones || undefined,
-      agregarIva: comisionForm.agregarIva,
-      cargarPorcentaje: comisionForm.agregarIva && comisionForm.cargarPorcentaje ? Number(comisionForm.cargarPorcentaje) : undefined,
-      quieresDesglosar: comisionForm.quieresDesglosar,
-      seleccioneTipo: comisionForm.seleccioneTipo || undefined,
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['remisiones-comisiones', id] });
-      queryClient.invalidateQueries({ queryKey: ['programacion', id] });
-      setShowConfirmComision(false);
-      setShowComisionModal(false);
-      setShowComisionSuccess(true);
-    },
-  });
-
-  const openComisionModal = () => {
-    setComisionForm({
-      categoria: '',
-      tipo: '',
-      remisionId: '',
-      vrComision: '',
-      observaciones: '',
-      agregarIva: false,
-      cargarPorcentaje: '',
-      quieresDesglosar: false,
-      seleccioneTipo: '',
-    });
-    setComisionTecnico(null);
-    setTecnicoSearch('');
-    setTecnicoFocused(false);
-    setRemisionFocused(false);
-    setComisionConsumoExpanded(false);
-    setInversionistaDetalles([]);
-    setShowDetalleInversionista(false);
-    setShowDetalleInversionistaSuccess(false);
-    setShowComisionSuccess(false);
-    setComisionError(null);
-    setShowConfirmComision(false);
-    setShowComisionModal(true);
-    setTimeout(() => { if (comisionModalContentRef.current) comisionModalContentRef.current.scrollTop = 0; }, 0);
-  };
-
-  const esCategoriaInversionistas = comisionForm.categoria === 'INVERSIONISTAS';
-  const totalInversionistaDetalles = inversionistaDetalles.reduce((sum, d) => sum + (Number(d.valor) || 0), 0);
-
-  // Validación secuencial del formulario de Agregar Comisión: cada campo solo se habilita una vez
-  // que el anterior ya quedó lleno, para que no se pueda "saltar" a llenar uno de más abajo.
-  const comisionTipoReady = !!comisionForm.remisionId;
-  const comisionCategoriaReady = comisionTipoReady && !!comisionForm.tipo;
-  const comisionTecnicoReady = comisionCategoriaReady && !!comisionForm.categoria;
-  const comisionValorReady = comisionTecnicoReady && !!comisionTecnico;
-  const comisionValorCompleto = comisionValorReady && (esCategoriaInversionistas ? inversionistaDetalles.length > 0 : !!comisionForm.vrComision);
-
-  const openDetalleInversionista = () => {
-    setDetalleForm({ remisionId: '', productoId: '', valor: '' });
-    setDetalleRemisionFocused(true);
-    setDetalleRemisionHighlighted(0);
-    setDetalleProductoFocused(false);
-    setDetalleError(null);
-    setShowDetalleInversionista(true);
-    setTimeout(() => detalleRemisionBtnRef.current?.focus(), 0);
-  };
-
-  const selectDetalleRemision = (remisionId: string) => {
-    setDetalleForm({ ...detalleForm, remisionId, productoId: '' });
-    setDetalleRemisionFocused(false);
-    setDetalleError(null);
-    setDetalleProductoHighlighted(0);
-    setDetalleProductoFocused(true);
-    setTimeout(() => detalleProductoBtnRef.current?.focus(), 0);
-  };
-
-  const selectDetalleProducto = (productoId: string) => {
-    setDetalleForm({ ...detalleForm, productoId });
-    setDetalleProductoFocused(false);
-    setDetalleError(null);
-    setTimeout(() => detalleValorInputRef.current?.focus(), 0);
-  };
-
-  const handleGuardarDetalleInversionista = () => {
-    if (!detalleForm.remisionId) { setDetalleError({ field: 'remisionId', message: 'Selecciona la remisión.' }); return; }
-    if (!detalleForm.productoId) { setDetalleError({ field: 'productoId', message: 'Selecciona el producto.' }); return; }
-    if (!detalleForm.valor || Number(detalleForm.valor) <= 0) { setDetalleError({ field: 'valor', message: 'El valor debe ser mayor a cero.' }); return; }
-    const remisionSel = remisiones.find(r => r.id === detalleForm.remisionId);
-    const grupoSel = consumoGrupos.find(g => g.remisionId === detalleForm.remisionId);
-    const itemSel = grupoSel?.items.find(it => it.productoId === detalleForm.productoId);
-    setInversionistaDetalles(prev => [...prev, {
-      localId: `${Date.now()}-${Math.random()}`,
-      remisionId: detalleForm.remisionId,
-      remisionLabel: remisionSel?.numRemision || remisionSel?.id || '-',
-      productoId: detalleForm.productoId,
-      productoLabel: itemSel?.productoNombre || itemSel?.productoReferencia || '-',
-      valor: detalleForm.valor,
-    }]);
-    setShowDetalleInversionista(false);
-    setShowDetalleInversionistaSuccess(true);
-    if (comisionError?.field === 'detalles') setComisionError(null);
-  };
-
-  // TOTAL FACTURA (preview) — misma fórmula que getDetTecnicoDetalle
-  const comisionVrComision = esCategoriaInversionistas ? totalInversionistaDetalles : (Number(comisionForm.vrComision) || 0);
-  const comisionSubTotal = comisionForm.agregarIva ? comisionVrComision : comisionVrComision / 1.16;
-  const comisionIva = comisionForm.quieresDesglosar ? comisionSubTotal * 0.16 : 0;
-  const comisionRetIva = comisionForm.quieresDesglosar ? comisionSubTotal * 0.10667 : 0;
-  const comisionEsActEmpresarial = comisionForm.seleccioneTipo.trim().toUpperCase() === 'ACTIVIDAD EMPRESARIAL';
-  const comisionRetIsr = comisionForm.quieresDesglosar ? (comisionEsActEmpresarial ? 0 : comisionSubTotal * 0.0125) : 0;
-  const comisionTotalFactura = comisionSubTotal + comisionIva - comisionRetIva - comisionRetIsr;
-
-  const comisionRemisionSeleccionada = remisiones.find(r => r.id === comisionForm.remisionId);
-
-  const handleGuardarComision = () => {
-    if (!comisionForm.remisionId) { setComisionError({ field: 'remisionId', message: 'Selecciona una remisión.' }); return; }
-    if (!comisionForm.tipo) { setComisionError({ field: 'tipo', message: 'Selecciona el tipo de comisión.' }); return; }
-    if (!comisionForm.categoria) { setComisionError({ field: 'categoria', message: 'Selecciona la categoría.' }); return; }
-    if (!comisionTecnico) { setComisionError({ field: 'tecnico', message: 'Selecciona el nombre de contacto.' }); return; }
-    if (esCategoriaInversionistas) {
-      if (inversionistaDetalles.length === 0) { setComisionError({ field: 'detalles', message: 'Agrega al menos un detalle de inversionista.' }); return; }
-    } else if (!comisionForm.vrComision || Number(comisionForm.vrComision) <= 0) {
-      setComisionError({ field: 'vrComision', message: 'El valor de asignación debe ser mayor a cero.' }); return;
-    }
-    if (comisionForm.agregarIva && (!comisionForm.cargarPorcentaje || Number(comisionForm.cargarPorcentaje) < 1)) { setComisionError({ field: 'cargarPorcentaje', message: 'Ingresa el porcentaje de IVA a cargar.' }); return; }
-    if (!comisionForm.seleccioneTipo) { setComisionError({ field: 'seleccioneTipo', message: 'Selecciona el tipo (Actividad Empresarial o Resico).' }); return; }
-    setComisionError(null);
-    setShowConfirmComision(true);
-  };
-
-  useEffect(() => {
-    if (!comisionError) return;
-    document.getElementById(`comision-field-${comisionError.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [comisionError]);
+  const openComisionModal = () => setShowComisionModal(true);
 
   const { data: requisiciones = [] } = useQuery<RequisicionItem[]>({
     queryKey: ['remisiones-requisiciones', id],
     queryFn: () => remisionesService.findRequisicionesByProgramacion(id!),
     enabled: !!id,
   });
+  useSmoothWheelScroll(requisicionesScrollRef, [mainTab, requisiciones.length]);
+  useEffect(() => {
+    const el = requisicionesScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [mainTab, requisiciones.length]);
 
   const puedeCerrarProgramacion = remisiones.length > 0 && requisiciones.length > 0;
   const puedeAgregarRemision = requisiciones.length > 0;
@@ -1122,27 +1056,6 @@ export default function ProgramacionDetailPage() {
   const requisicionTarifaResults = requisicionTarifaSearch.trim()
     ? tarifasCubrimiento.filter(t => (t.nombre ?? '').toLowerCase().includes(requisicionTarifaSearch.trim().toLowerCase()))
     : tarifasCubrimiento;
-
-  const { data: insumoLoteResults = [] } = useQuery<LoteOption[]>({
-    queryKey: ['lotes', insumoLoteSearch],
-    queryFn: () => remisionesService.searchLotes(insumoLoteSearch),
-    enabled: showInsumoSubModal,
-  });
-
-  const { data: insumoProductoResults = [] } = useQuery<ProductoOption[]>({
-    queryKey: ['productos', insumoProductoSearch, requisicionTarifaId],
-    queryFn: () => remisionesService.searchProductos(insumoProductoSearch, requisicionTarifaId || undefined),
-    enabled: showInsumoSubModal,
-  });
-  useEffect(() => { setInsumoProductoHighlighted(0); }, [insumoProductoResults.length, insumoProductoSearch]);
-  useEffect(() => { insumoProductoOptionRefs.current[insumoProductoHighlighted]?.scrollIntoView({ block: 'nearest' }); }, [insumoProductoHighlighted]);
-
-  const PRECIO_POR_CUBRIMIENTO: Record<string, keyof ProductoOption> = {
-    PARTICULARES: 'particulares',
-    HOSPITALES: 'hospitales',
-    DISTRIBUIDOR: 'distribuidor',
-    ASEGURADORA: 'aseguradora',
-  };
 
   // Búsqueda de productos para "Agregar consumo" en Remisión (reutiliza AddStagedItemForm/
   // StagedItemDetailModal de Cotizaciones, ver más abajo) — a propósito usa la búsqueda REAL de
@@ -1196,43 +1109,26 @@ export default function ProgramacionDetailPage() {
   }, [requisicionError]);
 
   const openInsumoSubModal = () => {
-    setInsumoLote(null);
-    setInsumoLoteSearch('');
-    setInsumoProducto(null);
-    setInsumoProductoSearch('');
-    setInsumoCantidad('');
-    setInsumoPrecio('');
-    setInsumoSubError(null);
     setShowInsumoSubModal(true);
   };
 
-  const handleSelectInsumoProducto = (p: ProductoOption) => {
-    setInsumoProducto(p);
-    setInsumoProductoSearch('');
-    setInsumoSubError(null);
-    // Precio de la tarifa específica de la requisición (ListaPrecio) si existe; si ese producto no
-    // tiene precio cargado para esa tarifa puntual, se cae a la columna genérica por categoría de
-    // cubrimiento (mismo respaldo de siempre).
-    const key = PRECIO_POR_CUBRIMIENTO[(requisicionCubrimiento?.nombre ?? '').trim().toUpperCase()];
-    const precio = p.precioSugerido ?? (key ? p[key] : null);
-    setInsumoPrecio(precio !== null && precio !== undefined ? String(precio) : '');
-  };
-
-  const handleAgregarInsumoDraft = () => {
-    if (!insumoLote) { setInsumoSubError({ field: 'lote', message: 'Selecciona un lote válido de la lista.' }); return; }
-    if (!insumoProducto) { setInsumoSubError({ field: 'producto', message: 'Selecciona un producto válido de la lista.' }); return; }
-    if (!insumoCantidad || Number(insumoCantidad) <= 0) { setInsumoSubError({ field: 'cantidad', message: 'La cantidad debe ser mayor a cero.' }); return; }
-    if (!insumoPrecio || Number(insumoPrecio) <= 0) { setInsumoSubError({ field: 'precio', message: 'El precio debe ser mayor a cero.' }); return; }
-    setInsumoSubError(null);
-    setRequisicionInsumos([...requisicionInsumos, {
-      tempId: `${Date.now()}-${Math.random()}`,
-      loteId: insumoLote?.id,
-      loteLabel: insumoLote?.lote ?? undefined,
-      productoId: insumoProducto?.id,
-      productoLabel: insumoProducto ? formatProductoLabel(insumoProducto) : undefined,
-      cantidad: Number(insumoCantidad),
-      precio: Number(insumoPrecio),
-    }]);
+  const handleAgregarInsumoDraft = (values: InsumoFormValues) => {
+    // Mismo producto y mismo lote (o ambos sin lote) que uno ya agregado: en vez de duplicar la
+    // fila, solo se suma la cantidad a la que ya tenía.
+    const existente = requisicionInsumos.find(ins => ins.productoId === values.producto.id && (ins.loteId ?? null) === (values.lote?.id ?? null));
+    if (existente) {
+      setRequisicionInsumos(requisicionInsumos.map(ins => ins === existente ? { ...ins, cantidad: ins.cantidad + values.cantidad } : ins));
+    } else {
+      setRequisicionInsumos([...requisicionInsumos, {
+        tempId: `${Date.now()}-${Math.random()}`,
+        loteId: values.lote?.id,
+        loteLabel: values.lote?.lote ?? undefined,
+        productoId: values.producto.id,
+        productoLabel: formatProductoLabel(values.producto),
+        cantidad: values.cantidad,
+        precio: values.precio,
+      }]);
+    }
     setShowInsumoSubModal(false);
     setRequisicionError(null);
     setShowInsumoSuccess(true);
@@ -1241,11 +1137,6 @@ export default function ProgramacionDetailPage() {
   const handleQuitarInsumoDraft = (tempId: string) => {
     setRequisicionInsumos(requisicionInsumos.filter(ins => ins.tempId !== tempId));
   };
-
-  useEffect(() => {
-    if (!insumoSubError) return;
-    document.getElementById(`insumo-field-${insumoSubError.field}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [insumoSubError]);
 
   // Deep-link desde el selector de programación de Remisiones (?agregarRemision=1). Reacciona a
   // cambios en searchParams (no solo al montar) porque, al llegar navegando desde otra vista de
@@ -1263,6 +1154,7 @@ export default function ProgramacionDetailPage() {
     queryFn: () => remisionesService.findNotasCreditoByProgramacion(id!),
     enabled: !!id,
   });
+  useSmoothWheelScroll(notasCreditoScrollRef, [mainTab, notasCredito.length]);
 
   const { data: tecnicosSugeridos = [] } = useQuery<TecnicoSugeridoItem[]>({
     queryKey: ['tecnicos-sugeridos', id],
@@ -1271,8 +1163,8 @@ export default function ProgramacionDetailPage() {
   });
 
   const { data: tecnicoComisionistaResults = [] } = useQuery<TecnicoOption[]>({
-    queryKey: ['tecnicos-comisionistas', tecnicoSugeridoSearch],
-    queryFn: () => remisionesService.searchTecnicosComisionistas(tecnicoSugeridoSearch),
+    queryKey: ['tecnicos-sugeridos-busqueda', tecnicoSugeridoSearch],
+    queryFn: () => remisionesService.searchTecnicosSugeridos(tecnicoSugeridoSearch),
     enabled: showTecnicoSugeridoModal,
   });
 
@@ -1330,6 +1222,14 @@ export default function ProgramacionDetailPage() {
     queryKey: ['remisiones-documentos', id],
     queryFn: () => remisionesService.findDocumentosByProgramacion(id!),
     enabled: !!id,
+  });
+  useSmoothWheelScroll(documentosScrollRef, [mainTab, documentos.length]);
+
+  const deleteDocumentoMutation = useMutation({
+    mutationFn: (documentoId: string) => remisionesService.deleteDocumentoProgramacion(documentoId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['remisiones-documentos', id] });
+    },
   });
 
   const openDocumentoModal = () => {
@@ -1404,15 +1304,396 @@ export default function ProgramacionDetailPage() {
     { key: 'consumos', label: 'Consumos', count: totalConsumos },
     { key: 'validar-consumos', label: 'Validar consumos', count: totalValidacion },
     { key: 'comisiones', label: 'Comisiones', count: totalComisiones },
-    { key: 'gastos', label: 'Gastos', count: gastosRelacionados.length },
-    { key: 'fuentes', label: 'Fuentes', count: fuentesRelacionadas.length },
+    { key: 'gastos-fuentes', label: 'Gastos y fuentes relacionadas', count: gastosRelacionados.length + fuentesRelacionadas.length },
   ];
+
+  const MESES_ABREV = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
+  const fechaQxDate = programacion.fechaQx ? new Date(programacion.fechaQx) : null;
+  const fechaQxMes = fechaQxDate ? MESES_ABREV[fechaQxDate.getUTCMonth()] : '';
+  const fechaQxDia = fechaQxDate ? String(fechaQxDate.getUTCDate()).padStart(2, '0') : '';
+  const fechaQxLarga = fechaQxDate
+    ? `${fechaQxDia} de ${fechaQxMes.charAt(0)}${fechaQxMes.slice(1).toLowerCase()} del ${fechaQxDate.getUTCFullYear()}`
+    : '-';
+
+  // Reutilizados por los 3 primeros pasos del stepper (Programada/Requisición/Remisión): fecha
+  // corta "D mmm" y "primer nombre + primer apellido" de quien registró cada uno.
+  const fechaCorta = (dateStr: string | null | undefined): string | null => {
+    if (!dateStr) return null;
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return null;
+    return `${date.getUTCDate()} ${MESES_ABREV[date.getUTCMonth()].toLowerCase()}`;
+  };
+  const nombreCorto = (nombreCompleto: string | null | undefined): string | null => {
+    const tokens = nombreCompleto?.trim().split(/\s+/).filter(Boolean) ?? [];
+    if (tokens.length === 0) return null;
+    // Convención mexicana: nombre(s) + apellido paterno + apellido materno — se asume que los
+    // últimos 2 tokens son los apellidos (o el último, si solo hay 2 tokens en total), para que
+    // "Laura Peña Gómez" dé "Laura Peña" y no "Laura Gómez".
+    const apellidosCount = tokens.length >= 3 ? 2 : tokens.length === 2 ? 1 : 0;
+    const primerNombre = tokens[0];
+    const primerApellido = apellidosCount > 0 ? tokens[tokens.length - apellidosCount] : undefined;
+    return primerApellido ? `${primerNombre} ${primerApellido}` : primerNombre;
+  };
+  const fechaPersonaSubLabel = (dateStr: string | null | undefined, nombreCompleto: string | null | undefined): string | null => {
+    const fecha = fechaCorta(dateStr);
+    if (!fecha) return null;
+    const nombre = nombreCorto(nombreCompleto);
+    return `${fecha}${nombre ? ` · ${nombre}` : ''}`;
+  };
+
+  const creadoEnCorto = fechaCorta(programacion.createdAt);
+  const creadoPorCorto = nombreCorto(programacion.creadoPorTercero?.nombreCompleto);
+
+  // Si hay varios registros (de distintas personas), el stepper siempre muestra el de la fecha
+  // más reciente — no el primero.
+  const ultimaRequisicion = requisiciones.length > 0
+    ? requisiciones.reduce((latest, r) => (new Date(r.marcaDeTiempo ?? 0) > new Date(latest.marcaDeTiempo ?? 0) ? r : latest))
+    : null;
+  const ultimaRemision = remisiones.length > 0
+    ? remisiones.reduce((latest, r) => (new Date(r.creadoEn ?? 0) > new Date(latest.creadoEn ?? 0) ? r : latest))
+    : null;
+  const todasLasValidaciones = validacionGrupos.flatMap(g => g.items);
+  const ultimaValidacion = todasLasValidaciones.length > 0
+    ? todasLasValidaciones.reduce((latest, v) => (new Date(v.marcaTiempo ?? 0) > new Date(latest.marcaTiempo ?? 0) ? v : latest))
+    : null;
+  const todasLasComisionLineas = comisionGrupos.flatMap(g => g.items).flatMap(i => i.detalle);
+  const ultimaComision = todasLasComisionLineas.length > 0
+    ? todasLasComisionLineas.reduce((latest, d) => (new Date(d.marcaTiempo ?? 0) > new Date(latest.marcaTiempo ?? 0) ? d : latest))
+    : null;
+
+  const stepperSteps = [
+    { key: 'programada', label: 'Programada', done: true, subLabel: `${creadoEnCorto}${creadoPorCorto ? ` · ${creadoPorCorto}` : ''}` as string | null },
+    { key: 'requisicion', label: 'Requisición', done: requisiciones.length > 0, subLabel: (ultimaRequisicion && fechaPersonaSubLabel(ultimaRequisicion.marcaDeTiempo, ultimaRequisicion.usuario)) ?? 'Pendiente de generar' },
+    { key: 'remision', label: 'Remisión', done: !programacion.sinRemision, subLabel: (ultimaRemision && fechaPersonaSubLabel(ultimaRemision.creadoEn, ultimaRemision.usuario)) ?? 'Pendiente de generar' },
+    { key: 'validar', label: 'Validar consumo', done: !programacion.consumoNoValidado, subLabel: (!programacion.consumoNoValidado && ultimaValidacion && fechaPersonaSubLabel(ultimaValidacion.marcaTiempo, ultimaValidacion.usuario)) || (!programacion.consumoNoValidado ? 'Validado' : 'Tras la cirugía') },
+    { key: 'comision', label: 'Comisión', done: !programacion.sinComision, subLabel: (!programacion.sinComision && ultimaComision && fechaPersonaSubLabel(ultimaComision.marcaTiempo, ultimaComision.registradoPor)) || (!programacion.sinComision ? 'Asignada' : 'Tras validar consumo') },
+  ];
+  const stepperCurrentIdx = stepperSteps.findIndex(s => !s.done);
 
   const finBarUtilidad = Math.max(Number(programacion.utilidadBruta) || 0, 0);
   const finBarComisiones = Math.max(Number(programacion.comisiones) || 0, 0);
   const finBarCosto = Math.max(Number(programacion.costoTotal) || 0, 0);
   const finBarTotal = finBarUtilidad + finBarComisiones + finBarCosto;
   const finBarPct = (v: number) => finBarTotal > 0 ? (v / finBarTotal) * 100 : 0;
+
+  // 34px ≈ alto real de una fila de Cotizaciones/Requisiciones/Remisiones (cotizacionCardMobile:
+  // padding 0.4rem arriba/abajo + una sola línea de texto, desde que se quitó la segunda línea de
+  // cada fila). Antes eran 160/3≈53.3px, calibrado para filas de dos líneas — con ese valor viejo
+  // quedaba un hueco en blanco debajo de las filas antes del Total.
+  const miniCardMaxRows = Math.min(3, Math.max(programacion.cotizaciones.length, requisiciones.length, remisiones.length));
+  const miniCardSyncedHeight = miniCardMaxRows > 0 ? `${miniCardMaxRows * 34}px` : undefined;
+
+  // Secciones de la pestaña Resumen armadas como variables (no inline) porque en pantallas anchas
+  // viven repartidas entre la columna principal y la barra lateral, pero en pantallas angostas
+  // (isNarrow) se apilan en el mismo orden de siempre — antes de que existiera la barra lateral —
+  // con Actividad agregada al final. Evita duplicar el JSX de cada tarjeta en los dos layouts.
+  const desgloseFinancieroCard = (
+    <div style={styles.financialCard}>
+      <h3 style={styles.cardTitle}>Desglose Financiero</h3>
+
+      <div style={styles.finBar}>
+        <div style={{ ...styles.finBarSegment, width: finBarMounted ? `${finBarPct(finBarUtilidad)}%` : '0%', transitionDelay: '0s', backgroundColor: '#4d7a13' }} />
+        <div style={{ ...styles.finBarSegment, width: finBarMounted ? `${finBarPct(finBarComisiones)}%` : '0%', transitionDelay: '0.08s', backgroundColor: '#8ab04a' }} />
+        <div style={{ ...styles.finBarSegment, width: finBarMounted ? `${finBarPct(finBarCosto)}%` : '0%', transitionDelay: '0.16s', backgroundColor: '#dbe8c2' }} />
+      </div>
+      <div style={styles.finBarLegend}>
+        <span style={styles.finBarLegendItem}>
+          <span style={{ ...styles.finBarLegendDot, backgroundColor: '#4d7a13' }} />
+          Utilidad
+        </span>
+        <span style={styles.finBarLegendItem}>
+          <span style={{ ...styles.finBarLegendDot, backgroundColor: '#8ab04a' }} />
+          Comisiones
+        </span>
+        <span style={styles.finBarLegendItem}>
+          <span style={{ ...styles.finBarLegendDot, backgroundColor: '#dbe8c2' }} />
+          Costo
+        </span>
+      </div>
+
+      <div style={styles.financialGrid}>
+        <div style={styles.finRow}>
+          <span style={{ ...styles.extraLabel, marginBottom: 0 }}>SubTotal</span>
+          <span style={styles.finValue}><AnimatedMoney value={programacion.total} start={finBarMounted} /></span>
+        </div>
+        <div style={styles.finRow}>
+          <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Descuentos</span>
+          <span style={styles.finValue}><AnimatedMoney value={programacion.descuentos} start={finBarMounted} /></span>
+        </div>
+        <div style={styles.finRow}>
+          <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Descuentos de notas crédito</span>
+          <span style={styles.finValue}><AnimatedMoney value={programacion.nc} start={finBarMounted} /></span>
+        </div>
+        <div style={styles.finRow}>
+          <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Ingreso Base</span>
+          <span style={styles.finValue}><AnimatedMoney value={programacion.baseIngreso} start={finBarMounted} /></span>
+        </div>
+        <div style={styles.divider}></div>
+        <div style={styles.finRow}>
+          <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Comisiones/Pus/Invers.</span>
+          <span style={styles.finValue}><AnimatedMoney value={programacion.comisiones} start={finBarMounted} /></span>
+        </div>
+        <div style={styles.finRow}>
+          <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Costo Total</span>
+          <span style={styles.finValue}><AnimatedMoney value={programacion.costoTotal} start={finBarMounted} /></span>
+        </div>
+        <div style={styles.finRow}>
+          <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Utilidad Bruta</span>
+          <span style={styles.finValue}><AnimatedMoney value={programacion.utilidadBruta} start={finBarMounted} /></span>
+        </div>
+      </div>
+
+      <div style={styles.divider}></div>
+      <div style={styles.extraField}>
+        <span style={styles.extraLabel}>Consumo</span>
+        <span style={{ ...styles.extraValue, ...(finConsumoExpanded ? {} : styles.consumoClamp) }}>{programacion.consumo || '-'}</span>
+        {(programacion.consumo?.length ?? 0) > 180 && (
+          <button type="button" style={styles.verMasBtn} onClick={() => setFinConsumoExpanded(v => !v)}>
+            {finConsumoExpanded ? 'Ver menos' : 'Ver más'}
+          </button>
+        )}
+      </div>
+      <div style={styles.extraField}>
+        <span style={styles.extraLabel}>Observaciones</span>
+        <span style={{ ...styles.extraValue, ...(finObservacionesExpanded ? {} : styles.consumoClamp) }}>{programacion.observaciones || '-'}</span>
+        {(programacion.observaciones?.length ?? 0) > 180 && (
+          <button type="button" style={styles.verMasBtn} onClick={() => setFinObservacionesExpanded(v => !v)}>
+            {finObservacionesExpanded ? 'Ver menos' : 'Ver más'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  const tecnicosAsociadosCard = (
+    <div style={styles.miniCard}>
+      <div style={styles.miniCardHeader}>
+        <div style={styles.miniCardHeaderLeft}>
+          <span style={{ ...styles.miniCardIconBadge, border: 'none' }}><MaterialIcon name="engineering" size={15} color="#6b8c1f" /></span>
+          <h3 style={styles.miniCardTitle}>Técnicos asociados</h3>
+          <span style={{ ...styles.miniCardBadge, backgroundColor: '#e5e7eb' }}>{totalTecnicos}</span>
+        </div>
+      </div>
+      <div style={styles.miniCardBody}>
+        {tecnicos.length === 0 ? (
+          <div style={styles.miniCardEmpty}>
+            <MaterialIcon name="engineering" size={22} color="#d1d5db" />
+            No hay datos relacionados
+          </div>
+        ) : (
+          <div style={styles.miniCardListInner}>
+            <div ref={tecnicosAsociadosScrollRef} style={styles.tecnicoScrollBody}>
+              <div style={styles.tecnicoList}>
+                {tecnicoGrupos.flatMap(grupo => grupo.items).map((t, ii) => {
+                  const borderStyle = ii > 0 ? styles.remRowBorder : {};
+                  const hoverStyle = hoveredTecnicoId === t.id ? styles.consumoCellHover : {};
+                  return (
+                    <div
+                      key={t.id}
+                      style={{ ...styles.tecnicoListRow, justifyContent: 'space-between', ...borderStyle, ...hoverStyle, cursor: 'pointer' }}
+                      onMouseEnter={() => setHoveredTecnicoId(t.id)}
+                      onMouseLeave={() => setHoveredTecnicoId(null)}
+                      onClick={() => setSelectedTecnico(t)}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', minWidth: 0 }}>
+                        <span style={styles.tecnicoAvatar}>{getTecnicoInitials(t.tecnico?.nombreCompleto || '-')}</span>
+                        <span style={styles.tecnicoNombre}>{t.tecnico?.nombreCompleto || '-'}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const documentosCard = (
+    <div style={styles.miniCard}>
+      <div style={styles.miniCardHeader}>
+        <div style={styles.miniCardHeaderLeft}>
+          <span style={{ ...styles.miniCardIconBadge, border: 'none' }}><MaterialIcon name="attach_file" size={15} color="#6b8c1f" /></span>
+          <h3 style={styles.miniCardTitle}>Documentos</h3>
+          <span style={{ ...styles.miniCardBadge, backgroundColor: '#e5e7eb' }}>{documentos.length}</span>
+        </div>
+        <button type="button" style={styles.miniCardAddLink} onClick={openDocumentoModal}>
+          <Plus size={13} /> Agregar
+        </button>
+      </div>
+      <div style={{ ...styles.miniCardBody, ...(documentos.length > 0 ? { padding: '0.25rem 0 0' } : {}) }}>
+        {documentos.length === 0 ? (
+          <div style={styles.miniCardEmpty}>
+            <FileText size={22} color="#d1d5db" />
+            No hay datos relacionados
+          </div>
+        ) : (
+          <div style={styles.miniCardListInner}>
+            <div style={{ ...styles.documentoRow, ...styles.colHeader }}>
+              <span style={styles.colHeaderText}>Nombre</span>
+              <span style={styles.colHeaderText}>Documento</span>
+              <span style={styles.colHeaderText}>Cargado el</span>
+              <span style={styles.colHeaderText}>Cargado por</span>
+              <span style={styles.colHeaderText}></span>
+            </div>
+            <div ref={documentosScrollRef} style={{ ...styles.tabScrollBody, maxHeight: '200px' }}>
+              {documentos.map((d, i) => {
+                const hoverStyle = hoveredDocumentoId === d.id ? styles.consumoCellHover : {};
+                return (
+                  <div
+                    key={d.id}
+                    style={{ ...styles.documentoRow, ...(i > 0 ? styles.remRowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
+                    onClick={() => setSelectedDocumento(d)}
+                    onMouseEnter={() => setHoveredDocumentoId(d.id)}
+                    onMouseLeave={() => setHoveredDocumentoId(null)}
+                  >
+                    <span style={{ ...styles.requisicionCellText, fontWeight: 700, color: '#333' }}>{d.nombre ?? '-'}</span>
+                    <span style={{ ...styles.requisicionCellText, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      {d.archivoDisponible ? (<><FileText size={14} color="#6b8c1f" /> PDF</>) : <span style={{ color: '#9ca3af', fontStyle: 'italic' as const }}>No disponible</span>}
+                    </span>
+                    <span style={{ ...styles.requisicionCellText, fontSize: '0.8rem' }}>{formatDateTime(d.cargadoEl)}</span>
+                    <span style={{ ...styles.requisicionCellText, fontSize: '0.8rem' }}>{d.cargadoPor?.nombreCompleto ?? '-'}</span>
+                    <button
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af', padding: '0.25rem', flexShrink: 0 }}
+                      onClick={e => { e.stopPropagation(); deleteDocumentoMutation.mutate(d.id); }}
+                      disabled={deleteDocumentoMutation.isPending}
+                      title="Eliminar"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const tecnicosSugeridosCard = (
+    <div style={styles.miniCard}>
+      <div style={styles.miniCardHeader}>
+        <div style={styles.miniCardHeaderLeft}>
+          <span style={{ ...styles.miniCardIconBadge, border: 'none' }}><MaterialIcon name="group_add" size={15} color="#6b8c1f" /></span>
+          <h3 style={styles.miniCardTitle}>Técnicos sugeridos</h3>
+          <span style={{ ...styles.miniCardBadge, backgroundColor: '#e5e7eb' }}>{tecnicosSugeridos.length}</span>
+        </div>
+      </div>
+      <div style={styles.miniCardBody}>
+        {tecnicosSugeridos.length === 0 ? (
+          <div style={styles.miniCardEmpty}>
+            <MaterialIcon name="group_add" size={22} color="#d1d5db" />
+            No hay datos relacionados
+          </div>
+        ) : (
+          <div style={styles.miniCardListInner}>
+            <div ref={tecnicosSugeridosScrollRef} style={styles.tecnicoScrollBody}>
+              <div style={styles.tecnicoList}>
+                {tecnicosSugeridos.map((t, i) => (
+                  <div
+                    key={t.id}
+                    style={{ ...styles.tecnicoListRow, justifyContent: 'space-between', ...(i > 0 ? styles.remRowBorder : {}) }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', minWidth: 0 }}>
+                      <span style={styles.tecnicoAvatar}>{getTecnicoInitials(t.tecnico || '-')}</span>
+                      <span style={styles.tecnicoNombre}>{t.tecnico ?? '-'}</span>
+                    </div>
+                    <button
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af', padding: '0.25rem', flexShrink: 0 }}
+                      onClick={() => deleteTecnicoSugeridoMutation.mutate(t.id)}
+                      disabled={deleteTecnicoSugeridoMutation.isPending}
+                      title="Eliminar"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+      <div style={styles.miniCardFooter}>
+        <span />
+        <button type="button" style={styles.miniCardAddLink} onClick={openTecnicoSugeridoModal}>
+          <Plus size={13} /> Agregar
+        </button>
+      </div>
+    </div>
+  );
+
+  const notasCreditoCard = (
+    <div style={styles.miniCard}>
+      <div style={styles.miniCardHeader}>
+        <div style={styles.miniCardHeaderLeft}>
+          <span style={{ ...styles.miniCardIconBadge, border: 'none' }}><MaterialIcon name="assignment_return" size={15} color="#6b8c1f" /></span>
+          <h3 style={styles.miniCardTitle}>Notas de crédito</h3>
+          <span style={{ ...styles.miniCardBadge, backgroundColor: '#e5e7eb' }}>{notasCredito.length}</span>
+        </div>
+      </div>
+      <div style={styles.miniCardBody}>
+        {notasCredito.length === 0 ? (
+          <div style={styles.miniCardEmpty}>
+            <MaterialIcon name="assignment_return" size={22} color="#d1d5db" />
+            No hay datos relacionados
+          </div>
+        ) : (
+          <div style={styles.miniCardListInner}>
+            <div style={{ ...styles.notaCreditoRow, ...styles.colHeader }}>
+              <span style={styles.colHeaderText}>Fecha Nota Crédito</span>
+              <span style={styles.colHeaderText}>Remisión</span>
+              <span style={styles.colHeaderText}>Aplicada Por</span>
+              <span style={{ ...styles.colHeaderText, textAlign: 'right' }}>Total</span>
+            </div>
+            <div ref={notasCreditoScrollRef} style={styles.comisionScrollBody}>
+              {notasCredito.map((nc, i) => {
+                const hoverStyle = hoveredNotaCreditoId === nc.id ? styles.consumoCellHover : {};
+                return (
+                  <div
+                    key={nc.id}
+                    style={{ ...styles.notaCreditoRow, ...(i > 0 ? styles.remRowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
+                    onClick={() => setSelectedNotaCredito(nc)}
+                    onMouseEnter={() => setHoveredNotaCreditoId(nc.id)}
+                    onMouseLeave={() => setHoveredNotaCreditoId(null)}
+                  >
+                    <span style={styles.requisicionCellText}>{formatDate(nc.fechaNotaCredito)}</span>
+                    <span style={styles.requisicionCellText}>{nc.factura?.remision?.numRemision || nc.factura?.remision?.id || '-'}</span>
+                    <span style={styles.requisicionCellText}>{nc.aplicadaPor?.nombreCompleto ?? '-'}</span>
+                    <span style={{ ...styles.requisicionCellText, textAlign: 'right', fontWeight: 600, color: '#333' }}>{formatMoney(nc.total)}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={styles.consumoTotalRow}>
+              <span style={styles.consumoTotalLabel}>Total notas de crédito</span>
+              <span style={styles.consumoTotalValue}>
+                {formatMoney(notasCredito.reduce((sum, nc) => sum + Number(nc.total ?? 0), 0))}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const actividadCard = (
+    <div style={styles.miniCard}>
+      <div style={styles.miniCardHeader}>
+        <div style={styles.miniCardHeaderLeft}>
+          <span style={{ ...styles.miniCardIconBadge, border: 'none' }}><MaterialIcon name="history" size={15} color="#6b8c1f" /></span>
+          <h3 style={styles.miniCardTitle}>Actividad</h3>
+        </div>
+      </div>
+      <div style={styles.miniCardBody}>
+        <ActividadTimeline eventos={[
+          { key: 'creada', label: 'Programación creada', sub: `${programacion.creadoPorTercero?.nombreCompleto ?? '-'} · ${formatDateTime(programacion.createdAt)}`, fecha: programacion.createdAt },
+          ...programacion.ediciones.map((e, i) => ({ key: `editada-${i}`, label: 'Programación editada', sub: `${e.editadoPor ?? '-'} · ${formatDateTime(e.editadoEn)}`, fecha: e.editadoEn })),
+        ]} />
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -1428,11 +1709,25 @@ export default function ProgramacionDetailPage() {
         </div>
       )}
       <div className="page-fade-in" style={styles.container}>
+        <div style={{ ...styles.pageSplitRow, ...(isMobile || isNarrow ? { flexDirection: 'column' as const } : {}) }}>
+        <div style={styles.mainColumn}>
         <div style={styles.headerCard}>
         <div style={{ ...styles.header, ...(isMobile ? { flexWrap: 'wrap' as const } : {}) }}>
           <HeaderBackReveal
             onBack={() => navigate(-1)}
-            icon={<MaterialIcon name="event_note" size={30} color="#4d7a13" />}
+            icon={
+              <div style={{ display: 'flex', flexDirection: 'column' as const, width: 'calc(100% + 2px)', height: 'calc(100% + 2px)', margin: '-1px', borderRadius: 20, overflow: 'hidden', backgroundColor: '#fff', border: '1px solid #6b8c1f', boxSizing: 'border-box' as const }}>
+                <div style={{ backgroundColor: '#6b8c1f', color: '#fff', fontSize: '0.55rem', fontWeight: 700, letterSpacing: '0.05em', textAlign: 'center' as const, padding: '0.15rem 0', borderTopLeftRadius: 19, borderTopRightRadius: 19 }}>
+                  {fechaQxMes}
+                </div>
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem', fontWeight: 800, color: '#1f2937' }}>
+                  {fechaQxDia}
+                </div>
+                <div style={{ textAlign: 'center' as const, fontSize: '0.55rem', color: '#9ca3af', paddingBottom: '0.2rem' }}>
+                  {programacion.horaQx || '-'}
+                </div>
+              </div>
+            }
             size={66}
             badgeRadius={20}
             mobileIconAsBack={isMobile}
@@ -1449,53 +1744,62 @@ export default function ProgramacionDetailPage() {
           </HeaderBackReveal>
 
           <div style={{ ...styles.headerActions, ...(isMobile ? { flexWrap: 'wrap' as const, width: '100%' } : {}) }}>
-            <input
-              ref={whatsappFileInputRef}
-              type="file"
-              accept="application/pdf"
-              style={{ display: 'none' }}
-              onChange={handleWhatsappFileSelected}
-            />
-            <button
-              className="btn-press header-btn-secondary"
-              style={{ ...styles.btnPill, ...(isMobile ? { order: 2 } : {}) }}
-              onClick={() => setShowWhatsappConfirm(true)}
-            >
-              <i className="fa-brands fa-whatsapp" style={{ fontSize: 16, color: '#4d7a13' }} />
-              Enviar por WhatsApp
-            </button>
-            {/* Gmail + divisor + Agregar van agrupados en un mismo contenedor flex para que, al
+            {/* Enviar + divisor + Agregar van agrupados en un mismo contenedor flex para que, al
                 envolver en móvil, siempre queden juntos en la misma línea (nunca "Agregar" solo,
-                separado de "Enviar por Gmail"). */}
+                separado de "Enviar"). */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', ...(isMobile ? { order: 1 } : {}) }}>
-              <button
-                className="btn-press header-btn-secondary"
-                style={{
-                  ...styles.btnPill,
-                  position: 'relative' as const,
-                  overflow: 'hidden' as const,
-                  ...((gmailSending || generandoPdfGmail) ? { pointerEvents: 'none' as const } : {}),
-                }}
-                onClick={() => setShowGmailConfirm(true)}
-                disabled={gmailSending || generandoPdfGmail}
-              >
-                {gmailSending && (
-                  <span
-                    style={{
-                      position: 'absolute' as const,
-                      inset: 0,
-                      width: `${gmailProgress}%`,
-                      backgroundColor: '#e9f2d8',
-                      transition: 'width 0.15s ease',
-                      zIndex: 0,
-                    }}
-                  />
+              <div style={{ position: 'relative' as const }} ref={enviarMenuRef}>
+                <button
+                  className="btn-press header-btn-secondary"
+                  style={{
+                    ...styles.btnPill,
+                    position: 'relative' as const,
+                    overflow: 'hidden' as const,
+                    ...((gmailSending || generandoPdfGmail || generandoPdfWhatsapp) ? { pointerEvents: 'none' as const } : {}),
+                  }}
+                  onClick={() => { setShowEnviarMenu(o => !o); setShowAgregarMenu(false); setShowMoreMenu(false); }}
+                  disabled={gmailSending || generandoPdfGmail || generandoPdfWhatsapp}
+                >
+                  {gmailSending && (
+                    <span
+                      style={{
+                        position: 'absolute' as const,
+                        inset: 0,
+                        width: `${gmailProgress}%`,
+                        backgroundColor: '#e9f2d8',
+                        transition: 'width 0.15s ease',
+                        zIndex: 0,
+                      }}
+                    />
+                  )}
+                  <span style={{ position: 'relative' as const, zIndex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Send size={15} style={{ color: '#4d7a13' }} />
+                    {(generandoPdfGmail || generandoPdfWhatsapp) ? 'Generando PDF...' : gmailSending ? 'Enviando...' : 'Enviar'}
+                  </span>
+                </button>
+                {showEnviarMenu && (
+                  <div style={{ ...styles.dropdown, right: 'auto' as const, left: 0 }}>
+                    <button
+                      style={styles.dropdownItem}
+                      onClick={() => { setShowEnviarMenu(false); setShowWhatsappConfirm(true); }}
+                      onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
+                      onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                    >
+                      <i className="fa-brands fa-whatsapp" style={{ fontSize: 15, color: '#4d7a13', width: 15, textAlign: 'center' as const }} />
+                      WhatsApp
+                    </button>
+                    <button
+                      style={styles.dropdownItem}
+                      onClick={() => { setShowEnviarMenu(false); setShowGmailConfirm(true); }}
+                      onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f4f4ee'; }}
+                      onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                    >
+                      <SiGmail size={14} color="#8a8a80" style={{ width: 15, textAlign: 'center' as const }} />
+                      Gmail
+                    </button>
+                  </div>
                 )}
-                <span style={{ position: 'relative' as const, zIndex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <SiGmail size={14} color="#8a8a80" />
-                  {generandoPdfGmail ? 'Generando PDF...' : gmailSending ? 'Enviando...' : 'Enviar por Gmail'}
-                </span>
-              </button>
+              </div>
 
               <span style={styles.headerDivider} />
 
@@ -1610,24 +1914,37 @@ export default function ProgramacionDetailPage() {
           </div>
         )}
 
+        <div style={styles.infoStepperCard}>
         <div style={{ ...styles.infoBar, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr) 1.7fr' }}>
           <div style={styles.infoBarItem}>
-            <span style={styles.infoBarLabel}>Fecha y Hora QX</span>
-            <span style={styles.infoBarValueMono}>{formatDate(programacion.fechaQx)} · {programacion.horaQx || '-'}</span>
+            <span style={styles.infoBarLabelRow}>
+              <MaterialIcon name="calendar_today" size={14} color="#8b93a1" />
+              <span style={styles.infoBarLabel}>Fecha y hora QX</span>
+            </span>
+            <span style={styles.infoBarValueMono}>{fechaQxLarga} · {programacion.horaQx || '-'}</span>
             <span style={styles.infoBarDividerLine} />
           </div>
           <div style={styles.infoBarItem}>
-            <span style={styles.infoBarLabel}>Médico</span>
+            <span style={styles.infoBarLabelRow}>
+              <MaterialIcon name="stethoscope" size={14} color="#8b93a1" />
+              <span style={styles.infoBarLabel}>Médico</span>
+            </span>
             <span style={styles.infoBarValue}>{programacion.medicos?.map(m => m.medico.nombreCompleto).join(', ') || '-'}</span>
             <span style={styles.infoBarDividerLine} />
           </div>
           <div style={styles.infoBarItem}>
-            <span style={styles.infoBarLabel}>Sede</span>
+            <span style={styles.infoBarLabelRow}>
+              <MaterialIcon name="apartment" size={14} color="#8b93a1" />
+              <span style={styles.infoBarLabel}>Sede</span>
+            </span>
             <span style={styles.infoBarValue}>{programacion.sede ? programacion.sede.nombre : '-'}</span>
             <span style={styles.infoBarDividerLine} />
           </div>
           <div style={styles.infoBarItem}>
-            <span style={styles.infoBarLabel}>Ciudad QX</span>
+            <span style={styles.infoBarLabelRow}>
+              <MaterialIcon name="location_on" size={14} color="#8b93a1" />
+              <span style={styles.infoBarLabel}>Ciudad QX</span>
+            </span>
             <span style={styles.infoBarValue}>{programacion.hospital?.ciudadCat?.nombre || '-'}</span>
             <span style={styles.infoBarDividerLine} />
           </div>
@@ -1646,6 +1963,54 @@ export default function ProgramacionDetailPage() {
               )}
             </span>
           </div>
+        </div>
+
+        <div style={styles.infoStepperDivider} />
+
+        <div style={styles.stepperBar}>
+          <div style={styles.stepperSteps}>
+            {stepperSteps.map((step, idx) => {
+              const isCurrent = idx === stepperCurrentIdx;
+              const circleStyle = step.done ? styles.stepperCircleDone : isCurrent ? styles.stepperCircleCurrent : styles.stepperCirclePending;
+              return (
+                <div key={step.key} style={{ display: 'flex', alignItems: 'center', flex: idx < stepperSteps.length - 1 ? 1 : undefined, minWidth: 0 }}>
+                  <div style={styles.stepperStep}>
+                    <span style={{ ...styles.stepperCircle, ...circleStyle }}>
+                      {step.done ? <MaterialIcon name="check" size={14} /> : idx + 1}
+                    </span>
+                    <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.1rem' }}>
+                      <span style={{ ...styles.stepperLabel, ...(!step.done && !isCurrent ? styles.stepperLabelPending : {}) }}>{step.label}</span>
+                      {step.subLabel && <span style={styles.stepperSubLabel}>{step.subLabel}</span>}
+                    </div>
+                  </div>
+                  {idx < stepperSteps.length - 1 && (
+                    <span style={{ ...styles.stepperConnector, backgroundColor: step.done ? '#6b8c1f' : '#e5e7eb' }} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {requisiciones.length === 0 ? (
+            <button
+              type="button"
+              className="btn-press"
+              style={{ ...styles.saveBtn, display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}
+              onClick={openRequisicionModal}
+            >
+              Generar requisición <MaterialIcon name="arrow_forward" size={16} />
+            </button>
+          ) : programacion.sinRemision && (
+            <button
+              type="button"
+              className="btn-press"
+              style={{ ...styles.saveBtn, display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0, ...(!puedeAgregarRemision ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+              onClick={() => { if (puedeAgregarRemision) setShowRemisionModal(true); }}
+              title={!puedeAgregarRemision ? 'Necesitas al menos una requisición para poder agregar una remisión.' : undefined}
+            >
+              Generar remisión <MaterialIcon name="arrow_forward" size={16} />
+            </button>
+          )}
+        </div>
         </div>
 
         <div style={{ ...styles.mainTabBar, ...(isMobile ? { overflowX: 'auto' as const, overflowY: 'hidden' as const, WebkitOverflowScrolling: 'touch' as const, touchAction: 'pan-x' as const } : {}) }}>
@@ -1669,438 +2034,205 @@ export default function ProgramacionDetailPage() {
 
         {mainTab === 'resumen' && (
         <>
-        <div style={{ ...styles.desgloseSection, gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : 'minmax(0, 1.2fr) minmax(0, 1fr)' }}>
-          <div style={styles.financialCard}>
-            <h3 style={styles.cardTitle}>Desglose Financiero</h3>
-
-            <div style={styles.finBar}>
-              <div style={{ ...styles.finBarSegment, width: finBarMounted ? `${finBarPct(finBarUtilidad)}%` : '0%', transitionDelay: '0s', backgroundColor: '#4d7a13' }} />
-              <div style={{ ...styles.finBarSegment, width: finBarMounted ? `${finBarPct(finBarComisiones)}%` : '0%', transitionDelay: '0.08s', backgroundColor: '#8ab04a' }} />
-              <div style={{ ...styles.finBarSegment, width: finBarMounted ? `${finBarPct(finBarCosto)}%` : '0%', transitionDelay: '0.16s', backgroundColor: '#dbe8c2' }} />
-            </div>
-            <div style={styles.finBarLegend}>
-              <span style={styles.finBarLegendItem}>
-                <span style={{ ...styles.finBarLegendDot, backgroundColor: '#4d7a13' }} />
-                Utilidad
-              </span>
-              <span style={styles.finBarLegendItem}>
-                <span style={{ ...styles.finBarLegendDot, backgroundColor: '#8ab04a' }} />
-                Comisiones
-              </span>
-              <span style={styles.finBarLegendItem}>
-                <span style={{ ...styles.finBarLegendDot, backgroundColor: '#dbe8c2' }} />
-                Costo
-              </span>
-            </div>
-
-            <div style={styles.financialGrid}>
-              <div style={styles.finRow}>
-                <span style={{ ...styles.extraLabel, marginBottom: 0 }}>SubTotal</span>
-                <span style={styles.finValue}><AnimatedMoney value={programacion.total} start={finBarMounted} /></span>
-              </div>
-              <div style={styles.finRow}>
-                <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Descuentos</span>
-                <span style={styles.finValue}><AnimatedMoney value={programacion.descuentos} start={finBarMounted} /></span>
-              </div>
-              <div style={styles.finRow}>
-                <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Notas Crédito</span>
-                <span style={styles.finValue}><AnimatedMoney value={programacion.nc} start={finBarMounted} /></span>
-              </div>
-              <div style={styles.finRow}>
-                <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Ingreso Base</span>
-                <span style={styles.finValue}><AnimatedMoney value={programacion.baseIngreso} start={finBarMounted} /></span>
-              </div>
-              <div style={styles.divider}></div>
-              <div style={styles.finRow}>
-                <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Comisiones/Pus/Invers.</span>
-                <span style={styles.finValue}><AnimatedMoney value={programacion.comisiones} start={finBarMounted} /></span>
-              </div>
-              <div style={styles.finRow}>
-                <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Costo Total</span>
-                <span style={styles.finValue}><AnimatedMoney value={programacion.costoTotal} start={finBarMounted} /></span>
-              </div>
-              <div style={styles.finRow}>
-                <span style={{ ...styles.extraLabel, marginBottom: 0 }}>Utilidad Bruta</span>
-                <span style={styles.finValue}><AnimatedMoney value={programacion.utilidadBruta} start={finBarMounted} /></span>
-              </div>
-            </div>
-
-            <div style={styles.divider}></div>
-            <div style={styles.extraField}>
-              <span style={styles.extraLabel}>Consumo</span>
-              <span style={{ ...styles.extraValue, ...(finConsumoExpanded ? {} : styles.consumoClamp) }}>{programacion.consumo || '-'}</span>
-              {(programacion.consumo?.length ?? 0) > 180 && (
-                <button type="button" style={styles.verMasBtn} onClick={() => setFinConsumoExpanded(v => !v)}>
-                  {finConsumoExpanded ? 'Ver menos' : 'Ver más'}
-                </button>
-              )}
-            </div>
-            <div style={styles.extraField}>
-              <span style={styles.extraLabel}>Observaciones</span>
-              <span style={styles.extraValue}>{programacion.observaciones || '-'}</span>
-            </div>
-          </div>
-
-          {/* Técnicos Asociados */}
-          <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '2rem' }}>
-            <div>
-              <div style={styles.remisionesTitleRow}>
-                <h2 style={styles.sectionTitle}>Técnicos asociados</h2>
-                <span style={styles.badge}>{totalTecnicos}</span>
-              </div>
-              {tecnicos.length === 0 ? (
-                <div style={styles.emptyState}>No hay datos relacionados</div>
-              ) : (
-                <div style={styles.remList}>
-                  <div style={styles.tecnicoLegendRow}>
-                    <MaterialIcon name="link" size={16} color="#9ca3af" />
-                    <span style={styles.tecnicoLegendText}>Todos ligados a</span>
-                    <span style={styles.tecnicoLegendId}>{programacion.id}</span>
-                  </div>
-                  <div ref={tecnicosAsociadosScrollRef} style={styles.tecnicoScrollBody}>
-                    <div style={styles.tecnicoList}>
-                      {tecnicoGrupos.flatMap(grupo => grupo.items).map((t, ii) => {
-                        const borderStyle = ii > 0 ? styles.remRowBorder : {};
-                        const hoverStyle = hoveredTecnicoId === t.id ? styles.consumoCellHover : {};
-                        return (
-                          <div
-                            key={t.id}
-                            style={{ ...styles.tecnicoListRow, ...borderStyle, ...hoverStyle, cursor: 'pointer' }}
-                            onMouseEnter={() => setHoveredTecnicoId(t.id)}
-                            onMouseLeave={() => setHoveredTecnicoId(null)}
-                            onClick={() => setSelectedTecnico(t)}
-                          >
-                            <span style={styles.tecnicoAvatar}>{getTecnicoInitials(t.tecnico?.nombreCompleto || '-')}</span>
-                            <span style={styles.tecnicoNombre}>{t.tecnico?.nombreCompleto || '-'}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
+        {/* Cotizaciones / Requisiciones / Remisiones — fila horizontal, antes del Desglose Financiero */}
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : 'repeat(3, minmax(0, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+            {/* Cotizaciones */}
+            <div style={styles.miniCard}>
+              <div style={styles.miniCardHeader}>
+                <div style={styles.miniCardHeaderLeft}>
+                  <span style={styles.miniCardIconBadge}><FileText size={15} color="#6b8c1f" /></span>
+                  <h3 style={styles.miniCardTitle}>Cotizaciones</h3>
+                  <span style={{ ...styles.miniCardBadge, backgroundColor: '#e5e7eb' }}>{programacion.cotizaciones.length}</span>
                 </div>
-              )}
-            </div>
-
-            <div>
-              <div style={styles.remisionesTitleRow}>
-                <h2 style={styles.sectionTitle}>Técnicos sugeridos</h2>
-                <span style={styles.badge}>{tecnicosSugeridos.length}</span>
+                <button type="button" style={styles.miniCardAddLink} onClick={() => setShowAgregarCotizacionModal(true)}>
+                  <Plus size={13} /> Agregar
+                </button>
               </div>
-              {tecnicosSugeridos.length === 0 ? (
-                <div style={styles.emptyState}>No hay datos relacionados</div>
-              ) : (
-                <div style={styles.remList}>
-                  <div ref={tecnicosSugeridosScrollRef} style={styles.tecnicoScrollBody}>
-                    <div style={styles.tecnicoList}>
-                      {tecnicosSugeridos.map((t, i) => (
+              <div style={{ ...styles.miniCardBody, ...(programacion.cotizaciones.length > 0 ? { padding: '0.25rem 0 0' } : {}) }}>
+                {programacion.cotizaciones.length === 0 ? (
+                  <div style={styles.miniCardEmpty}>
+                    <Circle size={22} color="#d1d5db" />
+                    No hay cotizaciones vinculadas
+                  </div>
+                ) : (
+                  <div style={styles.miniCardListInner}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 1rem', fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' }}>
+                      <span>Id</span>
+                      <span style={{ flex: 1, textAlign: 'center' as const }}>Cirugía</span>
+                      <span>Total</span>
+                    </div>
+                    <div ref={cotizacionesScrollRef} style={{ ...styles.tabScrollBody, maxHeight: '160px', ...(miniCardSyncedHeight ? { height: miniCardSyncedHeight } : {}) }}>
+                      {programacion.cotizaciones.map((c, i) => (
                         <div
-                          key={t.id}
-                          style={{ ...styles.tecnicoListRow, justifyContent: 'space-between', ...(i > 0 ? styles.remRowBorder : {}) }}
+                          key={c.id}
+                          style={{ ...styles.cotizacionCardMobile, width: '100%', boxSizing: 'border-box' as const, ...(i > 0 ? styles.remRowBorder : {}), cursor: 'pointer' }}
+                          onClick={() => setSelectedCotizacionId(c.id)}
+                          onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f9fafb'; }}
+                          onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; }}
                         >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', minWidth: 0 }}>
-                            <span style={styles.tecnicoAvatar}>{getTecnicoInitials(t.tecnico || '-')}</span>
-                            <span style={styles.tecnicoNombre}>{t.tecnico ?? '-'}</span>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#6b8c1f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, minWidth: 0 }}>
+                              {c.numCotizacion ?? c.id}
+                            </span>
+                            <span style={{ flex: 1, textAlign: 'center' as const, fontSize: '0.78rem', color: '#6b6b60', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, minWidth: 0 }}>
+                              {c.cirugia || '-'}
+                            </span>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#333', flexShrink: 0 }}>{formatMoney(c.total)}</span>
                           </div>
-                          <button
-                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af', padding: '0.25rem', flexShrink: 0 }}
-                            onClick={() => deleteTecnicoSugeridoMutation.mutate(t.id)}
-                            disabled={deleteTecnicoSugeridoMutation.isPending}
-                            title="Eliminar"
-                          >
-                            <Trash2 size={14} />
-                          </button>
                         </div>
                       ))}
                     </div>
-                  </div>
-                </div>
-              )}
-              <button style={styles.addComisionBtnBelow} onClick={openTecnicoSugeridoModal}>
-                <Plus size={14} /> Agregar técnico sugerido
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* ── Cotizaciones + Requisiciones + Remisiones + Documentos + Notas de Crédito ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginBottom: '2rem' }}>
-        {/* Mismas proporciones de columna que desgloseSection (1.2fr/1fr) — antes era un flex 50/50
-            que no alineaba con Técnicos asociados/sugeridos arriba (esas ocupan 1fr de un total de
-            2.2fr, es decir ~45.5%, no 50%). */}
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : 'minmax(0, 1.2fr) minmax(0, 1fr)', gap: '1.5rem' }}>
-          {/* ── Cotizaciones ───────────────────────────────────────── */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={styles.remisionesTitleRow}>
-              <h2 style={styles.sectionTitle}>Cotizaciones</h2>
-              <span style={styles.badge}>{programacion.cotizaciones.length}</span>
-            </div>
-            {programacion.cotizaciones.length === 0 ? (
-              <div style={styles.emptyState}>No hay cotizaciones vinculadas</div>
-            ) : (
-              <div style={styles.remList}>
-                {!isMobile && (
-                  <div style={{ ...styles.cotizacionRow, ...styles.colHeader }}>
-                    <span style={styles.colHeaderText}>Folio</span>
-                    <span style={styles.colHeaderText}>Fecha</span>
-                    <span style={styles.colHeaderText}>Cirugía</span>
-                    <span style={{ ...styles.colHeaderText, textAlign: 'right' as const }}>Total</span>
+                    <div style={{ ...styles.consumoTotalRow, backgroundColor: '#fff', borderTop: '1px solid #e5e7eb' }}>
+                      <span style={{ ...styles.consumoTotalLabel, textTransform: 'none' as const }}>Total</span>
+                      <span style={styles.consumoTotalValue}>{formatMoney(programacion.cotizaciones.reduce((sum, c) => sum + Number(c.total ?? 0), 0))}</span>
+                    </div>
                   </div>
                 )}
-                <div style={styles.tabScrollBody}>
-                  {programacion.cotizaciones.map((c, i) => (
-                    <div
-                      key={c.id}
-                      style={{ ...(isMobile ? styles.cotizacionCardMobile : styles.cotizacionRow), ...(i > 0 ? styles.remRowBorder : {}), cursor: 'pointer' }}
-                      onClick={() => setSelectedCotizacionId(c.id)}
-                      onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f3f4f6'; }}
-                      onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; }}
-                    >
-                      {isMobile ? (
-                        <>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
-                            <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#4d7a13', display: 'flex', alignItems: 'center', gap: '0.3rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
-                              <FileText size={13} style={{ flexShrink: 0 }} />
-                              {c.numCotizacion ?? c.id}
-                            </span>
-                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#333', flexShrink: 0 }}>{formatMoney(c.total)}</span>
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', marginTop: '0.3rem' }}>
-                            <span style={{ fontSize: '0.78rem', color: '#6b6b60', flexShrink: 0 }}>{formatDate(c.fecha)}</span>
-                            <span style={{ fontSize: '0.78rem', color: '#6b6b60', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{c.cirugia || '-'}</span>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <span style={{ ...styles.requisicionCellText, fontWeight: 700, color: '#4d7a13', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                            <FileText size={13} style={{ flexShrink: 0 }} />
-                            {c.numCotizacion ?? c.id}
-                          </span>
-                          <span style={styles.requisicionCellText}>{formatDate(c.fecha)}</span>
-                          <span style={styles.requisicionCellText}>{c.cirugia || '-'}</span>
-                          <span style={{ ...styles.requisicionCellText, textAlign: 'right' as const, fontWeight: 600, color: '#333' }}>{formatMoney(c.total)}</span>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
               </div>
-            )}
-          </div>
-
-          {/* ── Requisiciones ───────────────────────────────────────── */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={styles.remisionesTitleRow}>
-              <h2 style={styles.sectionTitle}>Requisiciones</h2>
-              <span style={styles.badge}>{requisiciones.length}</span>
             </div>
-            {requisiciones.length === 0 ? (
-              <div style={styles.emptyState}>No hay datos relacionados</div>
-            ) : (
-              <div style={styles.remList}>
-                <div style={{ ...styles.requisicionRow, ...styles.colHeader }}>
-                  <span style={styles.colHeaderText}>ID Movimiento</span>
-                  <span style={styles.colHeaderText}>Marca de Tiempo</span>
-                  <span style={styles.colHeaderText}>Usuario</span>
-                  <span style={styles.colHeaderText}>Status</span>
+
+            {/* Requisiciones */}
+            <div style={styles.miniCard}>
+              <div style={styles.miniCardHeader}>
+                <div style={styles.miniCardHeaderLeft}>
+                  <span style={styles.miniCardIconBadge}><MaterialIcon name="inventory_2" size={15} color="#6b8c1f" /></span>
+                  <h3 style={styles.miniCardTitle}>Requisiciones</h3>
+                  <span style={{ ...styles.miniCardBadge, backgroundColor: '#e5e7eb' }}>{requisiciones.length}</span>
                 </div>
-                <div ref={requisicionesScrollRef} style={styles.comisionScrollBody}>
-                  {requisiciones.map((req, i) => {
-                    const hoverStyle = hoveredRequisicionId === req.id ? styles.consumoCellHover : {};
-                    const statusCerrado = (req.status ?? '').trim().toLowerCase() === 'cerrada';
-                    return (
-                      <div
-                        key={req.id}
-                        style={{ ...styles.requisicionRow, ...(i > 0 ? styles.remRowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
-                        onClick={() => setSelectedRequisicionId(req.id)}
-                        onMouseEnter={() => setHoveredRequisicionId(req.id)}
-                        onMouseLeave={() => setHoveredRequisicionId(null)}
-                      >
-                        <div style={styles.remRowLeft}>
-                          <MaterialIcon name="inventory_2" size={14} color="#6b8c1f" style={{ flexShrink: 0 }} />
-                          <span style={{ ...styles.remRowCode, color: '#6b8c1f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{req.id}</span>
-                        </div>
-                        <span style={styles.requisicionCellText}>{formatDateTime(req.marcaDeTiempo)}</span>
-                        <span style={styles.requisicionCellText}>{req.usuario ?? '-'}</span>
-                        {req.status ? (
-                          <span style={{ ...styles.estadoBadge, ...(statusCerrado ? styles.estadoDefinitiva : styles.estadoOtro), justifySelf: 'start' as const }}>
-                            {req.status}
-                          </span>
-                        ) : <span style={{ color: '#9ca3af' }}>-</span>}
-                      </div>
-                    );
-                  })}
-                </div>
+                <button type="button" style={styles.miniCardAddLink} onClick={openRequisicionModal}>
+                  <Plus size={13} /> Agregar
+                </button>
               </div>
-            )}
-            <button style={styles.addComisionBtnBelow} onClick={openRequisicionModal}>
-              <Plus size={14} /> Agregar requisición
-            </button>
-          </div>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : 'minmax(0, 1.2fr) minmax(0, 1fr)', gap: '1.5rem' }}>
-          {/* ── Remisiones ─────────────────────────────────────────── */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={styles.remisionesTitleRow}>
-              <h2 style={styles.sectionTitle}>Remisiones</h2>
-              <span style={styles.badge}>{remisiones.length}</span>
-            </div>
-            {remisiones.length === 0 ? (
-              <div style={styles.emptyState}>No hay datos relacionados</div>
-            ) : (
-              <div style={styles.remList}>
-                <div ref={remisionesScrollRef} style={styles.scrollBody}>
-                  <div style={{ ...styles.remGridRow, ...(isMobile ? styles.remGridRowMobile : {}), ...styles.colHeader, position: 'sticky' as const, top: 0, zIndex: 1 }}>
-                    <span style={styles.colHeaderText}>N° Remisión</span>
-                    <span style={styles.colHeaderText}>Estado</span>
-                    <span style={styles.colHeaderText}>CxC</span>
-                    <span style={{ ...styles.colHeaderText, ...(isMobile ? {} : { textAlign: 'right' as const }) }}>Total</span>
+              <div style={{ ...styles.miniCardBody, ...(requisiciones.length > 0 ? { padding: '0.25rem 0 0' } : {}) }}>
+                {requisiciones.length === 0 ? (
+                  <div style={styles.miniCardEmpty}>
+                    <Circle size={22} color="#d1d5db" />
+                    No hay datos relacionados
                   </div>
-                  {remisiones.map((rem, i) => (
-                    <div
-                      key={rem.id}
-                      style={{ ...styles.remGridRow, ...(isMobile ? styles.remGridRowMobile : {}), ...(i > 0 ? styles.remRowBorder : {}), cursor: 'pointer' }}
-                      onClick={() => navigate(`/operacion/remisiones/${rem.id}`, '/operacion/remisiones/:id')}
-                      onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f3f4f6'; }}
-                      onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; }}
-                    >
-                      <div style={styles.remRowLeft}>
-                        <MaterialIcon name="receipt_long" size={14} color="#6b8c1f" style={{ flexShrink: 0 }} />
-                        <span style={{ ...styles.remRowCode, color: '#6b8c1f' }}>{rem.numRemision || rem.id}</span>
-                      </div>
-                      {rem.estado ? (
-                        <span style={{ ...styles.estadoBadge, ...(rem.estado === 'Definitiva' ? styles.estadoDefinitiva : styles.estadoOtro) }}>
-                          {rem.estado}
-                        </span>
-                      ) : <span style={{ color: '#9ca3af' }}>-</span>}
-                      <div style={styles.cxcLabel}>
-                        {rem.cxc
-                          ? <><CheckCircle size={13} color="#16a34a" /><span style={{ color: '#16a34a' }}>Enviada</span></>
-                          : <><Circle size={13} color="#9ca3af" /><span style={{ color: '#9ca3af' }}>Pendiente</span></>
-                        }
-                      </div>
-                      <span style={{ ...styles.requisicionCellText, ...(isMobile ? { fontWeight: 600, color: '#333' } : { textAlign: 'right' as const, fontWeight: 600, color: '#333' }) }}>{formatMoney(rem.total)}</span>
+                ) : (
+                  <div style={styles.miniCardListInner}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 1rem', fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' }}>
+                      <span>Id</span>
+                      <span style={{ flex: 1, textAlign: 'center' as const }}>Usuario</span>
+                      <span>Total</span>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div style={{ position: 'relative' as const }}>
-              <button
-                style={{ ...styles.addComisionBtnBelow, ...(!puedeAgregarRemision ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
-                onClick={() => { if (puedeAgregarRemision) setShowRemisionModal(true); }}
-                onMouseEnter={e => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  setRemisionBtnTooltipPos({ top: rect.top, left: rect.left + rect.width / 2 });
-                }}
-                onMouseLeave={() => setRemisionBtnTooltipPos(null)}
-              >
-                <Plus size={14} /> Agregar remisión
-              </button>
-              {!puedeAgregarRemision && remisionBtnTooltipPos && (
-                <div style={{ ...styles.tooltipBubble, top: remisionBtnTooltipPos.top - 8, left: remisionBtnTooltipPos.left }}>
-                  Necesitas al menos una requisición para poder agregar una remisión.
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* ── Documentos ─────────────────────────────────────────── */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={styles.remisionesTitleRow}>
-              <h2 style={styles.sectionTitle}>Documentos</h2>
-              <span style={styles.badge}>{documentos.length}</span>
-            </div>
-            {documentos.length === 0 ? (
-              <div style={styles.emptyState}>No hay datos relacionados</div>
-            ) : (
-              <div style={styles.remList}>
-                <div style={{ ...styles.documentoRow, ...styles.colHeader }}>
-                  <span style={styles.colHeaderText}>ID</span>
-                  <span style={styles.colHeaderText}>Nombre</span>
-                  <span style={styles.colHeaderText}>Documento</span>
-                  <span style={styles.colHeaderText}>Cargado el / por</span>
-                </div>
-                <div ref={documentosScrollRef} style={styles.tabScrollBody}>
-                  {documentos.map((d, i) => {
-                    const hoverStyle = hoveredDocumentoId === d.id ? styles.consumoCellHover : {};
-                    return (
-                      <div
-                        key={d.id}
-                        style={{ ...styles.documentoRow, ...(i > 0 ? styles.remRowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
-                        onClick={() => setSelectedDocumento(d)}
-                        onMouseEnter={() => setHoveredDocumentoId(d.id)}
-                        onMouseLeave={() => setHoveredDocumentoId(null)}
-                      >
-                        <div style={styles.remRowLeft}>
-                          <FileText size={13} color="#6b8c1f" style={{ flexShrink: 0 }} />
-                          <span style={{ ...styles.remRowCode, whiteSpace: 'nowrap' as const }}>{d.id}</span>
-                        </div>
-                        <span style={styles.requisicionCellText}>{d.nombre ?? '-'}</span>
-                        <span style={{ ...styles.requisicionCellText, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                          {d.archivoDisponible ? (<><FileText size={14} color="#6b8c1f" /> PDF</>) : <span style={{ color: '#9ca3af', fontStyle: 'italic' as const }}>No disponible</span>}
-                        </span>
-                        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.05rem', minWidth: 0 }}>
-                          <span style={{ ...styles.requisicionCellText, fontSize: '0.8rem' }}>{formatDateTime(d.cargadoEl)}</span>
-                          <span style={{ ...styles.requisicionCellText, fontSize: '0.7rem', color: '#9ca3af' }}>{d.cargadoPor?.nombreCompleto ?? '-'}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-            <button style={styles.addComisionBtnBelow} onClick={openDocumentoModal}>
-              <Plus size={14} /> Agregar Documento
-            </button>
-          </div>
-        </div>
-
-        {/* ── Notas de Crédito ───────────────────────────────────── */}
-        <div style={{ width: isMobile ? '100%' : '50%' }}>
-          <div style={styles.remisionesTitleRow}>
-            <h2 style={styles.sectionTitle}>Notas de crédito</h2>
-            <span style={styles.badge}>{notasCredito.length}</span>
-          </div>
-          {notasCredito.length === 0 ? (
-            <div style={styles.emptyState}>No hay datos relacionados</div>
-          ) : (
-            <div style={styles.remList}>
-              <div style={{ ...styles.notaCreditoRow, ...styles.colHeader }}>
-                <span style={styles.colHeaderText}>Fecha Nota Crédito</span>
-                <span style={styles.colHeaderText}>Remisión</span>
-                <span style={styles.colHeaderText}>Aplicada Por</span>
-                <span style={{ ...styles.colHeaderText, textAlign: 'right' }}>Total</span>
-              </div>
-              <div ref={notasCreditoScrollRef} style={styles.comisionScrollBody}>
-                {notasCredito.map((nc, i) => {
-                  const hoverStyle = hoveredNotaCreditoId === nc.id ? styles.consumoCellHover : {};
-                  return (
-                    <div
-                      key={nc.id}
-                      style={{ ...styles.notaCreditoRow, ...(i > 0 ? styles.remRowBorder : {}), ...hoverStyle, cursor: 'pointer' }}
-                      onClick={() => setSelectedNotaCredito(nc)}
-                      onMouseEnter={() => setHoveredNotaCreditoId(nc.id)}
-                      onMouseLeave={() => setHoveredNotaCreditoId(null)}
-                    >
-                      <span style={styles.requisicionCellText}>{formatDate(nc.fechaNotaCredito)}</span>
-                      <span style={styles.requisicionCellText}>{nc.factura?.remision?.numRemision || nc.factura?.remision?.id || '-'}</span>
-                      <span style={styles.requisicionCellText}>{nc.aplicadaPor?.nombreCompleto ?? '-'}</span>
-                      <span style={{ ...styles.requisicionCellText, textAlign: 'right', fontWeight: 600, color: '#333' }}>{formatMoney(nc.total)}</span>
+                    <div ref={requisicionesScrollRef} style={{ ...styles.tabScrollBody, maxHeight: '160px', ...(miniCardSyncedHeight ? { height: miniCardSyncedHeight } : {}) }}>
+                      {requisiciones.map((req, i) => (
+                          <div
+                            key={req.id}
+                            style={{ ...styles.cotizacionCardMobile, width: '100%', boxSizing: 'border-box' as const, ...(i > 0 ? styles.remRowBorder : {}), cursor: 'pointer' }}
+                            onClick={() => setSelectedRequisicionId(req.id)}
+                            onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f9fafb'; }}
+                            onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                              <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#6b8c1f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, minWidth: 0 }}>
+                                {req.id}
+                              </span>
+                              <span style={{ flex: 1, textAlign: 'center' as const, fontSize: '0.78rem', color: '#6b6b60', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, minWidth: 0 }}>
+                                {req.usuario ?? '-'}
+                              </span>
+                              <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#333', flexShrink: 0 }}>{formatMoney(req.total)}</span>
+                            </div>
+                          </div>
+                      ))}
                     </div>
-                  );
-                })}
-              </div>
-              <div style={styles.consumoTotalRow}>
-                <span style={styles.consumoTotalLabel}>Total notas de crédito</span>
-                <span style={styles.consumoTotalValue}>
-                  {formatMoney(notasCredito.reduce((sum, nc) => sum + Number(nc.total ?? 0), 0))}
-                </span>
+                    <div style={{ ...styles.consumoTotalRow, backgroundColor: '#fff', borderTop: '1px solid #e5e7eb' }}>
+                      <span style={{ ...styles.consumoTotalLabel, textTransform: 'none' as const }}>Total</span>
+                      <span style={styles.consumoTotalValue}>{formatMoney(requisiciones.reduce((sum, req) => sum + Number(req.total ?? 0), 0))}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
-          )}
+
+            {/* Remisiones */}
+            <div style={styles.miniCard}>
+              <div style={styles.miniCardHeader}>
+                <div style={styles.miniCardHeaderLeft}>
+                  <span style={styles.miniCardIconBadge}><MaterialIcon name="receipt_long" size={15} color="#6b8c1f" /></span>
+                  <h3 style={styles.miniCardTitle}>Remisiones</h3>
+                  <span style={{ ...styles.miniCardBadge, backgroundColor: '#e5e7eb' }}>{remisiones.length}</span>
+                </div>
+                <button
+                  type="button"
+                  style={{ ...styles.miniCardAddLink, ...(!puedeAgregarRemision ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                  onClick={() => { if (puedeAgregarRemision) setShowRemisionModal(true); }}
+                  title={!puedeAgregarRemision ? 'Necesitas al menos una requisición para poder agregar una remisión.' : undefined}
+                >
+                  <Plus size={13} /> Agregar
+                </button>
+              </div>
+              <div style={{ ...styles.miniCardBody, ...(remisiones.length > 0 ? { padding: '0.25rem 0 0' } : {}) }}>
+                {remisiones.length === 0 ? (
+                  <div style={styles.miniCardEmpty}>
+                    <Circle size={22} color="#d1d5db" />
+                    No hay datos relacionados
+                  </div>
+                ) : (
+                  <div style={styles.miniCardListInner}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 1rem', fontSize: '0.65rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' }}>
+                      <span>N° Remisión</span>
+                      <span style={{ flex: 1, textAlign: 'center' as const }}>Estado</span>
+                      <span>Total</span>
+                    </div>
+                    <div ref={remisionesScrollRef} style={{ ...styles.tabScrollBody, maxHeight: '160px', ...(miniCardSyncedHeight ? { height: miniCardSyncedHeight } : {}) }}>
+                      {remisiones.map((rem, i) => (
+                        <div
+                          key={rem.id}
+                          style={{ ...styles.cotizacionCardMobile, width: '100%', boxSizing: 'border-box' as const, ...(i > 0 ? styles.remRowBorder : {}), cursor: 'pointer' }}
+                          onClick={() => navigate(`/operacion/remisiones/${rem.id}`, '/operacion/remisiones/:id')}
+                          onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f9fafb'; }}
+                          onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#fff'; }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#6b8c1f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, minWidth: 0 }}>
+                              {rem.numRemision || rem.id}
+                            </span>
+                            <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 0 }}>
+                              {rem.estado && (
+                                <span style={{ ...styles.estadoBadge, ...(rem.estado === 'Definitiva' ? styles.estadoDefinitiva : styles.estadoOtro), flexShrink: 0 }}>
+                                  {rem.estado}
+                                </span>
+                              )}
+                            </div>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#333', flexShrink: 0 }}>{formatMoney(rem.total)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ ...styles.consumoTotalRow, backgroundColor: '#fff', borderTop: '1px solid #e5e7eb' }}>
+                      <span style={{ ...styles.consumoTotalLabel, textTransform: 'none' as const }}>Total</span>
+                      <span style={styles.consumoTotalValue}>{formatMoney(remisiones.reduce((sum, rem) => sum + Number(rem.total ?? 0), 0))}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
         </div>
-        </div>
+
+        {isNarrow ? (
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : 'minmax(0, 1.2fr) minmax(0, 1fr)', gap: '1.5rem', marginBottom: '2rem', alignItems: 'start' }}>
+            <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '1.5rem' }}>
+              {desgloseFinancieroCard}
+              {notasCreditoCard}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '1rem' }}>
+              {tecnicosAsociadosCard}
+              {tecnicosSugeridosCard}
+              {documentosCard}
+              {actividadCard}
+            </div>
+          </div>
+        ) : (
+          <div style={styles.desgloseSection}>
+            {desgloseFinancieroCard}
+            <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '1rem' }}>
+              {tecnicosAsociadosCard}
+              {documentosCard}
+            </div>
+          </div>
+        )}
 
         </>
         )}
@@ -2109,6 +2241,7 @@ export default function ProgramacionDetailPage() {
         <div style={{ marginBottom: '2rem' }}>
           <div style={{ backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #e5e7eb', padding: '1.75rem' }}>
           <div style={styles.remisionesTitleRow}>
+            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '8px', backgroundColor: '#e9f2d8', flexShrink: 0 }}><MaterialIcon name="inventory_2" size={16} color="#4d7a13" /></span>
             <h2 style={styles.sectionTitle}>Consumos</h2>
             <span style={styles.badge}>{totalConsumos}</span>
           </div>
@@ -2117,9 +2250,9 @@ export default function ProgramacionDetailPage() {
           ) : (
             <div style={{ border: '1px solid #eeeee6', borderRadius: '10px', overflow: 'hidden' as const }}>
               <div ref={consumosScrollRef} style={{ overflow: 'auto' as const, maxHeight: '320px', overflowAnchor: 'none' as const }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'max-content 50px 1fr 110px 110px 140px', fontSize: '0.72rem' }}>
-                  {['Remisión', 'Cant.', 'Producto', 'Valor Unit.', 'Valor', ''].map((h, i) => (
-                    <div key={i} style={{ ...styles.consumosTh, zIndex: 2, textAlign: (i >= 3 && i < 5 ? 'right' as const : 'left' as const), ...(i === 0 ? { borderRight: '1px solid #e5e7eb' } : {}) }}>{h}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'max-content 50px 1.1rem 1fr 110px 110px 140px', fontSize: '0.72rem' }}>
+                  {['Remisión', 'Cant.', '', 'Producto', 'Valor Unit.', 'Valor', ''].map((h, i) => (
+                    <div key={i} style={{ ...styles.consumosTh, backgroundColor: '#eef6e3', zIndex: 2, textAlign: (i >= 4 && i < 6 ? 'right' as const : 'left' as const), ...(i === 0 ? { borderRight: '1px solid #e5e7eb' } : {}) }}>{h}</div>
                   ))}
                   {consumoGrupos.map((grupo, gi) => (
                     <Fragment key={grupo.remisionId ?? `sin-remision-${gi}`}>
@@ -2153,7 +2286,16 @@ export default function ProgramacionDetailPage() {
                         return (
                           <Fragment key={item.id}>
                             <div style={{ ...styles.consumosTd, ...rowHover, cursor: 'pointer' as const }} {...cellHandlers}>{item.cantidad}</div>
-                            <div style={{ ...styles.consumosTd, ...rowHover, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const }} title={producto} {...cellHandlers}>{producto}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' as const }} {...cellHandlers}>
+                              {item.productoCambiado && (
+                                <span className="app-tooltip" data-tooltip="Se validó con un producto distinto al remisionado" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '1.1rem', height: '1.1rem', borderRadius: '50%', backgroundColor: '#e0e7ff', color: '#4338ca', flexShrink: 0 }}>
+                                  <MaterialIcon name="swap_horiz" size={11} />
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0, cursor: 'pointer' as const }} title={producto} {...cellHandlers}>
+                              <span style={{ overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, minWidth: 0 }}>{producto}</span>
+                            </div>
                             <div style={{ ...styles.consumosTd, ...rowHover, textAlign: 'right' as const, cursor: 'pointer' as const }} {...cellHandlers}>{formatMoney(item.valorUnitario)}</div>
                             <div style={{ ...styles.consumosTd, ...rowHover, textAlign: 'right' as const, fontWeight: 700, color: '#3f6510', cursor: 'pointer' as const }} {...cellHandlers}>{formatMoney(item.valor)}</div>
                             <div style={{ ...styles.consumosTd, ...rowHover }} onMouseEnter={() => setHoveredConsumoRowId(item.id)} onMouseLeave={() => setHoveredConsumoRowId(null)}>
@@ -2174,7 +2316,7 @@ export default function ProgramacionDetailPage() {
                   ))}
                 </div>
               </div>
-              <div style={{ ...styles.consumoTotalRow, borderRadius: 0 }}>
+              <div style={{ ...styles.consumoTotalRow, borderRadius: 0, backgroundColor: '#eef6e3' }}>
                 <span style={styles.consumoTotalLabel}>Total consumos</span>
                 <span style={styles.consumoTotalValue}>
                   {formatMoney(consumoGrupos.reduce((sum, g) => sum + g.items.reduce((s, it) => s + it.valor, 0), 0))}
@@ -2190,6 +2332,7 @@ export default function ProgramacionDetailPage() {
         <div style={{ marginBottom: '2rem' }}>
           <div style={{ backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #e5e7eb', padding: '1.75rem' }}>
           <div style={styles.remisionesTitleRow}>
+            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '8px', backgroundColor: '#e9f2d8', flexShrink: 0 }}><MaterialIcon name="fact_check" size={16} color="#4d7a13" /></span>
             <h2 style={styles.sectionTitle}>Validar consumos</h2>
             <span style={styles.badge}>{totalValidacion}</span>
           </div>
@@ -2198,16 +2341,18 @@ export default function ProgramacionDetailPage() {
           ) : (
             <div style={{ border: '1px solid #eeeee6', borderRadius: '10px', overflow: 'hidden' as const }}>
               <div ref={validacionScrollRef} style={{ overflow: 'auto' as const, maxHeight: '320px', overflowAnchor: 'none' as const }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'max-content 90px 110px 110px 130px 1fr 1fr', fontSize: '0.72rem', minWidth: '850px' }}>
-                  {['Remisión', 'Can Rem', 'Real Validada', 'Referencia', 'Referencia Validada', 'Nombre Remisionado', 'Nombre Validado'].map((h, i) => (
-                    <div key={i} style={{ ...styles.consumosTh, zIndex: 2, textAlign: (i === 1 || i === 2 ? 'right' as const : 'left' as const), ...(i === 0 ? { borderRight: '1px solid #e5e7eb' } : {}) }}>{h}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'max-content 90px 110px 110px 130px 1fr 1.1rem 1fr', fontSize: '0.72rem', minWidth: '850px' }}>
+                  {['Remisión', 'Can Rem', 'Real Validada', 'Referencia', 'Referencia Validada', 'Nombre Remisionado', '', 'Nombre Validado'].map((h, i) => (
+                    <div key={i} style={{ ...styles.consumosTh, backgroundColor: '#eef6e3', zIndex: 2, textAlign: (i === 1 || i === 2 ? 'right' as const : 'left' as const), ...(i === 0 ? { borderRight: '1px solid #e5e7eb' } : {}) }}>{h}</div>
                   ))}
-                  {validacionGrupos.map((grupo, gi) => (
+                  {validacionGruposAgrupados.map((grupo, gi) => {
+                    const totalFilasGrupo = grupo.productos.reduce((sum, p) => sum + 1 + ((p.items.length > 1 && expandedValidacionGroupKeys.has(p.key)) ? p.items.length : 0), 0);
+                    return (
                     <Fragment key={grupo.remisionId ?? `sin-remision-${gi}`}>
                       <div
                         style={{
                           ...styles.consumosTd,
-                          gridRow: `span ${grupo.items.length}`,
+                          gridRow: `span ${totalFilasGrupo}`,
                           backgroundColor: '#fff',
                           borderRight: '1px solid #e5e7eb',
                         }}
@@ -2223,29 +2368,96 @@ export default function ProgramacionDetailPage() {
                           {grupo.numRemision ?? 'Sin remisión'}
                         </div>
                       </div>
-                      {grupo.items.map(item => {
-                        const rowHover = hoveredValidacionRowId === item.id ? { backgroundColor: '#f3faec' } : {};
+                      {grupo.productos.map(producto => {
+                        const esGrupo = producto.items.length > 1;
+                        const expandido = esGrupo && expandedValidacionGroupKeys.has(producto.key);
+                        const algunoCambiado = producto.items.some(it => it.productoCambiado);
+                        const single = producto.items[0];
+                        const rowHover = hoveredValidacionRowId === producto.key ? { backgroundColor: '#f3faec' } : {};
                         const cellHandlers = {
-                          onClick: () => { if (item.detConsumoId) { setSelectedValConsumoId(item.id); setSelectedConsumoId(item.detConsumoId); } },
-                          onMouseEnter: () => setHoveredValidacionRowId(item.id),
+                          onClick: () => {
+                            if (esGrupo) {
+                              setExpandedValidacionGroupKeys(prev => {
+                                const next = new Set(prev);
+                                if (next.has(producto.key)) next.delete(producto.key); else next.add(producto.key);
+                                return next;
+                              });
+                              return;
+                            }
+                            if (single.detConsumoId) { setSelectedValConsumoId(single.id); setSelectedConsumoId(single.detConsumoId); }
+                          },
+                          onMouseEnter: () => setHoveredValidacionRowId(producto.key),
                           onMouseLeave: () => setHoveredValidacionRowId(null),
                         };
                         return (
-                          <Fragment key={item.id}>
-                            <div style={{ ...styles.consumosTd, ...rowHover, textAlign: 'right' as const, cursor: 'pointer' as const }} {...cellHandlers}>{item.cantRemisionada}</div>
-                            <div style={{ ...styles.consumosTd, ...rowHover, textAlign: 'right' as const, cursor: 'pointer' as const }} {...cellHandlers}>{item.cantRealValidada}</div>
-                            <div style={{ ...styles.consumosTd, ...rowHover, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const }} title={item.referenciaRemisionada ?? '-'} {...cellHandlers}>{item.referenciaRemisionada ?? '-'}</div>
-                            <div style={{ ...styles.consumosTd, ...rowHover, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const }} title={item.referenciaValidada ?? '-'} {...cellHandlers}>{item.referenciaValidada ?? '-'}</div>
-                            <div style={{ ...styles.consumosTd, ...rowHover, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const }} title={item.nombreRemisionado ?? '-'} {...cellHandlers}>{item.nombreRemisionado ?? '-'}</div>
-                            <div style={{ ...styles.consumosTd, ...rowHover, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const }} title={item.nombreValidado ?? '-'} {...cellHandlers}>{item.nombreValidado ?? '-'}</div>
+                          <Fragment key={producto.key}>
+                            <div style={{ ...styles.consumosTd, ...rowHover, textAlign: 'right' as const, cursor: 'pointer' as const }} {...cellHandlers}>{producto.cantRemisionada}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, textAlign: 'right' as const, cursor: 'pointer' as const }} {...cellHandlers}>{producto.cantRealValidada}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const }} title={producto.referenciaRemisionada ?? '-'} {...cellHandlers}>{producto.referenciaRemisionada ?? '-'}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const }} title={producto.referenciaValidada ?? '-'} {...cellHandlers}>{producto.referenciaValidada ?? '-'}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const }} title={producto.nombreRemisionado ?? '-'} {...cellHandlers}>{producto.nombreRemisionado ?? '-'}</div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' as const }} {...cellHandlers}>
+                              {algunoCambiado && (
+                                <span
+                                  className="app-tooltip"
+                                  data-tooltip="Se validó con un producto distinto al remisionado"
+                                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '1.1rem', height: '1.1rem', borderRadius: '50%', backgroundColor: '#e0e7ff', color: '#4338ca', flexShrink: 0 }}
+                                >
+                                  <MaterialIcon name="swap_horiz" size={11} />
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ ...styles.consumosTd, ...rowHover, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const, display: 'flex', alignItems: 'center', gap: '0.35rem' }} {...cellHandlers}>
+                              <span style={{ overflow: 'hidden' as const, textOverflow: 'ellipsis' as const }} title={producto.nombreValidado ?? '-'}>{producto.nombreValidado ?? '-'}</span>
+                              {esGrupo && (
+                                <span style={{ backgroundColor: '#e9f2d8', color: '#4d7a13', fontSize: '0.65rem', fontWeight: 700, minWidth: '1.2rem', height: '1.2rem', padding: '0 0.3rem', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.1rem', flexShrink: 0 }}>
+                                  ×{producto.items.length}
+                                  <MaterialIcon name="expand_more" size={11} style={{ transform: expandido ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s ease' }} />
+                                </span>
+                              )}
+                            </div>
+                            {expandido && producto.items.map((sub, si) => {
+                              const subHover = hoveredValidacionRowId === sub.id ? { backgroundColor: '#f3faec' } : {};
+                              const subHandlers = {
+                                onClick: () => { if (sub.detConsumoId) { setSelectedValConsumoId(sub.id); setSelectedConsumoId(sub.detConsumoId); } },
+                                onMouseEnter: () => setHoveredValidacionRowId(sub.id),
+                                onMouseLeave: () => setHoveredValidacionRowId(null),
+                              };
+                              return (
+                                <Fragment key={sub.id}>
+                                  <div style={{ ...styles.consumosTd, backgroundColor: '#f9fafb', ...subHover, cursor: 'pointer' as const }} {...subHandlers} />
+                                  <div style={{ ...styles.consumosTd, backgroundColor: '#f9fafb', ...subHover, textAlign: 'right' as const, color: '#9ca3af', cursor: 'pointer' as const }} {...subHandlers}>{sub.cantRealValidada}</div>
+                                  <div style={{ ...styles.consumosTd, backgroundColor: '#f9fafb', ...subHover, cursor: 'pointer' as const }} {...subHandlers} />
+                                  <div style={{ ...styles.consumosTd, backgroundColor: '#f9fafb', ...subHover, color: '#9ca3af', overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, cursor: 'pointer' as const }} title={sub.referenciaValidada ?? '-'} {...subHandlers}>{sub.referenciaValidada ?? '-'}</div>
+                                  <div style={{ ...styles.consumosTd, backgroundColor: '#f9fafb', ...subHover, cursor: 'pointer' as const }} {...subHandlers} />
+                                  <div style={{ ...styles.consumosTd, backgroundColor: '#f9fafb', ...subHover, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' as const }} {...subHandlers}>
+                                    {sub.productoCambiado && (
+                                      <span
+                                        className="app-tooltip"
+                                        data-tooltip="Se validó con un producto distinto al remisionado"
+                                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '1.1rem', height: '1.1rem', borderRadius: '50%', backgroundColor: '#e0e7ff', color: '#4338ca', flexShrink: 0 }}
+                                      >
+                                        <MaterialIcon name="swap_horiz" size={11} />
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div style={{ ...styles.consumosTd, backgroundColor: '#f9fafb', ...subHover, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' as const, paddingLeft: '1.5rem' }} title={sub.nombreValidado ?? undefined} {...subHandlers}>
+                                    <span style={{ overflow: 'hidden' as const, textOverflow: 'ellipsis' as const }}>
+                                      {sub.marcaTiempo ? formatDateTime(sub.marcaTiempo) : `Validación ${si + 1}`}{sub.usuario ? ` · ${sub.usuario}` : ''}
+                                    </span>
+                                  </div>
+                                </Fragment>
+                              );
+                            })}
                           </Fragment>
                         );
                       })}
                     </Fragment>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
-              <div style={{ ...styles.consumoTotalRow, borderRadius: 0 }}>
+              <div style={{ ...styles.consumoTotalRow, borderRadius: 0, backgroundColor: '#eef6e3' }}>
                 <span style={styles.consumoTotalLabel}>Total consumos validados</span>
                 <span style={styles.consumoTotalValue}>
                   {formatMoney(validacionGrupos.reduce((sum, g) => sum + g.items.reduce((s, it) => s + it.valor, 0), 0))}
@@ -2259,140 +2471,188 @@ export default function ProgramacionDetailPage() {
 
         {mainTab === 'comisiones' && (
         <div style={{ marginBottom: '2rem' }}>
-          <div style={styles.remisionesTitleRow}>
+          <div style={{ backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #e5e7eb', overflow: 'hidden' as const }}>
+          <div style={{ ...styles.remisionesTitleRow, flexWrap: 'wrap' as const, rowGap: '0.6rem', padding: '1.75rem 1.75rem 0' }}>
+            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '8px', backgroundColor: '#e9f2d8', flexShrink: 0 }}><MaterialIcon name="payments" size={16} color="#4d7a13" /></span>
             <h2 style={styles.sectionTitle}>Asignación de Comisiones</h2>
             <span style={styles.badge}>{totalComisiones}</span>
+            {comisionGrupos.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginLeft: 'auto', flexWrap: 'wrap' as const }}>
+                <div style={styles.comisionTabGroup}>
+                  <button type="button" style={{ ...styles.comisionTabBtn, ...(comisionFiltro === 'todas' ? styles.comisionTabBtnActive : {}) }} onClick={() => setComisionFiltro('todas')}>
+                    Todas · {comisionTodosItems.length}
+                  </button>
+                  {comisionCategoriasPresentes.map(cat => (
+                    <button
+                      key={cat}
+                      type="button"
+                      style={{ ...styles.comisionTabBtn, ...(comisionFiltro === cat ? styles.comisionTabBtnActive : {}) }}
+                      onClick={() => setComisionFiltro(cat)}
+                    >
+                      {COMISION_CATEGORIA_LABEL[cat] ?? cat} · {comisionGrupos.find(g => g.categoria === cat)?.items.length ?? 0}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ position: 'relative' as const }}>
+                  <button
+                    type="button"
+                    className="btn-press"
+                    style={{ ...styles.comisionAddBtn, ...(programacion.consumoNoValidado ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                    onClick={() => { if (!programacion.consumoNoValidado) openComisionModal(); }}
+                    onMouseEnter={e => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setComisionTooltipPos({ top: rect.top, left: rect.left + rect.width / 2 });
+                    }}
+                    onMouseLeave={() => setComisionTooltipPos(null)}
+                  >
+                    <Plus size={14} /> Agregar comisión
+                  </button>
+                  {programacion.consumoNoValidado && comisionTooltipPos && (
+                    <div style={{ ...styles.tooltipBubble, top: comisionTooltipPos.top - 8, left: comisionTooltipPos.left }}>
+                      La programación debe tener todos sus consumos validados para poder agregar comisiones.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
+
           {comisionGrupos.length === 0 ? (
-            <div style={styles.emptyState}>No hay datos relacionados</div>
+            <div style={{ ...styles.emptyState, border: 'none', boxShadow: 'none', borderRadius: 0, margin: '0 1.75rem 1.75rem' }}>No hay datos relacionados</div>
           ) : (
-            <div style={styles.remList}>
-              <div ref={comisionesScrollRef} style={styles.comisionScrollBody}>
-                <div style={styles.comisionGrid}>
-                  <span style={{ ...styles.colHeaderText, ...styles.comisionHeaderCell }}>Categoría</span>
-                  <span style={{ ...styles.colHeaderText, ...styles.comisionHeaderCell, paddingLeft: '0.75rem' }}>Técnico</span>
-                  <span style={{ ...styles.colHeaderText, ...styles.comisionHeaderCell, textAlign: 'right' as const }}>Comisión</span>
-                  {comisionGrupos.map((grupo, gi) => {
-                    const subtotalGrupo = grupo.items.reduce((sum, it) => sum + it.monto, 0);
-                    const totalFilasGrupo = grupo.items.reduce((sum, item) => {
-                      const key = `${grupo.categoria}__${item.id}`;
-                      const esMultiple = item.detalle.length > 1;
-                      const expandido = esMultiple && expandedComisionKeys.has(key);
-                      return sum + 1 + (expandido ? item.detalle.length : 0);
-                    }, 0);
+            <>
+              <div style={styles.comisionStatsBar}>
+                <div style={{ ...styles.comisionStatsSegment, paddingLeft: '1.75rem' }}>
+                  <span style={styles.colHeaderText}>Total comisiones</span>
+                  <span style={styles.comisionStatsValue}>{formatMoney(comisionTotalGeneral)}</span>
+                  <span style={styles.comisionStatsSub}>Suma de {comisionGrupos.length} categoría{comisionGrupos.length === 1 ? '' : 's'}</span>
+                </div>
+                {comisionCategoriaStats.map(stat => {
+                  const color = comisionCategoriaColor(stat.categoria);
+                  return (
+                    <div key={stat.categoria} style={styles.comisionStatsSegment}>
+                      <span style={{ ...styles.colHeaderText, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: color.text, flexShrink: 0 }} />
+                        {COMISION_CATEGORIA_LABEL[stat.categoria]}
+                      </span>
+                      <span style={styles.comisionStatsValue}>{formatMoney(stat.monto)}</span>
+                      <div style={styles.comisionStatsBarTrack}>
+                        <div style={{ ...styles.comisionStatsBarFill, width: `${Math.min(stat.pct, 100)}%`, backgroundColor: color.text }} />
+                      </div>
+                      <span style={styles.comisionStatsSub}>{stat.pct.toFixed(0)}%</span>
+                    </div>
+                  );
+                })}
+                <div style={{ ...styles.comisionStatsSegment, borderRight: 'none', paddingRight: '1.75rem' }}>
+                  <span style={styles.colHeaderText}>Personas asignadas</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex' }}>
+                      {comisionTodosItems.slice(0, 3).map((it, i) => (
+                        <span key={it.id} style={{ ...styles.tecnicoAvatar, ...(i > 0 ? { marginLeft: '-0.5rem' } : {}), border: '2px solid #fff' }}>
+                          {it.tecnico ? getTecnicoInitials(it.tecnico) : '-'}
+                        </span>
+                      ))}
+                      {comisionTodosItems.length > 3 && (
+                        <span style={{ ...styles.tecnicoAvatar, marginLeft: '-0.5rem', border: '2px solid #fff', backgroundColor: '#e5e7eb', color: '#6b7280' }}>
+                          +{comisionTodosItems.length - 3}
+                        </span>
+                      )}
+                    </div>
+                    <span style={styles.comisionStatsValue}>{comisionTodosItems.length}</span>
+                  </div>
+                  <span style={styles.comisionStatsSub}>
+                    {comisionCategoriaStats.filter(s => s.count > 0).map(s => `${s.count} ${s.count > 1 ? COMISION_CATEGORIA_LABEL[s.categoria] : COMISION_CATEGORIA_LABEL_SINGULAR[s.categoria]}`.toLowerCase()).join(' · ') || 'Sin asignar'}
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ ...styles.remList, borderRadius: 0, border: 'none', boxShadow: 'none' }}>
+                <div ref={comisionesScrollRef} style={styles.comisionListBody}>
+                  {comisionItemsFiltrados.map((item, ii) => {
+                    const key = `${item.categoria}__${item.id}`;
+                    const esMultiple = item.detalle.length > 1;
+                    const expandido = esMultiple && expandedComisionKeys.has(key);
+                    const hoverStyle = hoveredComisionId === item.id ? styles.comisionRowHover : {};
+                    const color = comisionCategoriaColor(item.categoria);
+                    const cellProps = esMultiple
+                      ? {
+                          onMouseEnter: () => setHoveredComisionId(item.id),
+                          onMouseLeave: () => setHoveredComisionId(null),
+                          onClick: () => setExpandedComisionKeys(prev => {
+                            const next = new Set(prev);
+                            if (next.has(key)) next.delete(key); else next.add(key);
+                            return next;
+                          }),
+                        }
+                      : {
+                          onMouseEnter: () => setHoveredComisionId(item.id),
+                          onMouseLeave: () => setHoveredComisionId(null),
+                          onClick: () => setSelectedComisionId(item.detalle[0]?.comisionId ?? item.id),
+                        };
                     return (
-                      <Fragment key={grupo.categoria}>
-                        <div
-                          style={{
-                            ...styles.comisionCategoriaCell,
-                            gridRow: `span ${totalFilasGrupo}`,
-                          }}
-                        >
-                          {grupo.categoria}
+                      <Fragment key={key}>
+                        <div style={{ ...styles.comisionRow, ...(ii > 0 ? styles.remRowBorder : {}), ...hoverStyle, cursor: 'pointer' }} {...cellProps}>
+                          <span style={{ ...styles.tecnicoAvatar, width: '24px', height: '24px', fontSize: '0.6rem' }}>
+                            {item.tecnico ? getTecnicoInitials(item.tecnico) : '-'}
+                          </span>
+                          <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.1rem', minWidth: 0, flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+                              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.tecnico ?? '-'}</span>
+                              <span style={{ ...styles.comisionRolBadge, backgroundColor: color.bg, color: color.text }}>{COMISION_CATEGORIA_LABEL_SINGULAR[item.categoria] ?? item.categoria}</span>
+                              {esMultiple && (
+                                <span style={{ ...styles.comisionRolBadge, backgroundColor: '#e9f2d8', color: '#4d7a13', display: 'inline-flex', alignItems: 'center', gap: '0.15rem' }}>
+                                  ×{item.detalle.length}
+                                  <ChevronDown size={11} style={{ transform: expandido ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s ease' }} />
+                                </span>
+                              )}
+                            </div>
+                            {!esMultiple && (
+                              <span style={{ fontSize: '0.7rem', color: '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+                                {[item.detalle[0]?.tipo, item.detalle[0]?.remisionLabel, item.detalle[0]?.productoLabel].filter(Boolean).join(' | ') || 'Comisión por la cirugía'}
+                              </span>
+                            )}
+                          </div>
+                          <span style={styles.comisionRowMonto}>{formatMoney(item.monto)}</span>
+                          <button
+                            type="button"
+                            className="btn-press"
+                            style={styles.comisionRowBtn}
+                            onClick={e => { e.stopPropagation(); setSelectedComisionId(item.detalle[0]?.comisionId ?? item.id); }}
+                          >
+                            {item.categoria === 'TÉCNICOS' ? 'Cambiar' : 'Editar'}
+                          </button>
                         </div>
-                        {grupo.items.map((item, ii) => {
-                          const key = `${grupo.categoria}__${item.id}`;
-                          const esMultiple = item.detalle.length > 1;
-                          const expandido = esMultiple && expandedComisionKeys.has(key);
-                          const borderStyle = ii > 0 ? styles.remRowBorder : {};
-                          const hoverStyle = hoveredComisionId === item.id ? styles.comisionRowHover : {};
-                          const cellProps = esMultiple
-                            ? {
-                                onMouseEnter: () => setHoveredComisionId(item.id),
-                                onMouseLeave: () => setHoveredComisionId(null),
-                                onClick: () => setExpandedComisionKeys(prev => {
-                                  const next = new Set(prev);
-                                  if (next.has(key)) next.delete(key); else next.add(key);
-                                  return next;
-                                }),
-                              }
-                            : {
-                                onMouseEnter: () => setHoveredComisionId(item.id),
-                                onMouseLeave: () => setHoveredComisionId(null),
-                                onClick: () => setSelectedComisionId(item.detalle[0]?.comisionId ?? item.id),
-                              };
+                        {expandido && item.detalle.map(linea => {
+                          const lineaKey = linea.comisionId + (linea.remisionLabel ?? '') + linea.valor;
+                          const lineaHoverStyle = hoveredComisionLineaKey === lineaKey ? styles.comisionRowHover : {};
                           return (
-                            <Fragment key={item.id}>
-                              <div style={{ ...styles.comisionTecnicoCell, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>
-                                {item.tecnico && <span style={styles.tecnicoAvatar}>{getTecnicoInitials(item.tecnico)}</span>}
-                                <span style={{ flexShrink: 0 }}>{item.tecnico ?? '-'}</span>
-                                {!esMultiple && (
-                                  <span style={{ fontSize: '0.72rem', color: '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
-                                    {[item.detalle[0]?.tipo, item.detalle[0]?.remisionLabel, item.detalle[0]?.productoLabel].filter(Boolean).join(' | ') || '-'}
-                                  </span>
-                                )}
-                                {esMultiple && (
-                                  <ChevronDown size={14} style={{ color: '#9ca3af', flexShrink: 0, transform: expandido ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s ease' }} />
-                                )}
-                              </div>
-                              <span style={{ ...styles.comisionMontoCell, ...borderStyle, ...hoverStyle, cursor: 'pointer' }} {...cellProps}>{formatMoney(item.monto)}</span>
-                              {expandido && item.detalle.map(linea => {
-                                const lineaKey = linea.comisionId + (linea.remisionLabel ?? '') + linea.valor;
-                                const lineaHoverStyle = hoveredComisionLineaKey === lineaKey ? styles.comisionRowHover : {};
-                                const lineaProps = {
-                                  onMouseEnter: () => setHoveredComisionLineaKey(lineaKey),
-                                  onMouseLeave: () => setHoveredComisionLineaKey(null),
-                                  onClick: () => setSelectedComisionId(linea.comisionId),
-                                };
-                                return (
-                                  <Fragment key={lineaKey}>
-                                    <div
-                                      style={{ ...styles.comisionTecnicoCell, ...styles.remRowBorder, ...lineaHoverStyle, paddingLeft: '2rem', fontSize: '0.78rem', color: '#6b7280' }}
-                                      {...lineaProps}
-                                    >
-                                      {[linea.tipo, linea.remisionLabel, linea.productoLabel].filter(Boolean).join(' | ') || '-'}
-                                    </div>
-                                    <span
-                                      style={{ ...styles.comisionMontoCell, ...styles.remRowBorder, ...lineaHoverStyle, fontSize: '0.78rem', fontWeight: 500, color: '#6b7280' }}
-                                      {...lineaProps}
-                                    >
-                                      {formatMoney(linea.valor)}
-                                    </span>
-                                  </Fragment>
-                                );
-                              })}
-                            </Fragment>
+                            <div
+                              key={lineaKey}
+                              style={{ ...styles.comisionRow, ...styles.remRowBorder, backgroundColor: '#f9fafb', paddingLeft: '3.25rem', cursor: 'pointer', ...lineaHoverStyle }}
+                              onMouseEnter={() => setHoveredComisionLineaKey(lineaKey)}
+                              onMouseLeave={() => setHoveredComisionLineaKey(null)}
+                              onClick={() => setSelectedComisionId(linea.comisionId)}
+                            >
+                              <span style={{ fontSize: '0.78rem', color: '#6b7280', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+                                {[linea.tipo, linea.remisionLabel, linea.productoLabel].filter(Boolean).join(' | ') || '-'}
+                              </span>
+                              <span style={{ fontSize: '0.78rem', fontWeight: 500, color: '#6b7280' }}>{formatMoney(linea.valor)}</span>
+                            </div>
                           );
                         })}
-                        <div style={{ ...styles.consumoSubtotalRow, ...(gi < comisionGrupos.length - 1 ? styles.consumoGrupoDivider : {}) }}>
-                          <span style={styles.consumoSubtotalLabel}>Subtotal</span>
-                          <span style={styles.consumoSubtotalValue}>{formatMoney(subtotalGrupo)}</span>
-                        </div>
                       </Fragment>
                     );
                   })}
                 </div>
               </div>
-              <div style={styles.consumoTotalRow}>
-                <span style={styles.consumoTotalLabel}>Total comisiones</span>
-                <span style={styles.consumoTotalValue}>
-                  {formatMoney(comisionGrupos.reduce((sum, g) => sum + g.items.reduce((s, it) => s + it.monto, 0), 0))}
-                </span>
-              </div>
-            </div>
+            </>
           )}
-          <div style={{ position: 'relative' as const }}>
-            <button
-              style={{ ...styles.addComisionBtnBelow, ...(programacion.consumoNoValidado ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
-              onClick={() => { if (!programacion.consumoNoValidado) openComisionModal(); }}
-              onMouseEnter={e => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                setComisionTooltipPos({ top: rect.top, left: rect.left + rect.width / 2 });
-              }}
-              onMouseLeave={() => setComisionTooltipPos(null)}
-            >
-              <Plus size={14} /> Agregar Comisión
-            </button>
-            {programacion.consumoNoValidado && comisionTooltipPos && (
-              <div style={{ ...styles.tooltipBubble, top: comisionTooltipPos.top - 8, left: comisionTooltipPos.left }}>
-                La programación debe tener todos sus consumos validados para poder agregar comisiones.
-              </div>
-            )}
           </div>
         </div>
         )}
 
-        {mainTab === 'gastos' && (
+        {mainTab === 'gastos-fuentes' && (
+        <>
         <div style={{ marginBottom: '2rem' }}>
           <div style={styles.remisionesTitleRow}>
             <h2 style={styles.sectionTitle}>Gastos</h2>
@@ -2431,9 +2691,7 @@ export default function ProgramacionDetailPage() {
             </div>
           )}
         </div>
-        )}
 
-        {mainTab === 'fuentes' && (
         <div style={{ marginBottom: '2rem' }}>
           <div style={styles.remisionesTitleRow}>
             <h2 style={styles.sectionTitle}>Fuentes</h2>
@@ -2471,7 +2729,19 @@ export default function ProgramacionDetailPage() {
             </div>
           )}
         </div>
+        </>
         )}
+
+        </div>
+
+        {!isNarrow && (
+        <aside style={styles.sidebarColumn}>
+          {tecnicosSugeridosCard}
+          {notasCreditoCard}
+          {actividadCard}
+        </aside>
+        )}
+        </div>
 
       </div>
 
@@ -2816,12 +3086,20 @@ export default function ProgramacionDetailPage() {
                     ))}
                   </div>
                 )}
-                {editMedicos.length === 0 ? (
+                {editMedicos.length === 0 || !selectedEditHospital ? (
                   <span style={{ ...styles.input, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>
-                    Selecciona primero un médico
+                    {editMedicos.length === 0 && !selectedEditHospital
+                      ? 'Selecciona primero un médico y un hospital'
+                      : editMedicos.length === 0
+                        ? 'Selecciona primero un médico'
+                        : 'Selecciona primero un hospital'}
                   </span>
                 ) : (
                   <div style={{ position: 'relative' as const }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', color: '#9ca3af', marginBottom: '0.4rem' }}>
+                      <MaterialIcon name="filter_alt" size={13} />
+                      Mostrando solo cotizaciones de {editMedicos.map(m => m.nombreCompleto).join(', ')} en {selectedEditHospital.nombre}
+                    </div>
                     <input
                       style={styles.input}
                       placeholder={`Buscar por folio, cirugía, fecha o total entre las cotizaciones de ${editMedicos.map(m => m.nombreCompleto).join(', ')}...`}
@@ -3003,713 +3281,103 @@ export default function ProgramacionDetailPage() {
       )}
 
       {showComisionModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay}>
-          <div ref={comisionModalContentRef} className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
-            <div style={styles.editModalHeader}>
-              <button style={styles.closeBtn} onClick={() => setShowComisionModal(false)}>
-                <X size={18} />
-              </button>
-              <h2 style={styles.modalTitle}>Agregar Comisión</h2>
-            </div>
-
-            <div style={styles.editModalBody}>
-              <div style={styles.formGroup}>
-                <label style={styles.remisionLabel}>N° Programación *</label>
-                <span style={styles.readOnlyPill}>{programacion?.id}</span>
-              </div>
-
-              <div style={styles.formGroup} id="comision-field-remisionId">
-                <label style={styles.remisionLabel}>No Remisión *</label>
-                {comisionRemisionSeleccionada && (
-                  <div style={{ ...styles.readOnlyField, backgroundColor: '#f3faec', border: '1px solid #dbe8c2', color: '#3f6510', fontWeight: 600, position: 'relative' as const, textAlign: 'center' as const }}>
-                    {comisionRemisionSeleccionada.numRemision || comisionRemisionSeleccionada.id}
-                    <X
-                      size={14}
-                      style={{ cursor: 'pointer', position: 'absolute' as const, right: '0.75rem', top: '50%', transform: 'translateY(-50%)' }}
-                      onClick={() => { setComisionForm({ ...comisionForm, remisionId: '' }); setRemisionFocused(true); }}
-                    />
-                  </div>
-                )}
-                {!comisionRemisionSeleccionada && (
-                  <div style={{ position: 'relative' as const }}>
-                    <button
-                      type="button"
-                      style={{ ...styles.input, ...(comisionError?.field === 'remisionId' ? styles.inputError : {}), display: 'flex', alignItems: 'center', justifyContent: 'space-between', textAlign: 'left' as const, color: '#9ca3af', backgroundColor: '#fff', cursor: 'pointer' }}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={() => setRemisionFocused(f => !f)}
-                      onBlur={() => setTimeout(() => setRemisionFocused(false), 150)}
-                    >
-                      Seleccionar remisión
-                      <ChevronDown size={16} style={{ color: '#9ca3af', flexShrink: 0, transform: remisionFocused ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s ease' }} />
-                    </button>
-                    {remisionFocused && (
-                      <div style={styles.medicoDropdown}>
-                        {remisiones.length === 0 ? (
-                          <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
-                        ) : (
-                          remisiones.map(r => (
-                              <div
-                                key={r.id}
-                                style={{ ...styles.medicoDropdownItem, ...(hoveredRemisionOptionId === r.id ? styles.medicoDropdownItemHighlighted : {}) }}
-                                onMouseDown={e => e.preventDefault()}
-                                onMouseEnter={() => setHoveredRemisionOptionId(r.id)}
-                                onMouseLeave={() => setHoveredRemisionOptionId(null)}
-                                onClick={() => { setComisionForm({ ...comisionForm, remisionId: r.id }); setRemisionFocused(false); setComisionError(null); }}
-                              >
-                                {r.numRemision || r.id}
-                              </div>
-                            ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {comisionError?.field === 'remisionId' && <span style={styles.errorText}>{comisionError.message}</span>}
-              </div>
-
-              {comisionForm.remisionId && (
-                <div style={styles.formGroup}>
-                  <label style={styles.remisionLabel}>Paciente</label>
-                  <span style={styles.readOnlyField}>{comisionRemisionSeleccionada?.paciente || '-'}</span>
-                </div>
-              )}
-
-              <div style={styles.formGroup}>
-                <label style={styles.remisionLabel}>Fecha QX *</label>
-                <span style={{ ...styles.readOnlyField, backgroundColor: '#f3faec', border: '1px solid #dbe8c2', color: '#3f6510', fontWeight: 600, textAlign: 'center' as const }}>{formatDate(programacion?.fechaQx ?? null)}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.remisionLabel}>Doctor *</label>
-                <div style={styles.medicoTagsWrap}>
-                  {programacion?.medicos.length ? programacion.medicos.map(m => (
-                    <span key={m.medico.id} style={styles.editMedicoTag}>{m.medico.nombreCompleto}</span>
-                  )) : <span style={styles.readOnlyField}>-</span>}
-                </div>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.remisionLabel}>Hospital *</label>
-                <span style={{ ...styles.editMedicoTag, alignSelf: 'flex-start' as const }}>{programacion?.hospital?.nombre ?? '-'}</span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.remisionLabel}>Consumo *</label>
-                <div style={{ ...styles.readOnlyField, whiteSpace: 'pre-wrap' as const, minHeight: '44px', display: 'block' }}>
-                  <span style={comisionConsumoExpanded ? undefined : styles.consumoClamp}>{programacion?.consumo || '-'}</span>
-                  {(programacion?.consumo?.length ?? 0) > 180 && (
-                    <button type="button" style={{ ...styles.verMasBtn, display: 'block' }} onClick={() => setComisionConsumoExpanded(v => !v)}>
-                      {comisionConsumoExpanded ? 'Ver menos' : 'Ver más'}
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div style={styles.formGroup} id="comision-field-tipo">
-                <label style={styles.remisionLabel}>Tipo</label>
-                {!comisionTipoReady ? (
-                  <span style={{ ...styles.readOnlyField, color: '#9ca3af' }}>Selecciona primero la remisión</span>
-                ) : (
-                  <div style={styles.pickBtnGrid}>
-                    {TIPOS_COMISION.map(t => (
-                      <button
-                        key={t}
-                        type="button"
-                        style={{ ...styles.pickBtn, ...(comisionForm.tipo === t ? styles.pickBtnActive : {}), ...(comisionError?.field === 'tipo' ? styles.inputError : {}) }}
-                        onMouseDown={e => e.preventDefault()}
-                        onClick={e => { setComisionForm({ ...comisionForm, tipo: t }); setComisionError(null); e.currentTarget.blur(); }}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {comisionError?.field === 'tipo' && <span style={styles.errorText}>{comisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="comision-field-categoria">
-                <label style={styles.remisionLabel}>Categoría *</label>
-                {!comisionCategoriaReady ? (
-                  <span style={{ ...styles.readOnlyField, color: '#9ca3af' }}>Selecciona primero el tipo</span>
-                ) : (
-                  <div style={styles.pickBtnGrid}>
-                    {CATEGORIAS_COMISION.map(c => (
-                      <button
-                        key={c}
-                        type="button"
-                        style={{ ...styles.pickBtn, ...(comisionForm.categoria === c ? styles.pickBtnActive : {}), ...(comisionError?.field === 'categoria' ? styles.inputError : {}) }}
-                        onMouseDown={e => e.preventDefault()}
-                        onClick={e => {
-                          const cambioCategoria = comisionForm.categoria !== c;
-                          setComisionForm({
-                            ...comisionForm,
-                            categoria: c,
-                            ...(cambioCategoria ? {
-                              vrComision: '',
-                              observaciones: '',
-                              agregarIva: false,
-                              cargarPorcentaje: '',
-                              quieresDesglosar: false,
-                              seleccioneTipo: '',
-                            } : {}),
-                          });
-                          setComisionTecnico(null);
-                          setTecnicoSearch('');
-                          if (cambioCategoria) setInversionistaDetalles([]);
-                          setComisionError(null);
-                          e.currentTarget.blur();
-                          setTimeout(() => tecnicoInputRef.current?.focus(), 0);
-                        }}
-                      >
-                        {toSentenceCase(c)}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {comisionError?.field === 'categoria' && <span style={styles.errorText}>{comisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="comision-field-tecnico">
-                <label style={styles.remisionLabel}>Nombre Contacto *</label>
-                {!comisionTecnicoReady ? (
-                  <span style={{ ...styles.readOnlyField, color: '#9ca3af' }}>Selecciona primero la categoría</span>
-                ) : (
-                  <>
-                    {comisionTecnico && (
-                      <div style={styles.medicoTagsWrap}>
-                        <span style={styles.editMedicoTag}>
-                          {comisionTecnico.nombreCompleto}
-                          <X size={12} style={{ cursor: 'pointer' }} onClick={() => setComisionTecnico(null)} />
-                        </span>
-                      </div>
-                    )}
-                    {!comisionTecnico && (
-                      <div style={{ position: 'relative' as const }}>
-                        <input
-                          ref={tecnicoInputRef}
-                          style={{ ...styles.input, ...(comisionError?.field === 'tecnico' ? styles.inputError : {}) }}
-                          placeholder="Buscar técnico o contacto..."
-                          value={tecnicoSearch}
-                          onChange={e => { setTecnicoSearch(e.target.value); setComisionError(null); }}
-                          onFocus={() => setTecnicoFocused(true)}
-                          onBlur={() => setTimeout(() => setTecnicoFocused(false), 150)}
-                        />
-                        {tecnicoFocused && (
-                          <div style={styles.medicoDropdown}>
-                            {tecnicoResults.length === 0 ? (
-                              <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
-                            ) : (
-                              tecnicoResults.map(t => (
-                                <div
-                                  key={t.id}
-                                  style={{ ...styles.medicoDropdownItem, ...(hoveredTecnicoOptionId === t.id ? styles.medicoDropdownItemHighlighted : {}) }}
-                                  onMouseDown={e => e.preventDefault()}
-                                  onMouseEnter={() => setHoveredTecnicoOptionId(t.id)}
-                                  onMouseLeave={() => setHoveredTecnicoOptionId(null)}
-                                  onClick={() => { setComisionTecnico(t); setTecnicoSearch(''); setComisionError(null); }}
-                                >
-                                  {t.nombreCompleto}
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
-                {comisionError?.field === 'tecnico' && <span style={styles.errorText}>{comisionError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.remisionLabel}>Base Ingreso</label>
-                <span style={styles.readOnlyField}>{formatMoney(programacion?.baseIngreso ?? null)}</span>
-              </div>
-
-              {!esCategoriaInversionistas && (
-                <div style={styles.formGroup} id="comision-field-vrComision">
-                  <label style={styles.remisionLabel}>Valor Asignación *</label>
-                  {!comisionValorReady ? (
-                    <span style={{ ...styles.readOnlyField, color: '#9ca3af' }}>Selecciona primero el nombre de contacto</span>
-                  ) : (
-                    <div style={styles.stepperWrap}>
-                      <input
-                        type="number"
-                        step="0.01"
-                        style={{ ...styles.input, paddingRight: '5rem', ...(comisionError?.field === 'vrComision' ? styles.inputError : {}) }}
-                        placeholder="$ 0.00"
-                        value={comisionForm.vrComision}
-                        onChange={e => { setComisionForm({ ...comisionForm, vrComision: e.target.value }); setComisionError(null); }}
-                      />
-                      <div style={styles.stepperBtns}>
-                        <button type="button" style={styles.stepperBtn} onClick={() => { setComisionForm({ ...comisionForm, vrComision: String((Number(comisionForm.vrComision) || 0) - 100) }); setComisionError(null); }}>−</button>
-                        <button type="button" style={styles.stepperBtn} onClick={() => { setComisionForm({ ...comisionForm, vrComision: String((Number(comisionForm.vrComision) || 0) + 100) }); setComisionError(null); }}>+</button>
-                      </div>
-                    </div>
-                  )}
-                  {comisionError?.field === 'vrComision' && <span style={styles.errorText}>{comisionError.message}</span>}
-                </div>
-              )}
-
-              {esCategoriaInversionistas && (
-                <div style={styles.formGroup} id="comision-field-detalles">
-                  <label style={styles.remisionLabel}>Detalle de inversionistas *{inversionistaDetalles.length > 0 ? ` · Total ${formatMoney(totalInversionistaDetalles)}` : ''}</label>
-                  {!comisionValorReady && (
-                    <span style={{ ...styles.readOnlyField, color: '#9ca3af' }}>Selecciona primero el nombre de contacto</span>
-                  )}
-                  {comisionValorReady && inversionistaDetalles.length > 0 && (
-                    <div style={styles.consumosTableWrap}>
-                      <table style={styles.consumosTable}>
-                        <thead>
-                          <tr>
-                            <th style={styles.consumosTh}>No Programación</th>
-                            <th style={styles.consumosTh}>No Remisión</th>
-                            <th style={styles.consumosTh}>Producto</th>
-                            <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Valor</th>
-                            <th style={styles.consumosTh}></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {inversionistaDetalles.map(d => (
-                            <tr key={d.localId}>
-                              <td style={styles.consumosTd}>{id}</td>
-                              <td style={styles.consumosTd}>{d.remisionLabel}</td>
-                              <td style={{ ...styles.consumosTd, ...styles.consumosTdTruncate }} title={d.productoLabel}>{d.productoLabel}</td>
-                              <td style={{ ...styles.consumosTd, textAlign: 'right' as const, fontWeight: 700 }}>{formatMoney(Number(d.valor))}</td>
-                              <td style={styles.consumosTd}>
-                                <X size={14} style={{ cursor: 'pointer', color: '#9ca3af' }} onClick={() => setInversionistaDetalles(prev => prev.filter(x => x.localId !== d.localId))} />
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                  {comisionValorReady && inversionistaDetalles.length === 0 && (
-                    <div style={{ ...styles.emptyState, backgroundColor: '#f9fafb' }}>No hay datos relacionados</div>
-                  )}
-                  {comisionValorReady && (
-                    <button type="button" className="btn-press" style={styles.nuevoDetalleBtn} onClick={openDetalleInversionista}>
-                      <Plus size={14} /> Nuevo
-                    </button>
-                  )}
-                  {comisionError?.field === 'detalles' && <span style={styles.errorText}>{comisionError.message}</span>}
-                </div>
-              )}
-
-              {esCategoriaInversionistas && (
-                <div style={styles.formGroup}>
-                  <label style={styles.remisionLabel}>Valor de Comisiones o Bonificaciones</label>
-                  <span style={styles.readOnlyField}>{formatMoney(totalInversionistaDetalles)}</span>
-                </div>
-              )}
-
-              <div style={styles.formGroup}>
-                <label style={styles.remisionLabel}>Observaciones</label>
-                {!comisionValorCompleto ? (
-                  <span style={{ ...styles.readOnlyField, color: '#9ca3af' }}>Completa el valor de la comisión</span>
-                ) : (
-                  <textarea
-                    ref={autoResizeTextarea}
-                    style={{ ...styles.input, minHeight: '44px', resize: 'none' as const, overflow: 'hidden' as const }}
-                    value={comisionForm.observaciones}
-                    onChange={e => { setComisionForm({ ...comisionForm, observaciones: e.target.value }); autoResizeTextarea(e.target); }}
-                  />
-                )}
-              </div>
-
-              {comisionValorCompleto && (
-                <div style={styles.formGroup}>
-                  <label style={styles.remisionLabel}>¿Agregar IVA?</label>
-                  <div style={styles.pickBtnGrid}>
-                    <button
-                      type="button"
-                      style={{ ...styles.pickBtn, ...(!comisionForm.agregarIva ? styles.pickBtnActive : {}) }}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={e => { setComisionForm({ ...comisionForm, agregarIva: false }); e.currentTarget.blur(); }}
-                    >
-                      No
-                    </button>
-                    <button
-                      type="button"
-                      style={{ ...styles.pickBtn, ...(comisionForm.agregarIva ? styles.pickBtnActive : {}) }}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={e => { setComisionForm({ ...comisionForm, agregarIva: true }); e.currentTarget.blur(); setTimeout(() => cargarPorcentajeRef.current?.focus(), 0); }}
-                    >
-                      Sí
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {comisionValorCompleto && comisionForm.agregarIva && (
-                <div style={styles.formGroup} id="comision-field-cargarPorcentaje">
-                  <label style={styles.remisionLabel}>Porcentaje de IVA a Cargar *</label>
-                  <div style={{ position: 'relative' as const }}>
-                    <input
-                      ref={cargarPorcentajeRef}
-                      type="number"
-                      min={1}
-                      max={100}
-                      step="0.01"
-                      style={{ ...styles.input, paddingRight: '2.5rem', ...(comisionError?.field === 'cargarPorcentaje' ? styles.inputError : {}) }}
-                      placeholder="16.00"
-                      value={comisionForm.cargarPorcentaje}
-                      onKeyDown={e => { if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault(); }}
-                      onChange={e => {
-                        const cleaned = e.target.value.replace(/[^0-9.]/g, '');
-                        const value = Number(cleaned) > 100 ? '100' : cleaned;
-                        setComisionForm({ ...comisionForm, cargarPorcentaje: value });
-                        setComisionError(null);
-                      }}
-                      onBlur={e => {
-                        if (!e.target.value) return;
-                        const num = Number(e.target.value);
-                        if (Number.isNaN(num) || num < 1) setComisionForm(f => ({ ...f, cargarPorcentaje: '1' }));
-                      }}
-                    />
-                    <span style={styles.percentSuffix}>%</span>
-                  </div>
-                  {comisionError?.field === 'cargarPorcentaje' && <span style={styles.errorText}>{comisionError.message}</span>}
-                </div>
-              )}
-
-              {comisionValorCompleto && (
-                <div style={styles.formGroup}>
-                  <label style={styles.remisionLabel}>¿Quieres Desglosar?</label>
-                  <div style={styles.pickBtnGrid}>
-                    <button
-                      type="button"
-                      style={{ ...styles.pickBtn, ...(!comisionForm.quieresDesglosar ? styles.pickBtnActive : {}) }}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={e => { setComisionForm({ ...comisionForm, quieresDesglosar: false }); e.currentTarget.blur(); }}
-                    >
-                      No
-                    </button>
-                    <button
-                      type="button"
-                      style={{ ...styles.pickBtn, ...(comisionForm.quieresDesglosar ? styles.pickBtnActive : {}) }}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={e => { setComisionForm({ ...comisionForm, quieresDesglosar: true }); e.currentTarget.blur(); }}
-                    >
-                      Sí
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {comisionValorCompleto && (
-                <div style={styles.formGroup} id="comision-field-seleccioneTipo">
-                  <label style={styles.remisionLabel}>Seleccione Tipo *</label>
-                  <div style={styles.pickBtnGrid}>
-                    {SELECCIONE_TIPO_COMISION.map(t => (
-                      <button
-                        key={t}
-                        type="button"
-                        style={{ ...styles.pickBtn, ...(comisionForm.seleccioneTipo === t ? styles.pickBtnActive : {}), ...(comisionError?.field === 'seleccioneTipo' ? styles.inputError : {}) }}
-                        onMouseDown={e => e.preventDefault()}
-                        onClick={e => { setComisionForm({ ...comisionForm, seleccioneTipo: comisionForm.seleccioneTipo === t ? '' : t }); setComisionError(null); e.currentTarget.blur(); }}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                  {comisionError?.field === 'seleccioneTipo' && <span style={styles.errorText}>{comisionError.message}</span>}
-                </div>
-              )}
-
-              {comisionForm.quieresDesglosar && (
-                <>
-                  <div style={styles.formGroup}>
-                    <label style={styles.remisionLabel}>Sub Total</label>
-                    <span style={styles.readOnlyField}>{formatMoney(comisionSubTotal)}</span>
-                  </div>
-
-                  <div style={styles.formGroup}>
-                    <label style={styles.remisionLabel}>IVA</label>
-                    <span style={styles.readOnlyField}>{formatMoney(comisionIva)}</span>
-                  </div>
-
-                  <div style={styles.formGroup}>
-                    <label style={styles.remisionLabel}>Retención IVA</label>
-                    <span style={styles.readOnlyField}>{formatMoney(comisionRetIva)}</span>
-                  </div>
-
-                  <div style={styles.formGroup}>
-                    <label style={styles.remisionLabel}>Retención ISR</label>
-                    <span style={styles.readOnlyField}>{formatMoney(comisionRetIsr)}</span>
-                  </div>
-                </>
-              )}
-
-              <div style={styles.formGroup}>
-                <label style={styles.remisionLabel}>Total Factura</label>
-                <span style={styles.readOnlyField}>{formatMoney(comisionTotalFactura)}</span>
-              </div>
-            </div>
-
-            <div style={styles.editModalFooter}>
-              <button style={styles.cancelBtn} onClick={() => setShowComisionModal(false)}>Cancelar</button>
-              <button
-                style={styles.saveBtn}
-                onClick={handleGuardarComision}
-                disabled={createComisionMutation.isPending}
-              >
-                {createComisionMutation.isPending ? 'Guardando...' : 'Guardar'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <AgregarComisionModal
+          programacionId={id!}
+          onClose={() => setShowComisionModal(false)}
+          onCreated={() => {
+            setShowComisionModal(false);
+            queryClient.invalidateQueries({ queryKey: ['remisiones-comisiones', id] });
+            queryClient.invalidateQueries({ queryKey: ['programacion', id] });
+            setShowComisionSuccess(true);
+          }}
+        />
       )}
 
-      {showConfirmComision && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay}>
-          <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
-            <div style={styles.editModalHeader}>
-              <button style={styles.closeBtn} onClick={() => setShowConfirmComision(false)}><X size={18} /></button>
-              <h2 style={styles.modalTitle}>Confirmar Comisión</h2>
-            </div>
-            <div style={styles.confirmBody}>
-              <p style={styles.confirmIntro}>¿Deseas agregar esta comisión con los siguientes datos?</p>
-
-              <div style={styles.confirmRow}>
-                <span style={styles.confirmLabel}>Remisión</span>
-                <span style={styles.confirmValue}>{comisionRemisionSeleccionada?.numRemision || comisionRemisionSeleccionada?.id}</span>
-              </div>
-              <div style={styles.confirmRow}>
-                <span style={styles.confirmLabel}>Tipo</span>
-                <span style={styles.confirmValue}>{comisionForm.tipo}</span>
-              </div>
-              <div style={styles.confirmRow}>
-                <span style={styles.confirmLabel}>Categoría</span>
-                <span style={styles.confirmValue}>{comisionForm.categoria}</span>
-              </div>
-              <div style={styles.confirmRow}>
-                <span style={styles.confirmLabel}>Contacto</span>
-                <span style={styles.confirmValue}>{comisionTecnico?.nombreCompleto}</span>
-              </div>
-              <div style={styles.confirmRow}>
-                <span style={styles.confirmLabel}>Valor Asignación</span>
-                <span style={styles.confirmValue}>{formatMoney(comisionVrComision)}</span>
-              </div>
-
-              {comisionForm.quieresDesglosar && (
-                <>
-                  <div style={styles.confirmRow}>
-                    <span style={styles.confirmLabel}>Sub Total</span>
-                    <span style={styles.confirmValue}>{formatMoney(comisionSubTotal)}</span>
-                  </div>
-                  <div style={styles.confirmRow}>
-                    <span style={styles.confirmLabel}>IVA</span>
-                    <span style={styles.confirmValue}>{formatMoney(comisionIva)}</span>
-                  </div>
-                  <div style={styles.confirmRow}>
-                    <span style={styles.confirmLabel}>Retención IVA</span>
-                    <span style={styles.confirmValue}>{formatMoney(comisionRetIva)}</span>
-                  </div>
-                  <div style={styles.confirmRow}>
-                    <span style={styles.confirmLabel}>Retención ISR</span>
-                    <span style={styles.confirmValue}>{formatMoney(comisionRetIsr)}</span>
-                  </div>
-                </>
-              )}
-
-              <div style={styles.confirmRowTotal}>
-                <span style={styles.confirmLabel}>Total Factura</span>
-                <span style={styles.confirmValueTotal}>{formatMoney(comisionTotalFactura)}</span>
-              </div>
-            </div>
-
-            <div style={styles.editModalFooter}>
-              <button style={styles.cancelBtn} onClick={() => setShowConfirmComision(false)}>Cancelar</button>
-              <button
-                style={styles.saveBtn}
-                onClick={() => createComisionMutation.mutate()}
-                disabled={createComisionMutation.isPending}
-              >
-                {createComisionMutation.isPending ? 'Guardando...' : 'Sí, agregar'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showDetalleInversionista && (
+      {showAgregarCotizacionModal && (
         <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
-              <button style={styles.closeBtn} onClick={() => setShowDetalleInversionista(false)}><X size={18} /></button>
-              <h2 style={styles.modalTitle}>Detalle de Inversionista</h2>
+              <button style={styles.closeBtn} onClick={() => { setShowAgregarCotizacionModal(false); setNuevasCotizaciones([]); setNuevaCotizacionSearch(''); }}>
+                <X size={18} />
+              </button>
+              <h2 style={styles.modalTitle}>Agregar cotización</h2>
             </div>
+
             <div style={styles.editModalBody}>
               <div style={styles.formGroup}>
-                <label style={styles.remisionLabel}>No Programación</label>
-                <span style={styles.readOnlyPill}><Lock size={12} /> {id}</span>
+                <label style={styles.label}>Programación *</label>
+                <span style={styles.readOnlyPill}>{programacion?.id}</span>
               </div>
 
-              <div style={styles.formGroup} id="detalle-field-remisionId">
-                <label style={styles.remisionLabel}>No Remisión *</label>
-                {(() => {
-                  const remisionSel = remisiones.find(r => r.id === detalleForm.remisionId);
-                  return remisionSel ? (
-                    <div style={{ ...styles.readOnlyField, backgroundColor: '#f3faec', border: '1px solid #dbe8c2', color: '#3f6510', fontWeight: 600, position: 'relative' as const, textAlign: 'center' as const }}>
-                      {remisionSel.numRemision || remisionSel.id}
-                      <X
-                        size={14}
-                        style={{ cursor: 'pointer', position: 'absolute' as const, right: '0.75rem', top: '50%', transform: 'translateY(-50%)' }}
-                        onClick={() => { setDetalleForm({ ...detalleForm, remisionId: '', productoId: '' }); setDetalleRemisionFocused(true); }}
-                      />
-                    </div>
-                  ) : (
-                    <div style={{ position: 'relative' as const }}>
-                      <button
-                        ref={detalleRemisionBtnRef}
-                        type="button"
-                        style={{ ...styles.input, ...(detalleError?.field === 'remisionId' ? styles.inputError : {}), display: 'flex', alignItems: 'center', justifyContent: 'space-between', textAlign: 'left' as const, color: '#9ca3af', backgroundColor: '#fff', cursor: 'pointer' }}
-                        onMouseDown={e => e.preventDefault()}
-                        onClick={() => setDetalleRemisionFocused(f => !f)}
-                        onBlur={() => setTimeout(() => setDetalleRemisionFocused(false), 150)}
-                        onKeyDown={e => {
-                          if (e.key === 'ArrowDown' && remisiones.length > 0) {
-                            e.preventDefault();
-                            setDetalleRemisionFocused(true);
-                            setDetalleRemisionHighlighted(i => Math.min(i + 1, remisiones.length - 1));
-                          } else if (e.key === 'ArrowUp' && remisiones.length > 0) {
-                            e.preventDefault();
-                            setDetalleRemisionFocused(true);
-                            setDetalleRemisionHighlighted(i => Math.max(i - 1, 0));
-                          } else if (e.key === 'Enter') {
-                            e.preventDefault();
-                            const r = remisiones[detalleRemisionHighlighted];
-                            if (r) selectDetalleRemision(r.id);
-                          }
-                        }}
-                      >
-                        Seleccionar remisión
-                        <ChevronDown size={16} style={{ color: '#9ca3af', flexShrink: 0, transform: detalleRemisionFocused ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s ease' }} />
-                      </button>
-                      {detalleRemisionFocused && (
-                        <div style={styles.medicoDropdown}>
-                          {remisiones.length === 0 ? (
-                            <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
-                          ) : (
-                            remisiones.map((r, i) => (
-                              <div
-                                key={r.id}
-                                style={{ ...styles.medicoDropdownItem, ...(hoveredDetalleRemisionId === r.id || i === detalleRemisionHighlighted ? styles.medicoDropdownItemHighlighted : {}) }}
-                                onMouseDown={e => e.preventDefault()}
-                                onMouseEnter={() => { setHoveredDetalleRemisionId(r.id); setDetalleRemisionHighlighted(i); }}
-                                onMouseLeave={() => setHoveredDetalleRemisionId(null)}
-                                onClick={() => selectDetalleRemision(r.id)}
-                              >
-                                {r.numRemision || r.id}
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-                {detalleError?.field === 'remisionId' && <span style={styles.errorText}>{detalleError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="detalle-field-productoId">
-                <label style={styles.remisionLabel}>Producto *</label>
-                {(() => {
-                  const grupoSel = consumoGrupos.find(g => g.remisionId === detalleForm.remisionId);
-                  const productosDisponibles = Array.from(
-                    new Map((grupoSel?.items ?? []).filter(it => it.productoId).map(it => [it.productoId as string, it])).values(),
-                  );
-                  const productoSel = productosDisponibles.find(it => it.productoId === detalleForm.productoId);
-                  if (!detalleForm.remisionId) {
-                    return <span style={{ ...styles.readOnlyField, color: '#9ca3af' }}>Selecciona primero la remisión</span>;
-                  }
-                  return productoSel ? (
-                    <div style={styles.medicoTagsWrap}>
-                      <span style={styles.editMedicoTag}>
-                        {productoSel.productoNombre || productoSel.productoReferencia}
-                        <X size={12} style={{ cursor: 'pointer' }} onClick={() => { setDetalleForm({ ...detalleForm, productoId: '' }); setDetalleProductoFocused(true); }} />
+              <div style={styles.formGroup} id="agregar-cotizacion-field-cotizacion">
+                <label style={styles.label}>Cotización *</label>
+                {nuevasCotizaciones.length > 0 && (
+                  <div style={styles.medicoTagsWrap}>
+                    {nuevasCotizaciones.map(c => (
+                      <span key={c.id} style={styles.cotizacionChip}>
+                        <FileText size={13} />
+                        {c.numCotizacion ?? c.id}
+                        <span style={{ color: '#7a9146' }}>· {formatMoney(c.total)}</span>
+                        <X size={12} style={{ cursor: 'pointer' }} onClick={() => setNuevasCotizaciones(nuevasCotizaciones.filter(x => x.id !== c.id))} />
                       </span>
-                    </div>
-                  ) : (
-                    <div style={{ position: 'relative' as const }}>
-                      <button
-                        ref={detalleProductoBtnRef}
-                        type="button"
-                        style={{ ...styles.input, ...(detalleError?.field === 'productoId' ? styles.inputError : {}), display: 'flex', alignItems: 'center', justifyContent: 'space-between', textAlign: 'left' as const, color: '#9ca3af', backgroundColor: '#fff', cursor: 'pointer' }}
-                        onMouseDown={e => e.preventDefault()}
-                        onClick={() => setDetalleProductoFocused(f => !f)}
-                        onBlur={() => setTimeout(() => setDetalleProductoFocused(false), 150)}
-                        onKeyDown={e => {
-                          if (e.key === 'ArrowDown' && productosDisponibles.length > 0) {
-                            e.preventDefault();
-                            setDetalleProductoFocused(true);
-                            setDetalleProductoHighlighted(i => Math.min(i + 1, productosDisponibles.length - 1));
-                          } else if (e.key === 'ArrowUp' && productosDisponibles.length > 0) {
-                            e.preventDefault();
-                            setDetalleProductoFocused(true);
-                            setDetalleProductoHighlighted(i => Math.max(i - 1, 0));
-                          } else if (e.key === 'Enter') {
-                            e.preventDefault();
-                            const p = productosDisponibles[detalleProductoHighlighted];
-                            if (p) selectDetalleProducto(p.productoId as string);
-                          }
-                        }}
-                      >
-                        Seleccionar producto
-                        <ChevronDown size={16} style={{ color: '#9ca3af', flexShrink: 0, transform: detalleProductoFocused ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s ease' }} />
-                      </button>
-                      {detalleProductoFocused && (
-                        <div style={styles.medicoDropdown}>
-                          {productosDisponibles.length === 0 ? (
-                            <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
-                          ) : (
-                            productosDisponibles.map((it, i) => (
-                              <div
-                                key={it.productoId}
-                                style={{ ...styles.medicoDropdownItem, ...(hoveredDetalleProductoId === it.productoId || i === detalleProductoHighlighted ? styles.medicoDropdownItemHighlighted : {}) }}
-                                onMouseDown={e => e.preventDefault()}
-                                onMouseEnter={() => { setHoveredDetalleProductoId(it.productoId); setDetalleProductoHighlighted(i); }}
-                                onMouseLeave={() => setHoveredDetalleProductoId(null)}
-                                onClick={() => selectDetalleProducto(it.productoId as string)}
-                              >
-                                {it.productoNombre || it.productoReferencia}
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-                {detalleError?.field === 'productoId' && <span style={styles.errorText}>{detalleError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="detalle-field-valor">
-                <label style={styles.remisionLabel}>Valor *</label>
-                <div style={styles.stepperWrap}>
-                  <input
-                    ref={detalleValorInputRef}
-                    type="number"
-                    step="0.01"
-                    style={{ ...styles.input, paddingRight: '5rem', ...(detalleError?.field === 'valor' ? styles.inputError : {}) }}
-                    placeholder="$ 0.00"
-                    value={detalleForm.valor}
-                    onKeyDown={e => { if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault(); }}
-                    onChange={e => { setDetalleForm({ ...detalleForm, valor: e.target.value.replace(/[^0-9.]/g, '') }); setDetalleError(null); }}
-                  />
-                  <div style={styles.stepperBtns}>
-                    <button type="button" style={styles.stepperBtn} onClick={() => setDetalleForm({ ...detalleForm, valor: String((Number(detalleForm.valor) || 0) - 100) })}>−</button>
-                    <button type="button" style={styles.stepperBtn} onClick={() => setDetalleForm({ ...detalleForm, valor: String((Number(detalleForm.valor) || 0) + 100) })}>+</button>
+                    ))}
                   </div>
-                </div>
-                {detalleError?.field === 'valor' && <span style={styles.errorText}>{detalleError.message}</span>}
+                )}
+                {nuevaCotizacionMedicoNombres.length === 0 ? (
+                  <span style={{ ...styles.input, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>
+                    Esta programación no tiene médicos asignados
+                  </span>
+                ) : (
+                  <div style={{ position: 'relative' as const }}>
+                    <input
+                      style={styles.input}
+                      placeholder={`Buscar por folio, cirugía, fecha o total entre las cotizaciones de ${nuevaCotizacionMedicoNombres.join(', ')}...`}
+                      value={nuevaCotizacionSearch}
+                      onChange={e => setNuevaCotizacionSearch(e.target.value)}
+                      onFocus={() => setNuevaCotizacionFocused(true)}
+                      onBlur={() => setTimeout(() => setNuevaCotizacionFocused(false), 150)}
+                    />
+                    {nuevaCotizacionFocused && (
+                      <div style={styles.medicoDropdown}>
+                        {nuevaCotizacionResults.filter(c => !nuevasCotizaciones.some(x => x.id === c.id) && !cotizacionesYaVinculadasIds.has(c.id)).length === 0 ? (
+                          <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin cotizaciones que coincidan</div>
+                        ) : (
+                          nuevaCotizacionResults.filter(c => !nuevasCotizaciones.some(x => x.id === c.id) && !cotizacionesYaVinculadasIds.has(c.id)).map(c => (
+                            <div
+                              key={c.id}
+                              className="dropdown-item-hover"
+                              style={styles.medicoDropdownItem}
+                              onMouseDown={e => e.preventDefault()}
+                              onClick={() => { setNuevasCotizaciones([...nuevasCotizaciones, c]); setNuevaCotizacionSearch(''); }}
+                            >
+                              <span style={{ flexShrink: 0, color: '#4d7a13', fontWeight: 700 }}>{c.numCotizacion ?? c.id}</span>
+                              <span style={{ flexShrink: 0, color: '#9ca3af', fontWeight: 400 }}>·</span>
+                              <span style={{ flexShrink: 0, fontWeight: 400 }}>{formatDate(c.fecha)}</span>
+                              <span style={{ flexShrink: 0, color: '#9ca3af', fontWeight: 400 }}>·</span>
+                              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, fontWeight: 400 }} title={c.cirugia || undefined}>
+                                {c.cirugia || 'Sin cirugía'}
+                              </span>
+                              <span style={{ flexShrink: 0, color: '#9ca3af', fontWeight: 400 }}>·</span>
+                              <span style={{ flexShrink: 0, fontWeight: 700 }}>{formatMoney(c.total)}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
+
             <div style={styles.editModalFooter}>
-              <button style={styles.cancelBtn} onClick={() => setShowDetalleInversionista(false)}>Cancelar</button>
-              <button style={styles.saveBtn} onClick={handleGuardarDetalleInversionista}>Agregar</button>
+              <button style={styles.cancelBtn} onClick={() => { setShowAgregarCotizacionModal(false); setNuevasCotizaciones([]); setNuevaCotizacionSearch(''); }}>Cancelar</button>
+              <button
+                style={styles.saveBtn}
+                onClick={() => agregarCotizacionMutation.mutate()}
+                disabled={nuevasCotizaciones.length === 0 || agregarCotizacionMutation.isPending}
+              >
+                {agregarCotizacionMutation.isPending ? 'Guardando...' : 'Guardar'}
+              </button>
             </div>
           </div>
         </div>
@@ -3728,7 +3396,7 @@ export default function ProgramacionDetailPage() {
             <div style={styles.editModalBody}>
               <div style={styles.formGroup}>
                 <label style={styles.label}>Programación *</label>
-                <span style={styles.readOnlyField}>
+                <span style={styles.readOnlyPill}>
                   {programacion?.id}
                 </span>
               </div>
@@ -3770,7 +3438,7 @@ export default function ProgramacionDetailPage() {
 
               <div style={styles.formGroup}>
                 <label style={styles.label}>Cargado por *</label>
-                <span style={styles.medicoTag}>{usuarioActual?.nombreCompleto ?? '-'}</span>
+                <span style={styles.readOnlyPill}>{usuarioActual?.nombreCompleto ?? '-'}</span>
               </div>
             </div>
 
@@ -3929,20 +3597,38 @@ export default function ProgramacionDetailPage() {
               <div style={styles.formGroup} id="requisicion-field-insumos">
                 <label style={styles.label}>Seleccione los insumos *</label>
                 {requisicionInsumos.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.5rem', marginBottom: '0.5rem' }}>
-                    {requisicionInsumos.map(ins => (
-                      <div key={ins.tempId} style={styles.insumoDraftRow}>
-                        <span style={styles.insumoDraftText}>
-                          {ins.productoLabel ?? 'Sin producto'} — {ins.cantidad} × {formatMoney(ins.precio)}
-                          {ins.loteLabel ? ` (Lote: ${ins.loteLabel})` : ''}
-                        </span>
-                        <X size={14} style={{ cursor: 'pointer' }} onClick={() => handleQuitarInsumoDraft(ins.tempId)} />
-                      </div>
-                    ))}
+                  <div style={{ ...styles.consumosTableWrap, maxHeight: '260px', marginBottom: '0.5rem' }}>
+                    <table style={styles.consumosTable}>
+                      <thead>
+                        <tr>
+                          <th style={styles.consumosTh}>Producto</th>
+                          <th style={styles.consumosTh}>Lote</th>
+                          <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Cant.</th>
+                          <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Precio</th>
+                          <th style={{ ...styles.consumosTh, textAlign: 'right' as const }}>Importe</th>
+                          <th style={styles.consumosTh} />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {requisicionInsumos.map(ins => (
+                          <tr key={ins.tempId}>
+                            <td style={{ ...styles.consumosTd, whiteSpace: 'normal' as const }}>{ins.productoLabel ?? 'Sin producto'}</td>
+                            <td style={styles.consumosTd}>{ins.loteLabel ?? '-'}</td>
+                            <td style={{ ...styles.consumosTd, textAlign: 'right' as const }}>{ins.cantidad}</td>
+                            <td style={{ ...styles.consumosTd, textAlign: 'right' as const }}>{formatMoney(ins.precio)}</td>
+                            <td style={{ ...styles.consumosTd, textAlign: 'right' as const, fontWeight: 700 }}>{formatMoney(ins.cantidad * ins.precio)}</td>
+                            <td style={{ ...styles.consumosTd, textAlign: 'center' as const }}>
+                              <X size={14} style={{ cursor: 'pointer' }} onClick={() => handleQuitarInsumoDraft(ins.tempId)} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
                 <button
                   type="button"
+                  className="btn-press"
                   style={{
                     ...styles.addComisionBtnBelow,
                     ...(requisicionError?.field === 'insumos' ? styles.inputError : {}),
@@ -3975,190 +3661,16 @@ export default function ProgramacionDetailPage() {
       )}
 
       {showInsumoSubModal && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay}>
-          <div className="modal-content-anim" style={styles.editModalContent} onClick={e => e.stopPropagation()}>
-            <div style={styles.editModalHeader}>
-              <button style={styles.closeBtn} onClick={() => setShowInsumoSubModal(false)}>
-                <X size={18} />
-              </button>
-              <h2 style={styles.modalTitle}>Nuevo insumo</h2>
-            </div>
-
-            <div style={styles.editModalBody}>
-
-              <div style={styles.formGroup} id="insumo-field-lote">
-                <label style={styles.label}>Lote</label>
-                {insumoLote ? (
-                  <div style={styles.medicoTagsWrap}>
-                    <span style={styles.editMedicoTag}>
-                      {insumoLote.lote}
-                      <X size={12} style={{ cursor: 'pointer' }} onClick={() => setInsumoLote(null)} />
-                    </span>
-                  </div>
-                ) : (
-                  <div style={{ position: 'relative' as const }}>
-                    <input
-                      style={{ ...styles.input, ...(insumoSubError?.field === 'lote' ? styles.inputError : {}) }}
-                      placeholder="Buscar lote..."
-                      value={insumoLoteSearch}
-                      onChange={e => { setInsumoLoteSearch(e.target.value); setInsumoSubError(null); }}
-                      onFocus={() => setInsumoLoteFocused(true)}
-                      onBlur={() => setTimeout(() => setInsumoLoteFocused(false), 150)}
-                    />
-                    {insumoLoteFocused && (
-                      <div style={styles.medicoDropdown}>
-                        {insumoLoteResults.length === 0 ? (
-                          <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
-                        ) : (
-                          insumoLoteResults.map(l => (
-                            <div key={l.id} className="dropdown-item-hover" style={styles.medicoDropdownItem} onMouseDown={e => e.preventDefault()} onClick={() => { setInsumoLote(l); setInsumoLoteSearch(''); }}>
-                              <Plus size={14} /> {l.lote}
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {insumoSubError?.field === 'lote' && <span style={styles.errorText}>{insumoSubError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="insumo-field-producto">
-                <label style={styles.label}>Producto</label>
-                {!insumoLote ? (
-                  <span style={{ ...styles.input, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>Selecciona primero un lote</span>
-                ) : insumoProducto ? (
-                  <div style={styles.medicoTagsWrap}>
-                    <span style={styles.editMedicoTag}>
-                      {formatProductoLabel(insumoProducto)}
-                      <X size={12} style={{ cursor: 'pointer' }} onClick={() => setInsumoProducto(null)} />
-                    </span>
-                  </div>
-                ) : (
-                  <div style={{ position: 'relative' as const }}>
-                    <input
-                      style={{ ...styles.input, ...(insumoSubError?.field === 'producto' ? styles.inputError : {}) }}
-                      placeholder="Buscar por clave, nombre o sistema..."
-                      value={insumoProductoSearch}
-                      onChange={e => { setInsumoProductoSearch(e.target.value); setInsumoSubError(null); }}
-                      onFocus={() => setInsumoProductoFocused(true)}
-                      onBlur={() => setTimeout(() => setInsumoProductoFocused(false), 150)}
-                      onKeyDown={e => {
-                        if (!insumoProductoFocused || insumoProductoResults.length === 0) return;
-                        if (e.key === 'ArrowDown') {
-                          e.preventDefault();
-                          setInsumoProductoHighlighted(i => Math.min(i + 1, insumoProductoResults.length - 1));
-                        } else if (e.key === 'ArrowUp') {
-                          e.preventDefault();
-                          setInsumoProductoHighlighted(i => Math.max(i - 1, 0));
-                        } else if (e.key === 'Enter') {
-                          e.preventDefault();
-                          const p = insumoProductoResults[insumoProductoHighlighted];
-                          if (p) handleSelectInsumoProducto(p);
-                        }
-                      }}
-                    />
-                    {insumoProductoFocused && (
-                      <div style={styles.medicoDropdown}>
-                        {insumoProductoResults.length === 0 ? (
-                          <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin resultados</div>
-                        ) : (
-                          insumoProductoResults.map((p, i) => (
-                            <div
-                              key={p.id}
-                              ref={el => { insumoProductoOptionRefs.current[i] = el; }}
-                              className="dropdown-item-hover"
-                              style={{ ...styles.medicoDropdownItem, justifyContent: 'space-between' as const, ...(i === insumoProductoHighlighted ? { backgroundColor: '#e9f2d8' } : {}) }}
-                              onMouseDown={e => e.preventDefault()}
-                              onMouseEnter={() => setInsumoProductoHighlighted(i)}
-                              onClick={() => handleSelectInsumoProducto(p)}
-                            >
-                              <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
-                                <Plus size={14} style={{ flexShrink: 0 }} />
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
-                                  {p.referencia && <span style={styles.productoClaveTag}>{p.referencia}</span>}
-                                  {p.referencia ? ' / ' : ''}{p.nombre}
-                                </span>
-                              </span>
-                              {p.sistema && <span style={styles.productoSistemaTag}>{p.sistema}</span>}
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {insumoSubError?.field === 'producto' && <span style={styles.errorText}>{insumoSubError.message}</span>}
-              </div>
-
-              {insumoProducto && (
-                <>
-                  <div style={styles.formGroup}>
-                    <label style={styles.label}>Sistema</label>
-                    <span style={styles.readOnlyField}>{insumoProducto.sistema || '-'}</span>
-                  </div>
-                  <div style={styles.formGroup}>
-                    <label style={styles.label}>Referencia</label>
-                    <span style={styles.readOnlyField}>{insumoProducto.referencia || '-'}</span>
-                  </div>
-                  <div style={styles.formGroup}>
-                    <label style={styles.label}>Descripción</label>
-                    <span style={styles.readOnlyField}>{insumoProducto.nombre || '-'}</span>
-                  </div>
-                  <div style={styles.formGroup}>
-                    <label style={styles.label}>Categoría</label>
-                    <span style={styles.readOnlyField}>{insumoProducto.categoria || '-'}</span>
-                  </div>
-                </>
-              )}
-
-              <div style={styles.formGroup} id="insumo-field-cantidad">
-                <label style={styles.label}>Cantidad *</label>
-                {!insumoProducto ? (
-                  <span style={{ ...styles.input, color: '#9ca3af', backgroundColor: '#f4f4ee', display: 'flex', alignItems: 'center' }}>Selecciona primero un producto</span>
-                ) : (
-                  <div style={styles.stepperWrap}>
-                    <input
-                      type="number"
-                      style={{ ...styles.input, paddingRight: '5rem', ...(insumoSubError?.field === 'cantidad' ? styles.inputError : {}) }}
-                      placeholder="0"
-                      value={insumoCantidad}
-                      onChange={e => { setInsumoCantidad(e.target.value); setInsumoSubError(null); }}
-                    />
-                    <div style={styles.stepperBtns}>
-                      <button type="button" style={styles.stepperBtn} onClick={() => { setInsumoCantidad(String((Number(insumoCantidad) || 0) - 1)); setInsumoSubError(null); }}>−</button>
-                      <button type="button" style={styles.stepperBtn} onClick={() => { setInsumoCantidad(String((Number(insumoCantidad) || 0) + 1)); setInsumoSubError(null); }}>+</button>
-                    </div>
-                  </div>
-                )}
-                {insumoSubError?.field === 'cantidad' && <span style={styles.errorText}>{insumoSubError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup} id="insumo-field-precio">
-                <label style={styles.label}>Precio *</label>
-                <span style={styles.readOnlyField}>{insumoPrecio ? formatMoney(Number(insumoPrecio)) : '-'}</span>
-                {insumoSubError?.field === 'precio' && <span style={styles.errorText}>{insumoSubError.message}</span>}
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Tarifa Asociada</label>
-                <span style={styles.readOnlyField}>
-                  {requisicionTarifaLabel || tarifasCubrimiento.find(t => t.id === requisicionTarifaId)?.nombre || requisicionCubrimiento?.nombre || '-'}
-                </span>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Fecha</label>
-                <span style={styles.readOnlyField}>{formatDate(requisicionFecha)}</span>
-              </div>
-            </div>
-
-            <div style={styles.editModalFooter}>
-              <button style={styles.cancelBtn} onClick={() => setShowInsumoSubModal(false)}>Cancelar</button>
-              <button style={styles.saveBtn} onClick={handleAgregarInsumoDraft}>Agregar</button>
-            </div>
-          </div>
-        </div>
+        <InsumoFormModal
+          title="Nuevo insumo"
+          tarifaId={requisicionTarifaId || undefined}
+          cubrimientoNombre={requisicionCubrimiento?.nombre}
+          tarifaLabel={requisicionTarifaLabel || tarifasCubrimiento.find(t => t.id === requisicionTarifaId)?.nombre || requisicionCubrimiento?.nombre || '-'}
+          fecha={requisicionFecha}
+          saveLabel="Agregar"
+          onSubmit={handleAgregarInsumoDraft}
+          onClose={() => setShowInsumoSubModal(false)}
+        />
       )}
 
       {showRemisionModal && programacion && (
@@ -4222,10 +3734,13 @@ export default function ProgramacionDetailPage() {
       )}
 
       {showGmailConfirm && (
-        <div className="modal-overlay-anim" style={styles.modalOverlay}>
+        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => setShowGmailConfirm(false)}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
-            <div style={styles.editModalHeader}>
+            <div style={{ ...styles.editModalHeader, justifyContent: 'space-between' }}>
               <h2 style={styles.modalTitle}>Enviar por Gmail</h2>
+              <button style={styles.closeBtn} onClick={() => setShowGmailConfirm(false)}>
+                <X size={18} />
+              </button>
             </div>
             <div style={styles.confirmBody}>
               <p style={styles.confirmIntro}>¿Quieres agregar una cotización en PDF, o solo enviar la información general de la programación?</p>
@@ -4250,8 +3765,8 @@ export default function ProgramacionDetailPage() {
               <X size={18} style={{ cursor: 'pointer' }} onClick={() => { setShowGmailCotizacionPicker(false); setGmailCotizacionSearch(''); }} />
             </div>
             <div style={styles.confirmBody}>
-              {gmailMedicoNombres.length === 0 ? (
-                <p style={styles.confirmIntro}>Esta programación no tiene médico asignado, así que no hay cotizaciones para buscar.</p>
+              {gmailCotizacionResults.length === 0 ? (
+                <p style={styles.confirmIntro}>Esta programación no tiene cotizaciones asociadas.</p>
               ) : (
                 <>
                   <input
@@ -4271,6 +3786,56 @@ export default function ProgramacionDetailPage() {
                           className="dropdown-item-hover"
                           style={styles.medicoDropdownItem}
                           onClick={() => handleSeleccionarCotizacionGmail(c.id)}
+                        >
+                          <span style={{ flexShrink: 0, color: '#4d7a13', fontWeight: 700 }}>{c.numCotizacion ?? c.id}</span>
+                          <span style={{ flexShrink: 0, color: '#9ca3af', fontWeight: 400 }}>·</span>
+                          <span style={{ flexShrink: 0, fontWeight: 400 }}>{formatDate(c.fecha)}</span>
+                          <span style={{ flexShrink: 0, color: '#9ca3af', fontWeight: 400 }}>·</span>
+                          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, fontWeight: 400 }} title={c.cirugia || undefined}>
+                            {c.cirugia || 'Sin cirugía'}
+                          </span>
+                          <span style={{ flexShrink: 0, color: '#9ca3af', fontWeight: 400 }}>·</span>
+                          <span style={{ flexShrink: 0, fontWeight: 700 }}>{formatMoney(c.total)}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showWhatsappCotizacionPicker && (
+        <div className="modal-overlay-anim" style={styles.modalOverlay} onClick={() => { setShowWhatsappCotizacionPicker(false); setWhatsappCotizacionSearch(''); }}>
+          <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
+            <div style={styles.editModalHeader}>
+              <h2 style={styles.modalTitle}>Elegir cotización</h2>
+              <X size={18} style={{ cursor: 'pointer' }} onClick={() => { setShowWhatsappCotizacionPicker(false); setWhatsappCotizacionSearch(''); }} />
+            </div>
+            <div style={styles.confirmBody}>
+              {whatsappCotizacionResults.length === 0 ? (
+                <p style={styles.confirmIntro}>Esta programación no tiene cotizaciones asociadas.</p>
+              ) : (
+                <>
+                  <input
+                    autoFocus
+                    style={styles.input}
+                    placeholder="Buscar por folio, cirugía, fecha o total..."
+                    value={whatsappCotizacionSearch}
+                    onChange={e => setWhatsappCotizacionSearch(e.target.value)}
+                  />
+                  <div style={{ maxHeight: '280px', overflowY: 'auto' as const, marginTop: '0.75rem', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+                    {whatsappCotizacionResultsFiltradas.length === 0 ? (
+                      <div style={{ ...styles.medicoDropdownItem, color: '#9ca3af', cursor: 'default' }}>Sin cotizaciones que coincidan</div>
+                    ) : (
+                      whatsappCotizacionResultsFiltradas.map(c => (
+                        <div
+                          key={c.id}
+                          className="dropdown-item-hover"
+                          style={styles.medicoDropdownItem}
+                          onClick={() => handleSeleccionarCotizacionWhatsapp(c.id)}
                         >
                           <span style={{ flexShrink: 0, color: '#4d7a13', fontWeight: 700 }}>{c.numCotizacion ?? c.id}</span>
                           <span style={{ flexShrink: 0, color: '#9ca3af', fontWeight: 400 }}>·</span>
@@ -4330,7 +3895,6 @@ export default function ProgramacionDetailPage() {
       <SuccessToast show={showRequisicionSuccess} message={`Requisición ${requisicionCreatedId ?? ''} creada`} onClose={() => setShowRequisicionSuccess(false)} />
       <SuccessToast show={showValidarConsumoSuccess} message="Consumo validado" onClose={() => setShowValidarConsumoSuccess(false)} />
       <SuccessToast show={showTecnicoSugeridoSuccess} message="Técnico sugerido agregado" onClose={() => setShowTecnicoSugeridoSuccess(false)} />
-      <SuccessToast show={showDetalleInversionistaSuccess} message="Detalle de inversionista agregado" onClose={() => setShowDetalleInversionistaSuccess(false)} />
       <SuccessToast show={showComisionSuccess} message="Comisión agregada" onClose={() => setShowComisionSuccess(false)} />
       {pendingWhatsappShare && (
         <div className="modal-overlay-anim" style={styles.modalOverlay}>
@@ -4358,11 +3922,13 @@ export default function ProgramacionDetailPage() {
         <div className="modal-overlay-anim" style={styles.modalOverlay}>
           <div className="modal-content-anim" style={styles.confirmModalContent} onClick={e => e.stopPropagation()}>
             <div style={styles.editModalHeader}>
-              <h2 style={styles.modalTitle}>Listo para enviar</h2>
+              <h2 style={styles.modalTitle}>Completa el envío manualmente</h2>
             </div>
             <div style={styles.confirmBody}>
               <p style={styles.confirmIntro}>
-                El mensaje ya se copió al portapapeles. Al abrir WhatsApp Web, pégalo en el chat y adjunta el PDF manualmente.
+                {whatsappLinkIncluyePdf
+                  ? `Tu navegador no permite compartir archivos directamente, así que el mensaje ya se copió al portapapeles y el PDF se descargó a tu equipo como "${whatsappDownloadedFileName}". Al abrir WhatsApp, pégalo en el chat y adjunta ese archivo manualmente.`
+                  : 'Tu navegador no permite compartir directamente, así que el mensaje ya se copió al portapapeles. Al abrir WhatsApp, pégalo en el chat.'}
               </p>
             </div>
             <div style={styles.editModalFooter}>
@@ -4382,7 +3948,7 @@ export default function ProgramacionDetailPage() {
                 style={{ ...styles.saveBtn, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
                 onClick={() => setWhatsappLink(null)}
               >
-                Abrir WhatsApp Web
+                Abrir WhatsApp
               </a>
             </div>
           </div>
@@ -4391,7 +3957,7 @@ export default function ProgramacionDetailPage() {
       <SuccessToast show={showDocumentoSuccess} message="Documento agregado" onClose={() => setShowDocumentoSuccess(false)} />
       <SuccessToast show={showInsumoSuccess} message="Insumo agregado" onClose={() => setShowInsumoSuccess(false)} />
       <SuccessToast show={showGmailSuccess} message="PDF enviado al chat de Google" onClose={() => setShowGmailSuccess(false)} />
-      <SuccessToast show={!!whatsappCopiedMessage} message={whatsappCopiedMessage ?? ''} onClose={() => setWhatsappCopiedMessage(null)} />
+      <SuccessToast show={whatsappCopiedToast} message="Mensaje copiado — pégalo como siguiente mensaje en el chat." onClose={() => setWhatsappCopiedToast(false)} />
       {selectedCotizacionId && (
         <CotizacionDetalleModal
           id={selectedCotizacionId}
@@ -4497,20 +4063,23 @@ export default function ProgramacionDetailPage() {
 }
 
 export const styles: Record<string, React.CSSProperties> = {
-  container: { padding: '0.05rem 1.5rem 1.5rem', maxWidth: '1400px', margin: '0 auto' },
+  container: { padding: '0.05rem 1.5rem 1.5rem', maxWidth: '1720px', margin: '0 auto' },
+  pageSplitRow: { display: 'flex', gap: '1.5rem', alignItems: 'flex-start' as const },
+  mainColumn: { flex: 1, minWidth: 0 },
+  sidebarColumn: { width: '320px', flexShrink: 0, display: 'flex', flexDirection: 'column' as const, gap: '1rem' },
   headerCard: { backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', padding: '1.25rem 1.5rem 0', marginBottom: '2rem' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1.5rem' },
   titleGroup: { flex: 1, display: 'flex', flexDirection: 'column' as const, gap: '0.15rem', overflow: 'hidden' },
   titleLabel: { fontSize: '0.65rem', fontWeight: 400, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
   title: { fontSize: '1.7rem', fontWeight: 800, color: '#16170f', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
-  titleId: { fontSize: '0.8rem', fontWeight: 500, color: '#4d7a13', flexShrink: 0 },
+  titleId: { fontSize: '0.8rem', fontWeight: 500, color: '#6b8c1f', flexShrink: 0 },
   titleRow: { display: 'flex', alignItems: 'center', gap: '0.75rem', overflow: 'hidden' },
   statusPill: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.75rem', borderRadius: '999px', border: '1px solid transparent', fontSize: '0.75rem', fontWeight: 700, flexShrink: 0 },
   statusPillAbierta: { backgroundColor: '#e9f2d8', color: '#3f6510', borderColor: '#dbe8c2' },
   statusPillCerrada: { backgroundColor: '#f4f4ee', color: '#6b6b60', borderColor: '#e9ece0' },
   statusDot: { width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0 },
   breadcrumbRow: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', color: '#9a9a90' },
-  breadcrumbId: { fontWeight: 500, color: '#4d7a13' },
+  breadcrumbId: { fontWeight: 500, color: '#6b8c1f' },
   headerActions: { display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 },
   btnPill: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.1rem', border: '1px solid #e5e7eb', borderRadius: '12px', color: '#33342a', fontWeight: 600, fontSize: '0.84375rem', cursor: 'pointer', whiteSpace: 'nowrap' as const, flexShrink: 0 },
   btnPillPrimary: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.1rem', border: '1px solid #dbe8c2', borderRadius: '12px', color: '#3f6510', fontWeight: 600, fontSize: '0.84375rem', cursor: 'pointer', whiteSpace: 'nowrap' as const, flexShrink: 0 },
@@ -4521,14 +4090,28 @@ export const styles: Record<string, React.CSSProperties> = {
   dropdownItemDisabled: { opacity: 0.45, cursor: 'not-allowed' as const },
   dropdownItemDanger: { color: '#a8503c' },
   dropdownDivider: { height: '1px', backgroundColor: '#eeeee6', margin: '0.3rem 0' },
-  infoBar: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr) 1.7fr', gap: '1.25rem', backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '11px', padding: '1rem 1.25rem', marginBottom: '1.5rem' },
+  infoStepperCard: { backgroundColor: '#f9fafb', borderTop: '1px solid #e5e7eb', borderBottom: '1px solid #e5e7eb', borderRadius: 0, marginBottom: '1.5rem', overflow: 'hidden', marginLeft: '-1.5rem', marginRight: '-1.5rem', width: 'calc(100% + 3rem)' },
+  infoStepperDivider: { height: '1px', backgroundColor: '#e5e7eb' },
+  infoBar: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr) 1.7fr', gap: '1.25rem', padding: '1rem 1.25rem', backgroundColor: '#fff' },
   infoBarItem: { position: 'relative' as const, display: 'flex', flexDirection: 'column' as const, gap: '0.3rem', minWidth: 0 },
   infoBarDividerLine: { position: 'absolute' as const, right: '-0.65rem', top: '15%', bottom: '15%', width: '1px', backgroundColor: '#e5e7eb' },
-  infoBarLabel: { fontSize: '0.68rem', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em', flexShrink: 0 },
+  infoBarLabelRow: { display: 'flex', alignItems: 'center', gap: '0.35rem' },
+  infoBarLabel: { fontSize: '0.72rem', fontWeight: 500, color: '#8b93a1', flexShrink: 0 },
   infoBarValue: { fontSize: '0.9375rem', fontWeight: 700, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   infoBarBadges: { display: 'flex', flexWrap: 'nowrap' as const, gap: '0.3rem' },
   estadoFlagBadge: { display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.2rem 0.45rem', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap' as const },
   infoBarValueMono: { fontSize: '0.9375rem', fontWeight: 700, color: '#16170f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  stepperBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', padding: '1rem 1.25rem', overflowX: 'auto' as const },
+  stepperSteps: { display: 'flex', alignItems: 'center', flex: 1, minWidth: 0 },
+  stepperStep: { display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 },
+  stepperCircle: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0, fontSize: '0.78rem', fontWeight: 700 },
+  stepperCircleDone: { backgroundColor: '#6b8c1f', color: '#fff' },
+  stepperCircleCurrent: { backgroundColor: '#fff', border: '2px solid #6b8c1f', color: '#6b8c1f' },
+  stepperCirclePending: { backgroundColor: '#fff', border: '1px solid #e5e7eb', color: '#9ca3af' },
+  stepperLabel: { fontSize: '0.84375rem', fontWeight: 700, color: '#16170f', whiteSpace: 'nowrap' as const },
+  stepperLabelPending: { color: '#9ca3af' },
+  stepperSubLabel: { fontSize: '0.72rem', color: '#9ca3af', whiteSpace: 'nowrap' as const },
+  stepperConnector: { height: '2px', flex: 1, minWidth: '24px', margin: '0 0.5rem' },
   mainTabBar: { display: 'flex', gap: '0.25rem', borderBottom: '1px solid #eeeee6' },
   mainTabBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.75rem 1rem', border: 'none', background: 'transparent', fontSize: '0.84375rem', fontWeight: 600, cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px', outline: 'none', boxShadow: 'none', appearance: 'none' as const, WebkitAppearance: 'none' as const, whiteSpace: 'nowrap' as const, flexShrink: 0 },
   mainTabBtnActive: { color: '#4d7a13', borderBottomColor: '#4d7a13' },
@@ -4600,22 +4183,13 @@ export const styles: Record<string, React.CSSProperties> = {
   // spec de CSS) — esto creaba una SEGUNDA barra de scroll horizontal propia de este contenedor,
   // además de la que ya pone remList por fuera (header + body juntos). Con overflowX:'hidden' acá,
   // solo queda la barra externa de remList.
-  scrollBody: { width: '100%', maxWidth: '100%', boxSizing: 'border-box' as const, height: '135px', overflowY: 'auto' as const, overflowX: 'auto' as const, backgroundColor: '#f9fafb' },
-  tecnicoScrollBody: { height: '135px', overflowY: 'auto' as const, overflowX: 'hidden' as const, backgroundColor: '#f9fafb' },
+  tecnicoScrollBody: { maxHeight: '135px', overflowY: 'auto' as const, overflowX: 'hidden' as const, overscrollBehavior: 'contain' as const },
   remRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem 1.25rem', backgroundColor: '#fff' },
-  remGridRow: { display: 'grid', gridTemplateColumns: '190px 110px 130px 110px', alignItems: 'center', padding: '0.45rem 1.25rem', gap: '0.5rem', backgroundColor: '#fff', width: '100%', minWidth: 'max-content' as const, boxSizing: 'border-box' as const },
-  remGridRowMobile: { gridTemplateColumns: '150px 90px 90px 90px', gap: '0.3rem' },
   remRowBorder: { borderTop: '1px solid #f3f4f6' },
-  remRowLeft: { display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0, overflow: 'hidden' as const },
-  remRowCode: { fontSize: '0.875rem', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' as const, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const },
   remRowRight: { display: 'flex', alignItems: 'center', gap: '0.75rem' },
   estadoBadge: { fontSize: '0.65rem', fontWeight: 700, padding: '0.2rem 0.6rem', borderRadius: '999px', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
   estadoDefinitiva: { backgroundColor: '#dcfce7', color: '#15803d' },
   estadoOtro: { backgroundColor: '#fef9c3', color: '#a16207' },
-  cxcLabel: { display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', fontWeight: 600 },
-  tecnicoLegendRow: { display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.75rem 1.25rem', backgroundColor: '#f9fafb', borderBottom: '2px solid #e5e7eb' },
-  tecnicoLegendText: { fontSize: '0.8rem', fontWeight: 500, color: '#9ca3af' },
-  tecnicoLegendId: { fontSize: '0.8rem', fontWeight: 700, color: '#4d7a13' },
   tecnicoList: { backgroundColor: '#fff' },
   tecnicoListRow: { display: 'flex', alignItems: 'center', gap: '0.65rem', padding: '0.45rem 1.25rem' },
   tecnicoAvatar: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '30px', height: '30px', borderRadius: '50%', backgroundColor: '#e9f2d8', color: '#4d7a13', fontSize: '0.65rem', fontWeight: 700, flexShrink: 0 },
@@ -4627,29 +4201,34 @@ export const styles: Record<string, React.CSSProperties> = {
   consumoSubtotalRow: { gridColumn: '1 / -1', display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 -1.25rem', padding: '0.5rem 1.25rem', backgroundColor: '#f9fafb', borderTop: '1px dashed #e5e7eb' },
   consumoSubtotalLabel: { fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
   consumoSubtotalValue: { fontSize: '0.85rem', fontWeight: 700, color: '#6b8c1f' },
-  comisionGrid: { display: 'grid', gridTemplateColumns: '140px 1fr 130px', padding: '0 1.25rem', backgroundColor: '#fff', width: '100%', minWidth: '700px', boxSizing: 'border-box' as const, backgroundImage: 'linear-gradient(to right, #eeeee6, #eeeee6)', backgroundRepeat: 'no-repeat' as const, backgroundSize: '1px 100%', backgroundPosition: 'calc(1.25rem + 140px) 0' },
-  comisionHeaderCell: { position: 'sticky' as const, top: 0, zIndex: 1, backgroundColor: '#f9fafb', borderBottom: '2px solid #e5e7eb', padding: '0.6rem 0.75rem' },
-  comisionCategoriaCell: { alignSelf: 'start', display: 'flex', alignItems: 'center', padding: '0.6rem 0.75rem 0.6rem 0', backgroundColor: '#fff', fontSize: '0.85rem', fontWeight: 700, color: '#374151' },
-  comisionTecnicoCell: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0 0.4rem 0.75rem', overflow: 'hidden', fontSize: '0.85rem', color: '#374151' },
-  comisionMontoCell: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0.4rem 1.25rem 0.4rem 0', margin: '0 -1.25rem 0 0', fontSize: '0.85rem', fontWeight: 600, color: '#333' },
-  comisionScrollBody: { minHeight: '110px', maxHeight: '220px', overflowY: 'auto' as const, overflowX: 'auto' as const, width: '100%', maxWidth: '100%', boxSizing: 'border-box' as const, backgroundColor: '#f9fafb' },
-  // 190px porque el id se debe ver completo sin truncar (a diferencia de Usuario, que sí trunca
-  // con "...") — el formato actual es "REQ_0000123_0000001" (~19 caracteres), no un hash largo.
-  requisicionRow: { display: 'grid', gridTemplateColumns: '190px 120px 1fr 90px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '540px' },
+  comisionTabGroup: { display: 'flex', alignItems: 'center', gap: '0.25rem', backgroundColor: '#f4f4ee', borderRadius: '10px', padding: '0.2rem' },
+  comisionTabBtn: { padding: '0.4rem 0.75rem', border: 'none', borderRadius: '8px', backgroundColor: 'transparent', color: '#6b7280', fontWeight: 600, fontSize: '0.78rem', cursor: 'pointer', whiteSpace: 'nowrap' as const },
+  comisionTabBtnActive: { backgroundColor: '#fff', color: '#16170f', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' },
+  comisionAddBtn: { display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.5rem 0.9rem', border: 'none', borderRadius: '10px', backgroundColor: '#6b8c1f', color: '#fff', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap' as const },
+  comisionStatsBar: { display: 'flex', flexWrap: 'wrap' as const, borderTop: '1px solid #eeeee6', borderBottom: '1px solid #eeeee6', overflow: 'hidden' as const },
+  comisionStatsSegment: { flex: '1 1 150px', minWidth: '150px', display: 'flex', flexDirection: 'column' as const, gap: '0.3rem', padding: '0.85rem 1.1rem', borderRight: '1px solid #eeeee6', borderBottom: '1px solid #eeeee6', backgroundColor: '#fff' },
+  comisionStatsValue: { fontSize: '1.05rem', fontWeight: 700, color: '#16170f' },
+  comisionStatsSub: { fontSize: '0.72rem', color: '#9ca3af', fontWeight: 600 },
+  comisionStatsBarTrack: { width: '100%', height: '4px', borderRadius: '999px', backgroundColor: '#e5e7eb', overflow: 'hidden' as const },
+  comisionStatsBarFill: { height: '100%', borderRadius: '999px' },
+  comisionListBody: { maxHeight: '420px', overflowY: 'auto' as const, overscrollBehavior: 'contain' as const },
+  comisionRow: { display: 'flex', alignItems: 'center', gap: '0.65rem', padding: '0.4rem 1.75rem', backgroundColor: '#fff' },
+  comisionRolBadge: { display: 'inline-flex', alignItems: 'center', padding: '0.1rem 0.45rem', borderRadius: '999px', fontSize: '0.64rem', fontWeight: 700, flexShrink: 0 },
+  comisionRowMonto: { fontSize: '0.82rem', fontWeight: 700, color: '#16170f', flexShrink: 0 },
+  comisionRowBtn: { padding: '0.3rem 0.7rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', color: '#374151', fontWeight: 600, fontSize: '0.74rem', cursor: 'pointer', flexShrink: 0 },
   notaCreditoRow: { display: 'grid', gridTemplateColumns: '140px 130px 1fr 130px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '680px' },
-  cotizacionRow: { display: 'grid', gridTemplateColumns: '160px 110px minmax(0, 1fr) 130px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff' },
-  // En móvil, las 4 columnas de cotizacionRow (160+110+130px fijos) no caben en pantalla y
-  // forzaban scroll horizontal, que se veía apretado y cortado (folio/cirugía a medias). En vez
-  // de eso, tarjeta apilada en 2 líneas: folio+total arriba, fecha+cirugía abajo.
-  cotizacionCardMobile: { display: 'flex', flexDirection: 'column' as const, padding: '0.65rem 1rem', backgroundColor: '#fff' },
+  // Tarjeta apilada en 2 líneas (en vez de un grid de columnas fijas, que desbordaba en las
+  // mini-tarjetas angostas de Cotizaciones/Requisiciones/Remisiones): línea 1 identificador+monto
+  // o estado, línea 2 los datos secundarios con truncado.
+  cotizacionCardMobile: { display: 'flex', flexDirection: 'column' as const, padding: '0.4rem 1rem', backgroundColor: '#fff' },
   gastoRow: { display: 'grid', gridTemplateColumns: '110px 100px 1fr 180px 110px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '780px' },
   fuenteRow: { display: 'grid', gridTemplateColumns: '140px 120px 1fr 150px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '680px' },
   // Antes eran 5 columnas (900px de minWidth) porque "Cargado el" y "Cargado por" iban cada una en
   // su propia columna — se combinan en una sola celda apilada (fecha arriba, usuario chico abajo,
   // mismo patrón que mobileCardFechaHora) para que la tarjeta quepa en el ancho normal de media
   // pantalla sin necesitar scroll horizontal.
-  documentoRow: { display: 'grid', gridTemplateColumns: '110px 1fr 100px 150px', alignItems: 'center', padding: '0.6rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', minWidth: '540px' },
-  tabScrollBody: { maxHeight: '320px', overflowY: 'auto' as const, overflowX: 'hidden' as const },
+  documentoRow: { display: 'grid', gridTemplateColumns: '1fr 100px 130px 130px 28px', alignItems: 'center', padding: '0.4rem 1.25rem', gap: '0.75rem', backgroundColor: '#fff', width: '100%', boxSizing: 'border-box' as const },
+  tabScrollBody: { maxHeight: '320px', overflowY: 'auto' as const, overflowX: 'hidden' as const, overscrollBehavior: 'contain' as const },
   requisicionCodigo: { fontSize: '0.78rem', fontWeight: 700, color: '#6b8c1f', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   requisicionCellText: { fontSize: '0.85rem', color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   consumoCellValorUnit: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0.6rem 0', fontSize: '0.85rem', color: '#555' },
@@ -4719,7 +4298,7 @@ export const styles: Record<string, React.CSSProperties> = {
   ciudadPill: { display: 'inline-flex', alignSelf: 'flex-start' as const, padding: '0.4rem 0.85rem', borderRadius: '999px', border: '1px solid #dbe8c2', backgroundColor: '#e9f2d8', fontSize: '0.85rem', fontWeight: 600, color: '#3f6510' },
   medicoTagsWrap: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.5rem' },
   medicoTag: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '999px', backgroundColor: '#f3f4f6', color: '#333', fontSize: '0.8rem', fontWeight: 600 },
-  greenTag: { display: 'inline-flex', alignItems: 'center', padding: '0.3rem 0.65rem', borderRadius: '999px', border: '1px solid #dbe8c2', backgroundColor: '#e9f2d8', color: '#3f6510', fontSize: '0.85rem', fontWeight: 600 },
+  greenTag: { display: 'inline-flex', alignSelf: 'flex-start' as const, alignItems: 'center', padding: '0.3rem 0.65rem', borderRadius: '999px', border: '1px solid #dbe8c2', backgroundColor: '#e9f2d8', color: '#3f6510', fontSize: '0.85rem', fontWeight: 600 },
   // Mismo chip/botón que usa el campo Cotización en Nueva Programación (ProgramacionesPage.tsx).
   cotizacionChip: { display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem', borderRadius: '8px', backgroundColor: '#f4f8ea', border: '1px solid #dbe8c2', color: '#3f6510', fontSize: '0.8rem', fontWeight: 700 },
   addFromCatalogBtn: { display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.35rem 0.65rem', border: '1.5px solid #dbe8c2', borderRadius: '999px', backgroundColor: '#f4f8ea', color: '#3f6510', fontSize: '0.75rem', fontWeight: 400, cursor: 'pointer' },
@@ -4728,8 +4307,6 @@ export const styles: Record<string, React.CSSProperties> = {
   medicoDropdown: { position: 'absolute' as const, top: 'calc(100% + 0.35rem)', left: 0, right: 0, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.12)', maxHeight: '220px', overflowY: 'auto' as const, zIndex: 20 },
   medicoDropdownItem: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#333', cursor: 'pointer' },
   medicoDropdownItemHighlighted: { backgroundColor: '#e9f2d8' },
-  productoClaveTag: { color: '#3f6510' },
-  productoSistemaTag: { fontSize: '0.7rem', fontWeight: 600, color: '#9ca3af', whiteSpace: 'nowrap' as const, flexShrink: 0 },
   pillBtnPrimary: { display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.1rem', border: '1px solid #dbe8c2', borderRadius: '12px', color: '#3f6510', fontWeight: 600, fontSize: '0.84375rem', cursor: 'pointer', whiteSpace: 'nowrap' as const, backgroundColor: '#f4f8ea' },
   pickBtnDisabled: { backgroundColor: '#f4f4ee', border: '1px solid #eeeee6', color: '#c4c4bc', cursor: 'not-allowed' as const },
   consumoSectionHeader: { display: 'flex', alignItems: 'center', gap: '0.6rem' },
@@ -4744,6 +4321,25 @@ export const styles: Record<string, React.CSSProperties> = {
   rowDeleteBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', border: 'none', backgroundColor: 'transparent', borderRadius: '6px', cursor: 'pointer', color: '#dc2626' },
   addComisionBtn: { display: 'flex', alignItems: 'center', gap: '0.35rem', marginLeft: 'auto', padding: '0.4rem 0.85rem', border: 'none', borderRadius: '8px', backgroundColor: '#6b8c1f', color: '#fff', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' },
   addComisionBtnBelow: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', width: '100%', marginTop: '0.75rem', padding: '0.6rem', border: '1px dashed #c9dba3', borderRadius: '10px', backgroundColor: '#f9fbf6', color: '#4f6b17', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' },
+  miniCard: { backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #f3f4f6', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden' },
+  miniCardHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', padding: '0.75rem 1rem' },
+  miniCardHeaderLeft: { display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: 0 },
+  miniCardIconBadge: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '8px', backgroundColor: '#fff', border: 'none', flexShrink: 0 },
+  miniCardTitle: { fontSize: '0.9rem', fontWeight: 700, color: '#33342a', margin: 0 },
+  miniCardBadge: { backgroundColor: '#fff', color: '#33342a', fontSize: '0.7rem', fontWeight: 700, minWidth: '1.35rem', height: '1.35rem', padding: '0 0.35rem', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  miniCardBody: { padding: '0.85rem 1rem' },
+  miniCardEmpty: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', gap: '0.5rem', padding: '0.75rem 0', color: '#9ca3af', fontSize: '0.8rem' },
+  miniCardLabel: { fontSize: '0.65rem', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
+  miniCardValueRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginTop: '0.2rem' },
+  miniCardValue: { display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.9rem', fontWeight: 700, color: '#4d7a13', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  miniCardSub: { fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.35rem' },
+  miniCardTotal: { fontSize: '0.8rem', color: '#6b6b60', marginTop: '0.35rem' },
+  miniCardFooter: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', padding: '0.6rem 1rem', borderTop: '1px solid #f3f4f6' },
+  // Igual que remList, pero sin su propio fondo/borde/sombra de tarjeta — para usar dentro de
+  // miniCardBody, que ya aporta esa tarjeta; evita el efecto "tarjeta dentro de tarjeta".
+  miniCardListInner: { width: '100%', maxWidth: '100%', boxSizing: 'border-box' as const, borderRadius: 0, overflow: 'hidden' as const },
+  miniCardLink: { background: 'none', border: 'none', padding: 0, color: '#6b7280', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' },
+  miniCardAddLink: { display: 'flex', alignItems: 'center', gap: '0.25rem', background: 'none', border: 'none', padding: 0, color: '#6b8c1f', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer' },
   readOnlyPill: { display: 'inline-flex', alignSelf: 'flex-start' as const, alignItems: 'center', gap: '0.4rem', padding: '0.4rem 0.85rem', borderRadius: '999px', border: '1px solid #d9e8c2', backgroundColor: '#f3faec', fontSize: '0.85rem', fontWeight: 700, color: '#4f6b17' },
   readOnlyField: { padding: '0.75rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb', fontSize: '0.875rem', color: '#6b7280' },
   consumoClamp: { display: '-webkit-box' as const, WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden' as const },

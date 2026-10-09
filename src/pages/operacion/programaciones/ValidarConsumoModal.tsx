@@ -63,6 +63,8 @@ export default function ValidarConsumoModal({ consumoId, programacionId, onClose
     queryKey: ['programaciones-sedes'],
     queryFn: () => programacionesService.getSedes(),
   });
+  // Sede Global y Sede Vallarta no son opciones válidas para dónde se consumió el producto.
+  const sedesConsumo = sedes.filter(s => s.nombre !== 'Sede Global' && s.nombre !== 'Sede Vallarta');
 
   const [sedeConsumoId, setSedeConsumoId] = useState<string | null>(getUsuarioActualSedeId);
   const [prodRealConsumido, setProdRealConsumido] = useState<boolean | null>(null);
@@ -82,9 +84,14 @@ export default function ValidarConsumoModal({ consumoId, programacionId, onClose
   const [productoFocused, setProductoFocused] = useState(false);
   const [productoHighlighted, setProductoHighlighted] = useState(0);
   const productoInputRef = useRef<HTMLInputElement>(null);
+  // Mismo buscador que "Agregar consumo" (todos los productos cotizables, sin filtrar por si
+  // tienen precio o no) — la diferencia es que acá nunca se permite capturar el precio a mano: si
+  // el producto elegido tiene precio cargado para la tarifa de la remisión (precioSugerido, aunque
+  // sea $0), ese es el que se le asigna al consumo remisionado; si no tiene, se agrega igual pero
+  // el precio remisionado no se toca.
   const { data: productoResults = [] } = useQuery<ProductoOption[]>({
-    queryKey: ['validar-consumo-productos', productoSearch],
-    queryFn: () => remisionesService.searchProductos(productoSearch, undefined, true),
+    queryKey: ['validar-consumo-productos', productoSearch, detalle?.tarifaId],
+    queryFn: () => remisionesService.searchProductos(productoSearch, detalle?.tarifaId ?? undefined, true),
     enabled: prodRealConsumido === false && productoFocused,
   });
 
@@ -96,10 +103,15 @@ export default function ValidarConsumoModal({ consumoId, programacionId, onClose
     setProductoHighlighted(0);
   }, [productoResults]);
 
+  // Solo informativo — para que se vea el precio del producto elegido. No se envía al backend ni
+  // actualiza el consumo remisionado (ver createValConsumo: ese nunca cambia al validar).
+  const [precioProductoElegido, setPrecioProductoElegido] = useState<number | null>(null);
+
   const selectProducto = (p: ProductoOption) => {
     setProductoId(p.id);
     setProductoLabel(formatProductoLabel(p));
     setProductoSearch('');
+    setPrecioProductoElegido(p.precioSugerido);
     setError(null);
   };
 
@@ -129,8 +141,8 @@ export default function ValidarConsumoModal({ consumoId, programacionId, onClose
 
   const [loteHighlighted, setLoteHighlighted] = useState(0);
   const { data: loteResults = [] } = useQuery<LoteOption[]>({
-    queryKey: ['remisiones-lotes', loteLoteSearch],
-    queryFn: () => remisionesService.searchLotes(loteLoteSearch),
+    queryKey: ['remisiones-lotes', loteLoteSearch, detalle?.productoId, loteSedeId],
+    queryFn: () => remisionesService.searchLotes(loteLoteSearch, detalle?.productoId ?? undefined, loteSedeId ?? undefined),
     enabled: showNuevoLote && loteLoteFocused,
   });
 
@@ -207,6 +219,7 @@ export default function ValidarConsumoModal({ consumoId, programacionId, onClose
       queryClient.invalidateQueries({ queryKey: ['remisiones-validacion-consumos', programacionId] });
       queryClient.invalidateQueries({ queryKey: ['programacion', programacionId] });
       queryClient.invalidateQueries({ queryKey: ['consumo-detalle', consumoId] });
+      if (detalle?.remisionId) queryClient.invalidateQueries({ queryKey: ['remision', detalle.remisionId] });
       onValidated();
     },
   });
@@ -261,7 +274,7 @@ export default function ValidarConsumoModal({ consumoId, programacionId, onClose
               <div style={styles.formGroup} id="validar-consumo-field-sedeConsumo">
                 <label style={styles.remisionLabel}>Sede Consumo *</label>
                 <div style={styles.pickBtnGrid}>
-                  {sedes.map(s => (
+                  {sedesConsumo.map(s => (
                     <button key={s.id} type="button" style={{ ...styles.pickBtn, ...(sedeConsumoId === s.id ? styles.pickBtnActive : {}), ...(error?.field === 'sedeConsumo' ? styles.inputError : {}) }} onMouseDown={e => e.preventDefault()} onClick={() => { setSedeConsumoId(s.id); setError(null); }}>
                       {s.nombre}
                     </button>
@@ -271,17 +284,26 @@ export default function ValidarConsumoModal({ consumoId, programacionId, onClose
               </div>
 
               <div style={styles.formGroup} id="validar-consumo-field-prodRealConsumido">
-                <label style={styles.remisionLabel}>Prod. Real Consumido? *</label>
+                <label style={styles.remisionLabel}>Producto real consumido? *</label>
                 <div style={styles.pickBtnGrid}>
                   <button type="button" style={{ ...styles.pickBtn, ...(prodRealConsumido === false ? styles.pickBtnActive : {}), ...(error?.field === 'prodRealConsumido' ? styles.inputError : {}) }} onMouseDown={e => e.preventDefault()} onClick={() => { setProdRealConsumido(false); setError(null); }}>Diferente</button>
-                  <button type="button" style={{ ...styles.pickBtn, ...(prodRealConsumido === true ? styles.pickBtnActive : {}), ...(error?.field === 'prodRealConsumido' ? styles.inputError : {}) }} onMouseDown={e => e.preventDefault()} onClick={() => { setProdRealConsumido(true); setProductoId(null); setProductoLabel(null); setError(null); }}>Mismo Producto</button>
+                  <button type="button" style={{ ...styles.pickBtn, ...(prodRealConsumido === true ? styles.pickBtnActive : {}), ...(error?.field === 'prodRealConsumido' ? styles.inputError : {}) }} onMouseDown={e => e.preventDefault()} onClick={() => { setProdRealConsumido(true); setProductoId(null); setProductoLabel(null); setPrecioProductoElegido(null); setError(null); }}>Mismo Producto</button>
                 </div>
                 {error?.field === 'prodRealConsumido' && <span style={styles.errorText}>{error.message}</span>}
               </div>
 
               {prodRealConsumido === true && (
                 <div style={styles.formGroup} id="validar-consumo-field-proVal">
-                  <label style={styles.remisionLabel}>Pro Val</label>
+                  <label style={styles.remisionLabel}>Producto validado *</label>
+                  <div style={styles.medicoTagsWrap}>
+                    <span style={{ ...styles.medicoTag, ...styles.pickBtnActive }}>{detalle?.descripcion ?? '-'}</span>
+                  </div>
+                </div>
+              )}
+
+              {prodRealConsumido === false && (
+                <div style={styles.formGroup}>
+                  <label style={styles.remisionLabel}>Producto remisionado</label>
                   <div style={styles.medicoTagsWrap}>
                     <span style={{ ...styles.medicoTag, ...styles.pickBtnActive }}>{detalle?.descripcion ?? '-'}</span>
                   </div>
@@ -290,12 +312,12 @@ export default function ValidarConsumoModal({ consumoId, programacionId, onClose
 
               {prodRealConsumido === false && (
                 <div style={styles.formGroup} id="validar-consumo-field-proVal">
-                  <label style={styles.remisionLabel}>Pro Val *</label>
+                  <label style={styles.remisionLabel}>Producto validado *</label>
                   {productoId ? (
                     <div style={styles.medicoTagsWrap}>
                       <span style={{ ...styles.medicoTag, ...styles.pickBtnActive }}>
                         {productoLabel}
-                        <X size={12} style={{ cursor: 'pointer' }} onClick={() => { setProductoId(null); setProductoLabel(null); }} />
+                        <X size={12} style={{ cursor: 'pointer' }} onClick={() => { setProductoId(null); setProductoLabel(null); setPrecioProductoElegido(null); }} />
                       </span>
                     </div>
                   ) : (
@@ -347,12 +369,28 @@ export default function ValidarConsumoModal({ consumoId, programacionId, onClose
                 </div>
               )}
 
+              {prodRealConsumido === false && productoId && (
+                <div style={styles.formGroup}>
+                  <label style={styles.remisionLabel}>Precio de este producto</label>
+                  {precioProductoElegido !== null ? (
+                    <>
+                      <div style={styles.medicoTagsWrap}>
+                        <span style={{ ...styles.medicoTag, ...styles.pickBtnActive }}>{formatMoney(precioProductoElegido)}</span>
+                      </div>
+                      <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>Precio de referencia según la tarifa de esta remisión.</span>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>Este producto no tiene un precio cargado para la tarifa de esta remisión.</span>
+                  )}
+                </div>
+              )}
+
               <div style={styles.formGroup}><label style={styles.remisionLabel}>Cantidad Remisionada</label><span style={styles.readOnlyField}>{detalle ? detalle.cantidad : '-'}</span></div>
-              <div style={styles.formGroup}><label style={styles.remisionLabel}>Cant. Usada</label><span style={styles.readOnlyField}>{detalle ? detalle.cantidadUsada.toFixed(2) : '-'}</span></div>
-              <div style={styles.formGroup}><label style={styles.remisionLabel}>Can Val</label><span style={styles.readOnlyField}>{canVal}</span></div>
+              <div style={styles.formGroup}><label style={styles.remisionLabel}>Cantidad usada</label><span style={styles.readOnlyField}>{detalle ? detalle.productoValidado.reduce((sum, pv) => sum + pv.cantRealValidada, 0).toFixed(2) : '-'}</span></div>
+              <div style={styles.formGroup}><label style={styles.remisionLabel}>Cantidad validada</label><span style={styles.readOnlyField}>{canVal}</span></div>
 
               <div style={styles.formGroup} id="validar-consumo-field-prodDeTspine">
-                <label style={styles.remisionLabel}>Prod_de_Tspine? *</label>
+                <label style={styles.remisionLabel}>Producto de Tspine? *</label>
                 <div style={styles.pickBtnGrid}>
                   <button type="button" style={{ ...styles.pickBtn, ...(prodDeTspine === false ? styles.pickBtnActive : {}), ...(error?.field === 'prodDeTspine' ? styles.inputError : {}) }} onMouseDown={e => e.preventDefault()} onClick={() => { setProdDeTspine(false); setError(null); observacionesInputRef.current?.focus(); }}>No</button>
                   <button type="button" style={{ ...styles.pickBtn, ...(prodDeTspine === true ? styles.pickBtnActive : {}), ...(error?.field === 'prodDeTspine' ? styles.inputError : {}) }} onMouseDown={e => e.preventDefault()} onClick={() => { setProdDeTspine(true); setError(null); observacionesInputRef.current?.focus(); }}>Sí</button>
@@ -361,7 +399,7 @@ export default function ValidarConsumoModal({ consumoId, programacionId, onClose
               </div>
 
               <div style={styles.formGroup} id="validar-consumo-field-observacionesAlm">
-                <label style={styles.remisionLabel}>Observaciones Alm *</label>
+                <label style={styles.remisionLabel}>Observaciones de almacen *</label>
                 <input ref={observacionesInputRef} style={{ ...styles.input, ...(error?.field === 'observacionesAlm' ? styles.inputError : {}) }} value={observacionesAlm} onChange={e => { setObservacionesAlm(e.target.value); setError(null); }} />
                 {error?.field === 'observacionesAlm' && <span style={styles.errorText}>{error.message}</span>}
               </div>
@@ -423,7 +461,7 @@ export default function ValidarConsumoModal({ consumoId, programacionId, onClose
               <div style={styles.formGroup} id="nuevo-lote-field-sede">
                 <label style={styles.remisionLabel}>Sede *</label>
                 <div style={styles.pickBtnGrid}>
-                  {sedes.filter(s => !/global/i.test(s.nombre)).map(s => (
+                  {sedesConsumo.map(s => (
                     <button key={s.id} type="button" style={{ ...styles.pickBtn, ...(loteSedeId === s.id ? styles.pickBtnActive : {}), ...(loteError?.field === 'sede' ? styles.inputError : {}) }} onMouseDown={e => e.preventDefault()} onClick={() => { setLoteSedeId(s.id); setLoteAlmacenId(null); setLoteError(null); }}>
                       {s.nombre}
                     </button>

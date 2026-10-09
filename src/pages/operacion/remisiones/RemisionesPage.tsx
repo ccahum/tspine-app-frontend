@@ -9,6 +9,7 @@ import { programacionesService, type ProgramacionItem } from '../../../services/
 import { useSmoothWheelScroll } from '../../../hooks/useSmoothWheelScroll';
 import { useResponsiveStyles } from '../../../hooks/useResponsiveStyles';
 import { useNavigateWithLoading } from '../../../hooks/useNavigateWithLoading';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 import { prefetchRoute } from '../../../routeImports';
 
 const formatDate = (dateString: string | null): string => {
@@ -268,10 +269,7 @@ export default function RemisionesPage() {
   const tableWrapRef = useRef<HTMLDivElement>(null);
   useSmoothWheelScroll(tableWrapRef, [], 3);
 
-  useEffect(() => {
-    document.body.style.overflow = showPickerModal ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [showPickerModal]);
+  useBodyScrollLock(showPickerModal);
 
   // Le da sombra a la tarjeta fija (título + tabs) solo mientras está "pegada" arriba por el
   // scroll — mismo patrón que Solicitud de Programación.

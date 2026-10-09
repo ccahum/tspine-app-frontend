@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Wrench, FileText, Calendar, ClipboardCheck, ShieldCheck,
   CalendarDays, Tag, Tags,
@@ -7,6 +7,7 @@ import HeaderBackReveal from '../../components/HeaderBackReveal';
 import { useResponsiveStyles } from '../../hooks/useResponsiveStyles';
 import { tieneAccesoAVista } from '../../lib/permissions.utils';
 import { useNavigateWithLoading } from '../../hooks/useNavigateWithLoading';
+import { useBodyScrollLock } from '../../hooks/useBodyScrollLock';
 
 const ACCENT = '#4a7c59';
 
@@ -51,10 +52,7 @@ export default function OperacionPage() {
   // Misma solución que Cotizaciones: pageWrapper anclado al viewport (position:fixed) más el
   // scroll del body bloqueado mientras esta página está montada, para que todo el contenido
   // (título, botón Volver, tarjetas) dé en una sola pantalla sin barra de scroll de la página.
-  useEffect(() => {
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = ''; };
-  }, []);
+  useBodyScrollLock(true);
 
   return (
       <div style={{ ...styles.pageWrapper, left: isMobile ? 0 : '60px', paddingLeft: isMobile ? '1rem' : '2rem', paddingRight: isMobile ? '1rem' : '2rem' }}>
